@@ -71,7 +71,11 @@ export function init({ keyHint, since = performance.now() }) {
     const name = words(t);
     if (!name) return hide();
     el = t;
-    const key = t.dataset.key, sub = t.dataset.tipSub;
+    // A letter, Del or the backslash acts only once ⌃B has turned the letter keys on
+    // (app.js `keys`); until then a tip naming one taught a key that did
+    // nothing (audit 67d008cb6f). Chords, Esc, Enter and F2 always work.
+    const k = t.dataset.key, letter = k && (k.length === 1 || k === "del");
+    const key = letter && !document.body.classList.contains("keys") ? "" : k, sub = t.dataset.tipSub;
     tip.innerHTML = `<div class="tip-n"><span></span>${key ? "<kbd></kbd>" : ""}</div>${sub ? `<div class="tip-s"></div>` : ""}`;
     tip.querySelector(".tip-n > span").textContent = name;
     if (key) tip.querySelector("kbd").textContent = keyHint(key);

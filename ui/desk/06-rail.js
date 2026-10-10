@@ -36,6 +36,7 @@ const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" st
 const HEAD = {
   plus: '<path d="M10 4.5v11M4.5 10h11"/>',
   key: '<circle cx="7" cy="13" r="3.5"/><path d="M9.5 10.5L16 4M13.5 6.5l2 2M15.5 4.5l1.5 1.5"/>',
+  doc: '<path d="M11.5 2.5H6A1.5 1.5 0 0 0 4.5 4v12A1.5 1.5 0 0 0 6 17.5h8a1.5 1.5 0 0 0 1.5-1.5V6.5z"/><path d="M11.5 2.5v4h4M7.5 10.5h5M7.5 13.5h5"/>',
 };
 const head = k => `<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${HEAD[k]}</svg>`;
 
@@ -61,10 +62,64 @@ async function getWidgets(id) {
   wAt = id; wList = (j && j.widgets) || [];
   if (current()) rail();
 }
-const forgetWidgets = () => { wAt = null; wList = []; };
+const forgetWidgets = () => { wAt = null; wList = []; gone = null; };
+/** An agent's widget the reader just removed (menu.js `removeWidget`): its
+ *  place on the rail, the height it had, says "Removed · Undo" for a moment
+ *  and then closes up -- the reader's own click, so the rail may move then.
+ *  `from` is where its folder was kept, once the daemon says. */
+let gone = null;
+const GONE_MS = 4000;
+function goneSec(g) {
+  const t = g.from == null ? "" : ` data-wfrom="${ctx.esc(g.from)}"`;
+  if (g.back) return `<section class="sec wg" style="height:${g.h}px" data-w="${g.name}"><p class="wg-ask" role="status">Bringing ${ctx.esc(g.title)} back…</p></section>`;
+  return `<section class="sec wg" style="height:${g.h}px" data-w="${g.name}"><p class="wg-ask" role="status">Removed ${ctx.esc(g.title)}` +
+    `<button type="button" class="wg-allow" data-wundo="${g.name}" data-wd="${g.desk}" data-wown="${g.owner}"${t}${g.from == null ? " disabled" : ""}>Undo</button></p></section>`;
+}
 function widgetSec(d) {
   if (wAt !== d.id) { getWidgets(d.id); return ""; }
-  return wList.filter(w => !w.hidden).map(ctx.seatFrame).join("");
+  const g = gone && gone.desk === d.id ? gone : null;
+  const shown = wList.filter(w => !w.hidden && w.name !== g?.name).map(ctx.seatFrame);
+  if (g) shown.splice(Math.min(g.at, shown.length), 0, goneSec(g));
+  return shown.join("");
+}
+/** A seat on this desk, for its box's menu: whether it is an agent's. */
+export const seatOf = (desk, name) => wAt === desk ? wList.find(w => w.name === name) : undefined;
+/** The reader removed `name` from its box: held in its place until Undo
+ *  or the moment passes. Called before the daemon is asked, so the seat's
+ *  `cleared` never draws the rail without it; `from` follows (`widgetKept`). */
+export function widgetGone(desk, name, owner) {
+  const el = document.getElementById(`wg-${desk}-${name}`), w = seatOf(desk, name);
+  if (!el || !w) return;
+  clearTimeout(gone?.timer);
+  const at = wList.filter(x => !x.hidden).indexOf(w);
+  gone = { desk, name, owner, at, h: el.offsetHeight, title: w.title || el.querySelector(".sec-nm")?.textContent || name, from: null };
+  gone.timer = setTimeout(() => { gone = null; if (current()) rail(); }, GONE_MS);
+  el.outerHTML = goneSec(gone);
+}
+/** The daemon removed it: Undo can be pressed, with where it was kept. */
+export function widgetKept(name, from) {
+  if (!gone || gone.name !== name) return;
+  gone.from = from || "";
+  const b = document.querySelector(`[data-wundo="${window.CSS.escape(name)}"]`);
+  if (b) { b.dataset.wfrom = gone.from; b.disabled = false; }
+}
+/** Undo pressed, or the removal refused: the box draws again. A widget
+ *  file's box comes back only when the runner has run it again, a round or
+ *  two later (`waits`): its place holds, saying so, until that box arrives
+ *  (`widgetSaid`), so the rail does not close up and open again. */
+const BACK_WAIT_MS = 20000;
+export function widgetBack(name, waits = false) {
+  if (!gone || gone.name !== name) return;
+  clearTimeout(gone.timer);
+  if (waits) {
+    gone.back = true;
+    gone.timer = setTimeout(() => { gone = null; if (current()) rail(); }, BACK_WAIT_MS);
+    const el = document.querySelector(`[data-wundo="${window.CSS.escape(name)}"]`)?.closest("section");
+    if (el) el.outerHTML = goneSec(gone);
+    return;
+  }
+  gone = null;
+  if (current()) rail();
 }
 function fillSeats(d) {
   if (wAt !== d.id) return;
@@ -76,10 +131,14 @@ export function widgetSaid(j) {
   if (!ctx || !j || wAt !== j.desk_id || j.desk_id !== deskId) return;
   const i = wList.findIndex(w => w.name === j.name);
   if (j.cleared) { if (i >= 0) { wList.splice(i, 1); rail(); } return; }
+  // The box an Undo was waiting for: it takes its place back.
+  if (gone && gone.back && gone.name === j.name) { clearTimeout(gone.timer); gone = null; }
   const was = i >= 0 ? wList[i] : null;
   if (was) wList[i] = j; else wList.push(j);
   const el = document.getElementById(`wg-${j.desk_id}-${j.name}`);
-  if (was && was.hidden === j.hidden && el) ctx.patchSeat(el, j); else rail();
+  // Shared, or made this desk's own (1.32): its frame says whose it is,
+  // so it is drawn again rather than patched.
+  if (was && was.hidden === j.hidden && was.owner === j.owner && el) ctx.patchSeat(el, j); else rail();
 }
 /** The reader arranged the sidebars: the rail in its new order. */
 export function arranged() { if (ctx && current()) rail(); }
@@ -137,7 +196,8 @@ function rail() {
   // The documents' own scroll, which a redraw would put back to the top.
   const docsTop = ctx.tocEl.querySelector(".dk-docs:not(.dk-offs)")?.scrollTop || 0;
   // The sections, each drawn by its own hand, then put in the reader's
-  // order (/sidebars), after Your turn, which is always first.
+  // order (/sidebars). Your turn is not one of them: it is the corner's
+  // (10-onyou.js), drawn after, where it moves nothing.
   const secs = {
     // The panels fold as the documents do. Folded, the head still says when
     // one of them is waiting on the reader, since its row is out of sight;
@@ -145,7 +205,7 @@ function rail() {
     panels: () => sec("panels", "rail.panels", "Panels", {
       open: closedRow && closedRow.desk === d.id, tip: "Panels", sub: `${here} · ${total}`,
       count: `${blocked ? `!${blocked} · ` : ""}${d.panes.length}/${j.per_desk}`, tone: blocked ? "warn" : "",
-      countTip: blocked ? `${ctx.plural(blocked, "panel")} waiting on you` : "",
+      countTip: blocked ? `${ctx.plural(blocked, "panel")} ${blocked === 1 ? "needs" : "need"} you` : "",
     }, `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
     `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
@@ -177,7 +237,7 @@ function rail() {
   };
   const lay = ctx.layout ? ctx.layout() : null, off = new Set(lay ? lay.hidden : []);
   const order = (lay && lay.right.length ? lay.right : Object.keys(secs)).filter(id => secs[id] && !off.has(id) && !(id === "widgets" && off.has("right:widgets")));
-  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + filedSecs(d) + order.map(id => secs[id]()).join("") + `</div>`);
+  const drew = drawIn(ctx.tocEl, `<div class="dk-rail">` + order.map(id => secs[id]()).join("") + `</div>`);
   drawing = false;
   // The names go in after, and never into what the rail compares itself
   // with: a panel's name is its title, which an agent changes about once a
@@ -185,6 +245,8 @@ function rail() {
   // tick of the clock.
   if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); docsScroll(docsTop); loadImgs(); fillSeats(d); }
   drawIn(stripEl(), stripHtml(d, vs, waiting));
+  onYou(d);
+  arrSlot(d);
   meta();
 }
 
@@ -221,7 +283,7 @@ function stripHtml(d, vs, waiting) {
   const left = notesAt === d.id ? noteList.filter(x => !x.done && !x.gone && !x.suggested_by).length : 0;
   const mark = (sec, label, n, sub, cls = "") => `<button type="button" class="ds-${sec}${n ? "" : " none"}${cls}" data-sec="${sec}" data-tip="${label}" data-tip-sub="${sub}" aria-label="${label}: ${sub}">${stripIco(sec)}<span class="n">${n || ""}</span></button>`;
   return `<button type="button" class="ds-open" data-sec="" data-tip="Show the rail" aria-label="Show the rail">${stripIco("rail")}</button>` +
-    mark("panels", "Panels", d.panes.length, blocked ? "one is waiting on you" : `${d.panes.length} of ${ctx.desks.per_desk}`, blocked ? " blk" : "") +
+    mark("panels", "Panels", d.panes.length, blocked ? "one needs you" : `${d.panes.length} of ${ctx.desks.per_desk}`, blocked ? " blk" : "") +
     mark("docs", "Documents", waiting, waiting ? `${waiting} waiting` : "none waiting") +
     mark("notes", "Notes", left, left ? `${left} open` : "none open");
 }
@@ -417,24 +479,24 @@ function noteSec(d) {
   // documents are.
   if (notesAt !== d.id && notesOff !== d.id) getNotes(d.id);
   const left = mine.filter(x => !x.done && !x.gone && !x.suggested_by).length;
-  const done = mine.filter(x => x.done && !x.gone).length;
-  const seen = mine.filter((x, i) => notesAll || i < NOTES_SHOWN || x.gone || notesKept.has(x.id) || (noteField && noteField.id === x.id));
-  const hid = mine.length - seen.length, folds = notesAll && mine.length > NOTES_SHOWN;
+  // The open lines, six of them and "N more"; then the done half as one row,
+  // "3 done", and its lines under it only once that is clicked. A line the
+  // reader is working on shows whatever its place: one being rewritten, one
+  // just taken off (its Undo), one just added or ticked.
+  const keep = x => x.gone || notesKept.has(x.id) || (noteField && noteField.id === x.id);
+  const opens = mine.filter(x => !x.done), dones = mine.filter(x => x.done);
+  const seen = opens.filter((x, i) => notesAll || i < NOTES_SHOWN || keep(x));
+  const hid = opens.length - seen.length, folds = notesAll && opens.length > NOTES_SHOWN;
   const rows = seen.map(x => noteRow(x, esc)).join("") +
-    (hid || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="notes-more" aria-expanded="${folds}">${folds ? "Show fewer" : `${hid} more`}</button></li>` : "");
-  // The section's two actions sit in its head, after the count, where they
-  // are in view however long the list is: a new note, and removing the done
-  // half. Removing answers where it was asked, as a ✕ does: the head holds
-  // the Undo, in the count's place, until it runs out.
-  const undo = cleared && cleared.at === d.id;
-  const acts = undo
-    ? `<span class="dk-cleared" role="status">${cleared.xs.length} removed<button type="button" class="dk-undo" data-a="note-unclear">Undo</button></span>`
-    : (done ? `<button type="button" data-a="note-clear" data-tip="Remove done notes" data-tip-sub="${ctx.plural(done, "done note")} · Undo brings them back" aria-label="Remove done notes">${ico("done")}</button>` : "") +
-      `<button type="button" data-a="note-new" data-tip="New note" aria-label="New note">${ico("plus")}</button>`;
+    (hid || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="notes-more" aria-expanded="${folds}">${folds ? "Show fewer" : `${hid} more`}</button></li>` : "") +
+    doneRows(d, dones, keep, esc);
+  // The head has the one action in view however long the list is: a new
+  // note. Removing the done half is the fold row's, with its Undo there.
+  const acts = `<button type="button" data-a="note-new" data-tip="New note" aria-label="New note">${ico("plus")}</button>`;
   return sec("notes", "rail.notes", "Notes", {
-    cls: `dk-notes${undo ? " undo" : ""}`, part: "rail.notes.head", empty: !mine.length || undo,
+    cls: "dk-notes", part: "rail.notes.head", empty: !mine.length,
     tip: "Notes", sub: "A list of your own for this desk. It is kept on this machine and nothing on it is ever sent anywhere.",
-    count: undo ? "" : left || "", countTip: left ? `${left} open` : "", acts,
+    count: left || "", countTip: left ? `${left} open` : "", acts,
   }, errLine("clear", esc, "p") +
     (rows ? `<ul class="dk-list">${rows}</ul>` : notesOff === d.id ? noReach("notes") : "") +
     // The bar for a new line, always at the end of the list, where the line
@@ -447,6 +509,20 @@ function noteSec(d) {
         // Pictures waiting on the line: the picture mark a line wears, with
         // their count, and the ✕ that leaves them out.
         (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>`));
+}
+
+/** The done half, at the list's foot: one row saying how many, which opens
+ *  them, with Clear beside it -- and after Clear, "3 removed · Undo" in the
+ *  same row, where the click was. Lines the reader is working on (`keep`)
+ *  show under it while it is folded, a line just ticked by hand among them
+ *  (07-actions.js puts it in `notesKept`): it stays in sight, to untick. */
+function doneRows(d, dones, keep, esc) {
+  const n = dones.filter(x => !x.gone).length, undo = cleared && cleared.at === d.id;
+  const shown = dones.filter(x => notesDone || keep(x)).map(x => noteRow(x, esc)).join("");
+  if (undo) return `<li class="dk-done-li" role="status"><span class="dk-cleared">${ctx.plural(cleared.xs.length, "done note")} removed<button type="button" class="dk-undo" data-a="note-unclear">Undo</button></span></li>` + shown;
+  if (!n) return shown;
+  return `<li class="dk-done-li"><button type="button" class="dk-new dk-done-b" data-a="notes-done" aria-expanded="${notesDone}" data-tip="${notesDone ? "Fold the done notes" : "Show the done notes"}">${ico("tick")}<span>${n} done</span></button>` +
+    `<button type="button" class="dk-new dk-done-x" data-a="note-clear" data-tip="Remove done notes" data-tip-sub="${ctx.plural(n, "done note")} · Undo brings them back">Clear</button></li>` + shown;
 }
 
 /** The refusal for row `k`, under it: a list item, or `tag` outside a list. */
@@ -488,8 +564,11 @@ function noteRow(x, esc) {
   // (#95: a thread's chip there left the text a letter wide). The text is
   // clamped in a span of its own: WebKit does not clamp a <button>, and the
   // window is WebKit.
-  const marks = x.done ? picMark(x, esc) + doneMarks(x, esc) + tell(x, esc) : stageMark(x, esc) + picMark(x, esc);
-  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : ""].filter(Boolean);
+  // A ticked line keeps its number and its pictures under it; where its
+  // work went -- the commit, the PR -- is its tip and its menu, since a done
+  // line is history and they were the loudest marks on it (7c0fc42885).
+  const marks = x.done ? picMark(x, esc) + tell(x, esc) : stageMark(x, esc) + picMark(x, esc);
+  const about = [stageWords(x), threadWords(x), x.done && x.done_by ? tickedBy(x) : "", x.done ? doneWords(x) : ""].filter(Boolean);
   return `<li class="dk-note${x.done ? " done" : ""}${editing ? " editing" : ""}">` +
     `<span class="dk-lead"><button type="button" class="dk-tick" role="checkbox" aria-checked="${x.done}" data-a="note-tick" data-n="${x.id}" aria-label="${x.done ? "Done" : "Not done"}: ${esc(x.text)}">${x.done ? ico("tick") : ""}</button></span>` +
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${esc(x.text)}</span></button>` +
@@ -530,47 +609,49 @@ function picMark(x, esc) {
 
 /** How far an agent has got with a line, as it said with mark_desk_note --
  *  read, planned, working -- and nothing once the line is done. Working
- *  holds only while the panel that said it has its agent at work: the
- *  moment that agent goes quiet the line is back at its plan, before the
- *  list is read again. */
-function stageOf(x) {
-  if (x.done || !x.stage) return "";
-  if (x.stage !== "working") return x.stage;
-  return views.get(x.stage_pane)?.status?.agent ? "working" : x.stage_doc ? "planned" : "read";
-}
+ *  stays working when its chat ends: it used to fall back to "planned",
+ *  and work that was out read as if it had not started (audit 7c0fc42885). */
+const stageOf = x => x.done || !x.stage ? "" : x.stage;
+/** Whether the agent that said "working" is still in its panel. */
+const liveOn = x => stageOf(x) === "working" && !!views.get(x.stage_pane)?.status?.agent;
 
-/** The stage's mark, a dot or the plan's page and its word, beside the
- *  line's number under its text: a line that is picked up does not rewrap. The
- *  plan's mark opens the plan; working names the panel by its number, as its
- *  tab does. */
+/** One word for where a line is, under its text after its number, in order
+ *  of what it asks of the reader: check it, in a PR, working, in progress,
+ *  planned, read -- and nothing for a line no agent has picked up. A line
+ *  that is picked up does not rewrap; the plan's word opens the plan; what
+ *  the word leaves out (who, which panel, the checks) is its tip. */
 function stageMark(x, esc) {
   const st = stageOf(x), by = esc(x.stage_by || "an agent");
-  // In review: past its plan, so the PR says where it is, not "planned" --
-  // which is what a working line falls back to once its chat ends, and read
-  // as if the work had gone backwards. The merge ticks it (thread.rs `seen`).
-  // Shipped: its thread's PR merged, or the thread says shipped, and the
-  // line not ticked -- the work is out and waits on the reader's check
-  // (#112). Over "working" too, which would read as if it were not out.
+  // Shipped: its thread's branch went into main -- seen by the mod, or found
+  // by git (thread.rs `landed`) -- or the thread says shipped, and the line
+  // not ticked: the work is out and waits on the reader's check (#112).
+  // Over "working" too, which would read as if it were not out.
   const sh = !x.done ? shippedOf(x) : null;
   if (sh) {
     const pr = sh.pr ? ` in PR #${esc(sh.pr)}` : "";
-    return `<span class="dk-stage shipped" role="img" data-tip="Shipped${pr}" data-tip-sub="tick it once you have checked it" aria-label="Shipped${pr}, waiting for your check"><span class="w">shipped · check it</span></span>`;
+    return `<span class="dk-stage shipped" role="img" data-tip="Shipped${pr}" data-tip-sub="tick it once you have checked it" aria-label="Shipped${pr}, waiting for your check"><span class="w">check it</span></span>`;
   }
-  const t = !x.done && st !== "working" ? threadOf(x) : null;
+  // In review: past its plan, so the PR says where it is -- unless its agent
+  // is still there, working at it. Its checks colour it and are said in the
+  // tip. The merge ticks it (thread.rs `seen`).
+  const t = !x.done && !liveOn(x) ? threadOf(x) : null;
   if (t && t.pr && !t.merged) {
-    const ci = t.ci ? ` · ${esc(t.ci)}` : "", tone = /fail|error/i.test(t.ci) ? " fail" : /pass|success/i.test(t.ci) ? " pass" : "";
-    return `<span class="dk-stage pr${tone}" role="img" data-tip="In PR #${esc(t.pr)}${ci}" data-tip-sub="merging it ticks this note" aria-label="In PR #${esc(t.pr)}${ci}"><span class="w">PR #${esc(t.pr)}${ci}</span></span>`;
+    const tone = /fail|error/i.test(t.ci) ? " fail" : /pass|success/i.test(t.ci) ? " pass" : "";
+    const sub = `${t.ci ? `checks ${esc(t.ci)} · ` : ""}merging it ticks this note`;
+    return `<span class="dk-stage pr${tone}" role="img" data-tip="In PR #${esc(t.pr)}" data-tip-sub="${sub}" aria-label="In PR #${esc(t.pr)}${t.ci ? `, checks ${esc(t.ci)}` : ""}"><span class="w">PR #${esc(t.pr)}</span></span>`;
   }
   if (st === "planned" && x.stage_doc) {
     return `<button type="button" class="dk-stage planned" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned</span></button>`;
   }
   if (st === "working") {
     // The dot breathes only while that agent is at it; between its turns
-    // the line is still its, and the dot holds still.
+    // it holds still; once its chat has ended the line is "in progress",
+    // still, until the work is out or the reader ticks it.
     const at = x.stage_panel ? ` in ${esc(x.stage_panel)}` : "";
-    const busy = views.get(x.stage_pane)?.status?.agent === "working";
-    const say = busy ? `${by} is working on it${at}` : `${by} has it${at}`;
-    return `<span class="dk-stage working${busy ? " busy" : ""}" role="img" data-tip="${say}"${busy ? "" : ` data-tip-sub="between turns"`} aria-label="${say}"><span class="w">working</span></span>`;
+    const agent = views.get(x.stage_pane)?.status?.agent, busy = agent === "working";
+    const say = busy ? `${by} is working on it${at}` : agent ? `${by} has it${at}` : `${by} worked on it${at}`;
+    const sub = busy ? "" : agent ? "between turns" : "that chat has ended; the work is not out yet";
+    return `<span class="dk-stage working${busy ? " busy" : agent ? "" : " ended"}" role="img" data-tip="${say}"${sub ? ` data-tip-sub="${sub}"` : ""} aria-label="${say}"><span class="w">${agent ? "working" : "in progress"}</span></span>`;
   }
   if (st === "read" || st === "planned") return `<span class="dk-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"><span class="w">read</span></span>`;
   return "";
@@ -587,11 +668,11 @@ function shippedOf(x) {
 function stageWords(x) {
   const sh = !x.done ? shippedOf(x) : null;
   if (sh) return `shipped${sh.pr ? ` in PR #${sh.pr}` : ""}, waiting for your check`;
-  const st = stageOf(x), by = x.stage_by || "an agent", t = !x.done && st !== "working" ? threadOf(x) : null;
+  const st = stageOf(x), by = x.stage_by || "an agent", t = !x.done && !liveOn(x) ? threadOf(x) : null;
   if (t && t.pr && !t.merged) return `in PR #${t.pr}`;
   if (st === "working") {
     const slot = views.get(x.stage_pane)?.pane?.slot;
-    return `${by} is on it${slot != null ? ` in panel ${slot}` : ""}`;
+    return liveOn(x) ? `${by} is on it${slot != null ? ` in panel ${slot}` : ""}` : `${by} worked on it, not out yet`;
   }
   return st === "planned" ? `planned by ${by}` : st === "read" ? `read by ${by}` : "";
 }
@@ -771,19 +852,9 @@ function tell(x, esc) {
     : `<button type="button" data-a="note-tell" data-n="${x.id}" data-tip="Tell ${esc(x.sent_by)} it is done" data-tip-sub="${esc(x.done_commit ? `with ${x.done_commit.slice(0, 7)}` : "one line back to them")}">Tell ${esc(x.sent_by)} ✓</button>`;
 }
 
-/** Where a ticked line's work went, as marks on the line under its text,
- *  after its number: the commit (a click copies the whole hash, and says so
- *  in its own place), the document sent about it (a click opens it), and
- *  where it can be seen. They were a third line of their own with the
- *  ticker's name, and the link wrapped in it; who ticked it is the line's
- *  tip now. */
-function doneMarks(x, esc) {
-  const sha = x.done_commit ? `<button type="button" class="dk-sha" data-a="note-sha" data-c="${esc(x.done_commit)}" data-tip="Copy commit" data-tip-sub="${esc(x.done_commit)}">${esc(x.done_commit.slice(0, 7))}</button>` : "";
-  const doc = x.done_doc ? `<button type="button" class="dk-sent" data-a="note-doc" data-d="${esc(x.done_doc)}" data-tip="Open the document" data-tip-sub="What ${esc(x.done_by)} sent about it" aria-label="Open what ${esc(x.done_by)} sent about it">${ico("doc")}</button>` : "";
-  const say = evSay(x.done_evidence);
-  const ev = say ? `<button type="button" class="dk-ev" data-a="note-ev" data-u="${esc(x.done_evidence)}" data-tip="${esc(x.done_evidence)}" data-tip-sub="where the work can be seen">${esc(say)} ↗</button>` : "";
-  return sha + doc + ev;
-}
+/** Where a ticked line's work went, in words for its tip: the commit and
+ *  where it can be seen. The row's menu copies the one and opens the other. */
+const doneWords = x => [x.done_commit && x.done_commit.slice(0, 7), evSay(x.done_evidence)].filter(Boolean).join(" · ");
 
 /** Where the finished work can be seen, in a word: a GitHub pull request or
  *  issue by its number, anything else by its host. */
@@ -819,7 +890,7 @@ function waitingFirst(d) {
 function forgetNotes() {
   clearTimeout(backTimer);
   forgetFiled();
-  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null; notesAll = false; notesKept.clear();
+  noteList = []; notesAt = null; notesGet = null; noteField = null; noteDraft = ""; noteCaret = 0; cleared = null; notesAll = false; notesDone = false; notesKept.clear();
   clearTimeout(imgTimer); pending = []; imgGone = null; closeLightbox();
 }
 

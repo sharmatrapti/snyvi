@@ -2,31 +2,34 @@
 //! date -- "deploy 3/5", a test run's count, a port that is up -- without
 //! a turn of the user's to ask for it (`crate::widget`, docs/WIDGETS.md).
 //! propose_widget: a widget file the user adds or not, for a status that
-//! should outlive the session: snyvi runs its command on a timer.
+//! should outlive the session: snyvi runs its command on a timer, on the
+//! agent's desk alone (1.32).
 
 use super::{arg, said, Session};
 use crate::client;
 use serde_json::{json, Value};
 
-const SET: &str = "Show a small status box in this snyvi desk's rail, kept up to date as the work goes: a name, \
-and a short Markdown body (\"**deploy** 3/5 green\"). Only when the user asked for one, or it plainly helps them \
-follow this work: the first time, the user gets a card on their Your turn to allow the box, and nothing shows \
-until they do; after that the same name updates it freely, and an empty body clears it. If they said not now, \
-leave it. Optional: for (today, week, panel: while this panel is open) suggests how long it lasts, tone (ok, warn, \
-bad) colours the count, count is a short figure shown even when the box is folded, lines is its height (1-6), \
-stale_after the seconds before it dims as old (default 1800). For a status worth glancing at, not for news: \
-news is a document.";
+const SET: &str = "Show a small status box in this snyvi desk's rail, kept up to date as the work goes. Only \
+when the user asked for one. A box is for a figure that changes by itself and that they would otherwise go and \
+check: CI 3/5 green, a deploy running, a dev server up. Never for what waits on them (that is hand_over), how to \
+do something (say it in your reply), news (a document), or what changes only when they act. Put the figure in \
+count and one short line in the body (\"**deploy** 3/5 green\"), no instructions. The first time, the user gets \
+a card on their Your turn to allow the box, and nothing shows until they do; after that the same name updates it \
+freely, and an empty body clears it. If they said not now, or removed it, leave it. Optional: for (today, week, \
+panel: while this panel is open) suggests how long it lasts, tone (ok, warn, bad) colours the count, lines is its \
+height (1-6, keep it 1), stale_after the seconds before it dims as old (default 1800).";
 
 const PROPOSE: &str = "Propose a widget file to the user, for a status worth keeping after this session ends: \
-snyvi runs its command on a timer while the widget is in view and shows what it prints (Markdown, or \
-{\"body\",\"tone\",\"count\"} JSON). Only when the user asked for a widget, or ask first. The user gets a card on \
+snyvi runs its command on a timer while this desk is in view and shows what it prints (Markdown, or \
+{\"body\",\"tone\",\"count\"} JSON). Only when the user asked for a widget. The same test as set_widget: a \
+figure that changes by itself and that they would otherwise go and check, printed as count plus one short line, \
+never a to-do of theirs or how to do it. The user gets a card on \
 their Your turn showing the script, where it runs and how often, can try it once, and adds it or not; nothing \
-runs before. scope desk (the default) puts it on this desk only and runs it in this desk's folder; every desk \
-puts it on every desk, each in its own folder; global puts it on the left, run in its own folder. The script's \
-folder is first on PATH and in $SNYVI_WIDGET_DIR, so name the script bare as the command (run.sh, not ./run.sh \
-or sh run.sh), or write \"$SNYVI_WIDGET_DIR/run.sh\"; snyvi refuses a command that cannot reach it. Give the \
-script whole (it gets the desk and settings as JSON on stdin). for suggests how long it lasts: today, week, \
-panel (while this panel is open), or leave it out for until the user turns it off.";
+runs before. It is this desk's own: it runs in this desk's folder and on no other desk, and only the user can \
+share it. The script's folder is first on PATH and in $SNYVI_WIDGET_DIR, so name the script bare as the command \
+(run.sh, not ./run.sh or sh run.sh), or write \"$SNYVI_WIDGET_DIR/run.sh\"; snyvi refuses a command that cannot \
+reach it. Give the script whole (it gets the desk and settings as JSON on stdin). for suggests how long it lasts: \
+today, week, panel (while this panel is open), or leave it out for until the user turns it off.";
 
 pub(super) fn specs() -> Vec<Value> {
     vec![
@@ -35,8 +38,7 @@ pub(super) fn specs() -> Vec<Value> {
             "inputSchema": { "type": "object", "properties": {
                 "name": { "type": "string", "description": "Lowercase letters, digits and dashes, at most 32." },
                 "title": { "type": "string" },
-                "scope": { "type": "string", "enum": ["desk", "every desk", "global"], "description": "desk: this desk only (default)." },
-                "command": { "type": "string", "description": "One line, run with sh -c (cmd /C on Windows) in the desk's folder (global: the widget's). Name the script bare: run.sh. Its folder is first on PATH and in $SNYVI_WIDGET_DIR." },
+                "command": { "type": "string", "description": "One line, run with sh -c (cmd /C on Windows) in the desk's folder. Name the script bare: run.sh. Its folder is first on PATH and in $SNYVI_WIDGET_DIR." },
                 "every": { "type": "integer", "minimum": 5, "description": "Seconds between runs (60)." },
                 "timeout": { "type": "integer", "minimum": 1, "maximum": 30 },
                 "lines": { "type": "integer", "minimum": 1, "maximum": 6 },

@@ -466,15 +466,30 @@ pub(crate) async fn mark_read(
     }
 }
 
-/// Everything waiting, read without being opened.
-pub(crate) async fn clear_queue(State(app): S, headers: HeaderMap) -> Response {
+/// Everything waiting, read without being opened; or, sent `{"ids": [..]}`,
+/// only those: a desk's Mark these read (1.32), which leaves every other
+/// desk's waiting. A body that is not that list is no list, so the page's
+/// bare POST is still everything. `unread` takes either back.
+pub(crate) async fn clear_queue(
+    State(app): S,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
-    match app.store.mark_all_read() {
+    let read = match serde_json::from_slice::<IdsBody>(&body) {
+        Ok(b) => app.store.mark_ids_read(&b.ids),
+        Err(_) => app.store.mark_all_read(),
+    };
+    match read {
         Ok(ids) => {
             if !ids.is_empty() {
-                emit(&app, "read", json!({ "ids": ids, "waiting": 0 }));
+                emit(
+                    &app,
+                    "read",
+                    json!({ "ids": ids, "waiting": waiting(&app) }),
+                );
             }
             Json(json!({ "ok": true, "n": ids.len(), "ids": ids })).into_response()
         }

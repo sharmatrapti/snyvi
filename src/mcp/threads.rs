@@ -19,13 +19,13 @@ work changes stage, not every turn.";
 
 const ASK: &str = "Put a decision on the user's Your turn in snyvi: a question, two to four short options, and \
 the one you recommend; up to four at once as questions, on one card. It does not wait: the answers come with \
-the user's next message and are kept on the thread. Your own question tool shows on Your turn too, when the \
-user is at this panel.";
+the user's next message and are kept on the thread. Your own question tool stays in this panel, for when the \
+user is at it; Home lists it too.";
 
-const HAND_OVER: &str = "Put what only the user can do on their Your turn in snyvi: try (try a change), merge (a PR), key (add a \
-key), or run (a command you were blocked from running: pass cmd, one line; their Run types it here as a \
-! command and its output comes back to you). Never ask them to paste a command. One sentence, and a link \
-if there is one.";
+const HAND_OVER: &str = "Put what blocks you and only the user can do on their Your turn: merge (a PR), key (add a \
+key), try (a change only they can try, e.g. on a phone; else say it in your reply), or run (a command you were \
+blocked from: pass cmd, one line; their Run types it here and you get its output). Never ask them to paste a \
+command. One sentence, a link if any.";
 
 const SUGGEST_PANEL: &str = "Suggest a panel on this desk: a name, the exact command it would run, and why. \
 The user sees a card with the command and opens it or not; nothing runs until they click. Three wait at \

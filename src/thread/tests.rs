@@ -236,6 +236,48 @@ fn a_merge_ticks_the_threads_notes() {
     assert_eq!(open(&conn), 2);
 }
 
+/// A merge git found, which no panel saw, ships the thread as of the merge
+/// and ticks nothing: its notes wait on the reader's check (7c0fc42885).
+#[test]
+fn a_merge_no_panel_saw_ships_and_ticks_nothing() {
+    let mut conn = db();
+    let (d, n) = desk(&mut conn);
+    start_as(&mut conn, d, "A", "p1", &n[..2]);
+    let t = of_pane(&conn, d, "p1").unwrap().unwrap().id;
+    assert!(
+        unmerged(&conn, d).unwrap().is_empty(),
+        "no branch, no question"
+    );
+    let b = Seen {
+        branch: "claude/a".into(),
+        ..Seen::default()
+    };
+    seen(&mut conn, d, "p1", &b, 2).unwrap();
+    assert!(unmerged(&conn, d).unwrap().is_empty(), "still at its plan");
+    conn.execute("UPDATE threads SET stage = 'review' WHERE id = ?1", [t])
+        .unwrap();
+    let u = unmerged(&conn, d).unwrap();
+    assert_eq!(u.len(), 1);
+    assert_eq!(
+        (u[0].0, u[0].1.as_str(), u[0].2.as_str()),
+        (t, "/w", "claude/a"),
+        "the desk's folder when the thread has none"
+    );
+    assert!(!landed(&conn, d, t, "not a sha", 5).unwrap());
+    assert!(landed(&conn, d, t, "CB8D8A5", 5).unwrap());
+    assert!(!landed(&conn, d, t, "cb8d8a5", 6).unwrap(), "once");
+    let t = get(&conn, d, t).unwrap().unwrap();
+    assert_eq!(
+        (t.stage.as_str(), t.merged.as_str(), t.merged_at),
+        ("shipped", "cb8d8a5", 5)
+    );
+    assert!(crate::desk::notes(&conn, d)
+        .unwrap()
+        .iter()
+        .all(|x| !x.done));
+    assert!(unmerged(&conn, d).unwrap().is_empty());
+}
+
 /// A desk's turns are its own: thirty-one waiting on another desk do not
 /// push this desk's one out of its band or its brief, and the band leaves
 /// out the mod's dialog turns while the brief keeps them.
@@ -708,7 +750,9 @@ fn a_stopped_widget_is_told_to_the_agent_that_proposed_it() {
     assert_eq!(c.detail["every"], 120);
     settle(&conn, d, c.id, "opened", 2).unwrap();
     assert!(take_opened(&conn, d, "p1", 3).unwrap()[0].note.is_empty());
-    assert!(tell_widget(&conn, "arena", "Your widget arena stopped").unwrap());
+    // Another desk's own arena is not this one.
+    assert!(!tell_widget(&conn, d + 1, "arena", "not this one").unwrap());
+    assert!(tell_widget(&conn, d, "arena", "Your widget arena stopped").unwrap());
     let again = take_opened(&conn, d, "p1", 4).unwrap();
     assert_eq!(again[0].note, "Your widget arena stopped");
     assert!(take_opened(&conn, d, "p1", 5).unwrap().is_empty());

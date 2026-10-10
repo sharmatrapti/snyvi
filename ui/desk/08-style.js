@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = CSS + THREAD_CSS;
+  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ARRIVALS_CSS;
   document.head.append(s);
 }
 
@@ -30,10 +30,16 @@ const CSS = `
 :root[data-rail="0"] .dk-head, #app:has(#rail.empty) .dk-head { padding-right: 30px; }
 @media (max-width: 1100px) { .dk-head { padding-right: 30px; } }
 .dk-name { font-weight: 600; }
-/* Left off: the rest of the head's width, one line, cut with an ellipsis; its
-   whole text is its tip. The slot is there with nothing said, so its coming
-   moves nothing; empty, it shows only when the head is hovered or focused. */
-.dk-left { flex: 1 1 0; min-width: 0; display: flex; align-items: center; gap: 6px; }
+/* Left off: one short line, cut with an ellipsis at 320 px; its whole text
+   is its tip. It took the rest of the head once, and the head is the
+   window's drag grip: a button there left nothing to drag by. Now the space
+   after it is the head's own, and the keys, tabs and buttons keep the right.
+   The slot is there with nothing said, so its coming moves nothing; empty,
+   it shows only when the head is hovered or focused. Rewritten, the field
+   takes the width it needs. */
+.dk-left { flex: 0 1 auto; max-width: 320px; min-width: 0; margin-right: auto; display: flex; align-items: center; gap: 6px; }
+.dk-left:has(.dk-left-in) { flex: 1 1 0; max-width: none; }
+.dk-head .dk-left ~ .icon { margin-left: 0; }
 .dk-left-b { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border: 0; border-radius: var(--r-sm);
   background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); text-align: left; cursor: text; }
 button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
@@ -46,43 +52,60 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    panes. A key just kept lights its row and the button once, in the
    background only, so nothing moves. */
 .dk-keys { position: relative; flex: none; display: flex; align-items: center; }
-.dk-keys-b { display: flex; align-items: center; gap: 3px; padding: 2px 5px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
-.dk-keys-b:hover, .dk-keys-b[aria-expanded="true"] { background: var(--rule); color: var(--fg); }
-.dk-keys-b .n { font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
-.dk-keys-b.none { color: var(--fg-3); }
+:is(.dk-keys-b, .dk-arr-b) { display: flex; align-items: center; gap: 3px; padding: 2px 5px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
+:is(.dk-keys-b, .dk-arr-b):is(:hover, [aria-expanded="true"]) { background: var(--rule); color: var(--fg); }
+:is(.dk-keys-b, .dk-arr-b) .n { font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+:is(.dk-keys-b, .dk-arr-b).none { color: var(--fg-3); }
 @keyframes dk-kept { 0%, 40% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
-.dk-keys-b.kept, .dk-key.new { animation: dk-kept calc(var(--dur-moment) * 2) ease-out; }
-@media (prefers-reduced-motion: reduce) { .dk-keys-b.kept, .dk-key.new { animation: none; } }
+:is(.dk-keys-b, .dk-arr-b).kept, .dk-key.new { animation: dk-kept calc(var(--dur-moment) * 2) ease-out; }
+@media (prefers-reduced-motion: reduce) { :is(.dk-keys-b, .dk-arr-b).kept, .dk-key.new { animation: none; } }
 .dk-keys-sheet { position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-pop); width: min(460px, calc(100vw - 32px)); padding: 8px 10px 10px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-small); color: var(--fg-2); text-align: left; white-space: normal; cursor: auto; }
-.dk-keys-h { color: var(--fg-3); padding: 0 2px 6px; border-bottom: 1px solid var(--rule); margin-bottom: 2px; }
-.dk-key { display: flex; align-items: center; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--rule); }
+/* The keys sheet (audit 67d008cb6f): a title, two short lists under labels
+   that read as labels -- above their rows, not ruled like one -- and an
+   "Add …" row closing each. */
+.dk-ks-t { padding: 2px 2px 4px; font-size: var(--fs-ui); font-weight: 600; color: var(--fg); }
+.dk-keys-h { padding: 8px 2px 2px; color: var(--fg-3); font-size: var(--fs-micro); font-weight: 600; }
+.dk-key { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 0 2px; border-radius: var(--r-sm); }
 .dk-key-n { flex: none; font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--fg); }
-.dk-key-m { flex: 1; min-width: 0; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-key-m { flex: 1; min-width: 0; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 .dk-key-x { flex: none; }
-.dk-keys-none { margin: 6px 2px; color: var(--fg-3); }
-.dk-keys-add { display: grid; gap: 6px; padding-top: 8px; }
-.dk-keys-t { color: var(--fg-3); font-weight: 600; }
+.dk-keys-none { margin: 4px 2px; color: var(--fg-3); }
+.dk-keys-add { display: grid; gap: 6px; padding: 4px 2px 6px; }
 .dk-keys-add label { display: flex; align-items: center; gap: 8px; }
 .dk-keys-add label > span { flex: 0 0 44px; color: var(--fg-3); }
-.dk-keys-add input:not([type="radio"]) { flex: 1; min-width: 0; font: inherit; font-family: var(--mono); font-size: 12px; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
+.dk-keys-add input:not([type="radio"]), .dk-acc-name { flex: 1; min-width: 0; font: inherit; font-family: var(--mono); font-size: 12px; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
+.dk-keys-add input::placeholder { color: var(--fg-3); font-style: italic; }
 .dk-keys-w { display: flex; align-items: center; gap: 10px; }
 .dk-keys-w > span { color: var(--fg-3); }
 .dk-keys-w button { margin-left: auto; padding: 2px 10px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--accent); cursor: pointer; }
 .dk-keys-w button:disabled { opacity: .5; cursor: default; }
 .dk-keys-say { margin: 0; color: var(--fg-3); font-size: var(--fs-micro); }
+/* An account: the radio and its name, one fact, its ⋯. */
 .dk-acc label { flex: none; display: flex; align-items: center; gap: 6px; cursor: pointer; }
-.dk-acc .dk-key-n { font-family: inherit; font-size: inherit; }
+.dk-acc .dk-key-n { font-family: inherit; font-size: inherit; font-weight: 500; color: var(--fg-2); }
+.dk-acc.on .dk-key-n { font-weight: 600; color: var(--fg); }
 .dk-key-m b { font-weight: 600; color: var(--warn); }
-.dk-acc-renew { flex: none; padding: 0 2px; border: 0; background: none; font: inherit; font-size: var(--fs-micro); color: var(--accent); cursor: pointer; }
-.dk-acc-more { padding: 6px 2px 0; }
-.dk-acc-more > summary { color: var(--fg-3); font-weight: 600; cursor: pointer; }
-.dk-acc-more + .dk-keys-h { margin-top: 10px; }
+.dk-acc-due { flex: 1; padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--warn); text-align: right; cursor: pointer; }
+.dk-acc-due:hover { text-decoration: underline; }
+.dk-acc-dots { flex: none; color: var(--fg-3); }
+.dk-acc-acts { flex: 1; display: flex; justify-content: flex-end; gap: 10px; white-space: nowrap; }
+.dk-acc-acts button { padding: 0; border: 0; background: none; font: inherit; color: var(--fg-2); cursor: pointer; }
+.dk-acc-acts button:hover { color: var(--fg); text-decoration: underline; }
+.dk-acc-acts .danger { color: var(--danger); }
+/* "Add a Claude account", "Add a key": a row like the rows above, that
+   unfolds its form under it. One open at a time (desk.js keysSheet). */
+.dk-add > summary { display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 2px; border-radius: var(--r-sm); list-style: none; color: var(--fg-2); cursor: pointer; }
+.dk-add > summary::-webkit-details-marker { display: none; }
+.dk-add > summary:hover, .dk-add[open] > summary { color: var(--fg); }
+.dk-add > summary:hover { background: var(--rule); }
 .dk-acc-add label button { padding: 2px 10px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--accent); cursor: pointer; }
 .dk-acc-add label button:disabled { opacity: .5; cursor: default; }
 .dk-acc-live { display: grid; gap: 6px; color: var(--fg-2); font-size: var(--fs-small); }
 .dk-acc-live > button { justify-self: start; padding: 0; border: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; }
 .dk-acc-live label button + button { border-color: var(--rule-2); color: var(--fg-3); }
 .dk-acc-link { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); text-decoration: underline; cursor: pointer; }
+/* The account a desk runs as, leading its key button when it is not your login. */
+.dk-keys-b .acc { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; font-weight: 600; color: var(--fg); margin-right: 2px; }
 :is(.dk-keys-say, .dk-key-m) code { font-family: var(--mono); }
 /* An agent's suggestion: a ghost row, quieter than a line of the reader's,
    with its two answers always shown. */
@@ -451,7 +474,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-meta .dk-marks > .dk-stage.pr.pass { color: var(--ok); }
 .dk-meta .dk-marks > .dk-stage.pr.fail { color: var(--warn); }
 /* Shipped, not yet ticked: out, and the reader's to check (#112). */
-.dk-meta .dk-marks > .dk-stage.shipped { color: var(--ok); }
+.dk-meta .dk-marks > .dk-stage.shipped { color: var(--accent); font-weight: 600; }
+/* Its chat ended with the work not out: the dot held still and hollow. */
+.dk-stage.working.ended::before { background: none; box-shadow: inset 0 0 0 1.25px var(--accent); }
+.dk-stage.working.ended .w { color: var(--fg-2); }
 .dk-num { padding: 0 1px; border-radius: 3px; font-family: var(--mono); font-size: var(--fs-micro); letter-spacing: -.04em; line-height: 14px; font-variant-numeric: tabular-nums; color: var(--fg-3); opacity: .6; transition: opacity var(--t), color var(--t); }
 .dk-note:is(:hover, :focus-within) .dk-num, .dk-num[data-said] { opacity: 1; }
 .dk-num:hover { color: var(--accent); }
@@ -484,6 +510,15 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-undo { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: var(--r-xs); color: var(--accent); }
 .dk-undo:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 /* Remove done notes answers in the head, in the actions' place, with its Undo. */
+/* The done half, folded to one row at the list's foot, at a note's left
+   edge; Clear at its right, and the Undo in the row's place after it. */
+.dk-done-li { display: flex; align-items: center; min-height: 24px; }
+.dk-done-b { display: flex; align-items: center; gap: 6px; padding-left: 11px; font-variant-numeric: tabular-nums; }
+.dk-done-b svg { width: 12px; height: 12px; }
+.dk-done-b[aria-expanded="true"] { color: var(--fg-2); }
+.dk-done-x { margin-left: auto; font-size: var(--fs-micro); opacity: 0; transition: opacity var(--t); }
+.dk-done-li:is(:hover, :focus-within) .dk-done-x { opacity: 1; }
+.dk-done-li .dk-cleared { padding-left: 11px; }
 .dk-cleared { display: flex; align-items: center; gap: 4px; padding-left: 8px; font-size: var(--fs-micro); color: var(--fg-3); animation: dk-fade 140ms ease-out; }
 /* How far an agent has got: at the line's right end, over its ✕, in a slot
  * every line keeps, so a line that is picked up does not rewrap. Read is a

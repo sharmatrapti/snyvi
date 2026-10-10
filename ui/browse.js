@@ -3,6 +3,16 @@
  * and the rail's rows for it. Fetched the first time a folder or a file is
  * opened; out of first paint since 1.8. */
 
+/* A folder's entries are the Inbox's rows; that list's look moved to
+   home.js in 1.32, off first paint, so the rows this page shares with it
+   ride here too. */
+{ const st = document.createElement("style"); st.textContent = `
+.inbox { list-style: none; margin: 0; padding: 0; }
+.inbox li a { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title time" "sub sub"; gap: 2px 16px; padding: 12px 14px; margin: 0 -14px; border-radius: var(--r-md); color: inherit; border-bottom: 1px solid var(--rule); transition: background var(--t); }
+.inbox li a:hover { background: var(--bg-side); text-decoration: none; }
+.inbox .title { grid-area: title; font-weight: 600; font-size: var(--fs-body-s); letter-spacing: -.005em; }
+.inbox .time { grid-area: time; font-size: var(--fs-small); color: var(--fg-3); font-variant-numeric: tabular-nums; }`; document.head.append(st); }
+
 function browseHtml(c, f, root) {
   const { esc, fmtSize, rel } = c;
   const sub = `${esc(root.name)} · ${esc(f.path)} · ${fmtSize(f.size)} · ${rel(f.modified)}`;

@@ -415,10 +415,7 @@
    *  (about.js's `checkUpdates`). */
   const checkUpdates = at => panelMod().then(m => m.checkUpdates(at, { ...updCtx(), setUpd }), () => { panelLoading = null; });
   /** What the update surfaces need from the page: about.js's `pill` and `card`. */
-  const updCtx = () => ({ capability, deskApi, toast, plural, esc, copied, version: boot.version, panel, peek: mascotPeek, landed });
-  /** An update landed in the last hour (about.js): the hover line answers
-   *  with the version for that long (look.js's SAYS), and nothing opens. */
-  const landed = (v, at) => { state.landed = { v, at }; };
+  const updCtx = () => ({ capability, deskApi, toast, plural, esc, copied, version: boot.version, panel, peek: mascotPeek });
   /** The version at the sidebar's foot: About, on a click, and the one place
    *  an update waiting shows as a dot. */
   const verEl = $("#foot-ver");

@@ -114,8 +114,8 @@ const OWN = mod => ({
   "first-doc": ["Your first document. What arrives stays, filed with its project: nothing scrolls away.", "arrives"],
   "two-waiting": ["Two are waiting now. n opens the oldest and takes it off; one key each, in the order they came.", "waiting"],
   "second-desk": [`Got another project? Give it a desk too. ${mod} and its name goes between them.`, "desks"],
-  "two-desks": ["Two desks. Each keeps its panels, notes and documents just as you left it. An amber row is one waiting on you.", "desks"],
-  "blocked": ["A panel is waiting on you. Its row stays amber until you answer it, and Desks counts it.", "desks"],
+  "two-desks": ["Two desks. Each keeps its panels, notes and documents just as you left it. An amber row is one that needs you.", "desks"],
+  "blocked": ["A panel needs you. Its row stays amber until you answer it, and Desks counts it.", "desks"],
   "version": ["A newer version of this file came in. c shows what changed; the older one is still here.", "versions"],
 });
 
@@ -133,7 +133,7 @@ function noteGo(el, showDoc, showStart, showDesk) {
 
 /** `showDesk` comes only in the desktop window: a browser tab runs no desks,
  *  so there an aside from a panel leads nowhere and says nothing about one. */
-export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, showDesk, toast, keyHint, closeSay, undoClock, holdUndo, dropUndo, peek }) {
+export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, showDesk, toast, keyHint, undoClock, holdUndo, dropUndo, peek }) {
   const own = OWN(keyHint("mod+k"));
   const sheet = document.createElement("style");
   sheet.id = "note-drawn";
@@ -213,12 +213,6 @@ export function init({ root, $, state, liveNotes, esc, relShort, showDoc, showSt
     const arrived = n.id !== noteShown && !n.seen;
     if (arrived && markEl) {
       markEl.classList.remove("hop"); void markEl.offsetWidth; markEl.classList.add("hop");
-      // Whatever snyvi was saying to a reader on the face, the line that just
-      // arrived outranks it: the agent takes the floor, and the hop is the
-      // mark's answer rather than the nod. Asked only of a bubble that is
-      // open, which is also the only time `closeSay` is in scope: the first
-      // render runs before the block below it is reached.
-      if ("say" in root.dataset) closeSay();
     }
     noteShown = n.id;
     const by = noteBy(n);

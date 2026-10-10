@@ -78,7 +78,7 @@ function leftOffSlot(d) {
   const head = ctx.docEl.querySelector(".dk-head"), { esc } = ctx;
   if (!head) return;
   let el = head.querySelector(".dk-left");
-  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-left" }); head.querySelector(".dk-keys, .dk-tabs").before(el); }
+  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-left" }); head.querySelector(".dk-arr, .dk-keys, .dk-tabs").before(el); }
   if (leftField === d.id && el.querySelector("input")) return;
   const l = d.left_off;
   if (leftGone && leftGone.desk === d.id) {
@@ -117,49 +117,69 @@ function keysSlot(d) {
   let b = el.querySelector(".dk-keys-b");
   if (!b) { b = Object.assign(document.createElement("button"), { type: "button", className: "dk-keys-b" }); b.dataset.a = "keys"; b.setAttribute("aria-haspopup", "dialog"); el.prepend(b); }
   const ks = d.keys || [], n = ks.length, open = keysOpen === d.id;
-  b.classList.toggle("none", !n);
+  const acc = d.account ? (ctx.desks.accounts || []).find(a => a.id === d.account) : null;
+  b.classList.toggle("none", !n && !acc);
   b.setAttribute("aria-expanded", String(open));
   // A key, always there, and how many beside it: a word that showed only
-  // under the cursor was a control nobody knew was there.
-  const html = head("key") + (n ? `<span class="n">${n}</span>` : "");
+  // under the cursor was a control nobody knew was there. The account the
+  // desk's Claude runs as leads it when it is not your login -- which one a
+  // desk is on was a tip's alone, and the thing most asked (note #113, audit
+  // 67d008cb6f). It changes when the reader picks, never on its own.
+  const html = (acc ? `<span class="acc">${ctx.esc(acc.label)}</span>` : "") + head("key") + (n ? `<span class="n">${n}</span>` : "");
   if (b.$html !== html) { b.innerHTML = html; b.$html = html; }
-  b.setAttribute("aria-label", n ? `${n} key${n === 1 ? "" : "s"}` : "Keys");
-  const acc = d.account ? (ctx.desks.accounts || []).find(a => a.id === d.account) : null;
-  b.dataset.tip = (acc ? `Claude as ${acc.label}${n ? " · " : ""}` : "") + (n ? ks.map(k => k.name).join(", ") : acc ? "" : "Keys for this desk's panels");
-  b.dataset.tipSub = n ? "in the environment of this desk's panels · click to see or add" : "an API key or a token, kept where only you can read it and put in the environment of every panel here";
+  b.setAttribute("aria-label", [acc ? `Claude as ${acc.label}` : "", n ? `${n} key${n === 1 ? "" : "s"}` : "Keys"].filter(Boolean).join(", "));
+  b.dataset.tip = (acc ? `Claude as ${acc.label}${n ? " · " : ""}` : "") + (n ? ks.map(k => k.name).join(", ") : acc ? "" : "What this desk's panels start with");
+  b.dataset.tipSub = "the Claude account and the keys in this desk's panels · click to see or change";
   if (open) keysRows(d);
 }
 
 const provider = name => (PROVIDERS.find(([, n]) => n === name) || [""])[0];
+/** When a panel last started with it, said as a sentence says it. */
+const usedSay = t => t ? `used ${ctx.rel(t)}` : "not used yet";
 
+/* The sheet is two short lists, what this desk's panels start with: the
+ * Claude account and the keys. Each ends in an "Add …" row that unfolds its
+ * form in place, the same way and the same verb for both; it opens on the
+ * account picked, not in a form, since most opens are to look or switch.
+ * Managing an account -- rename, renew, remove from every desk -- is behind
+ * its row's ⋯, because it reaches past this desk (audit 67d008cb6f). */
 function keysSheet(d) {
   if (keysOpen === d.id) { keysClose(true); return; }
-  keysClose();
+  keysClose(); arrClose();
   const slot = ctx.docEl.querySelector(".dk-keys");
   if (!slot) return;
   keysOpen = d.id;
+  const plus = ctx.glyph("plus");
   const sheet = Object.assign(document.createElement("div"), { className: "dk-keys-sheet" });
-  sheet.setAttribute("role", "dialog"); sheet.setAttribute("aria-label", "Keys for this desk's panels");
-  sheet.innerHTML = `<div class="dk-keys-h">Claude account this desk's panels start as</div><div class="dk-acc-rows" role="radiogroup" aria-label="Claude account"></div>
-    <details class="dk-acc-more"><summary>Add a Claude account</summary><form class="dk-keys-add dk-acc-add" autocomplete="off">
+  sheet.setAttribute("role", "dialog"); sheet.setAttribute("aria-label", "What this desk's panels start with");
+  sheet.innerHTML = `<div class="dk-ks-t">This desk's panels start with</div>
+    <div class="dk-keys-h">Claude as</div><div class="dk-acc-rows" role="radiogroup" aria-label="Claude as"></div>
+    <details class="dk-add dk-acc-more"><summary>${plus}<span>Add a Claude account</span></summary><form class="dk-keys-add dk-acc-add" autocomplete="off">
       <label><span>Name</span><input name="label" maxlength="40" spellcheck="false" placeholder="Work"><button type="button" data-a="acc-in">Sign in…</button></label>
       <div class="dk-acc-live" role="status" hidden></div>
       <label><span>Token</span><input name="token" type="password" autocomplete="new-password" required spellcheck="false" placeholder="or paste one from claude setup-token"><button type="submit">Add</button></label>
-      <p class="dk-keys-say" role="status">Sign in opens Claude's sign-in in your browser: approve as the other account and it is added here. It lasts a year, and your settings, hooks and history stay shared.</p>
+      <p class="dk-keys-say" role="status">Sign in opens Claude's sign-in in your browser. It lasts a year; your settings and history stay shared.</p>
     </form></details>
-    <div class="dk-keys-h">Keys for this desk's panels</div><div class="dk-keys-rows"></div>
-    <form class="dk-keys-add" autocomplete="off">
-      <div class="dk-keys-t">Add a key</div>
-      <label><span>Name</span><input name="name" list="dk-key-names" required spellcheck="false" placeholder="OPENROUTER_API_KEY" pattern="[A-Z][A-Z0-9_]*" maxlength="64" title="capitals, digits and underscores"></label>
+    <div class="dk-keys-h">Keys</div><div class="dk-keys-rows"></div>
+    <details class="dk-add dk-key-more"><summary>${plus}<span>Add a key</span></summary><form class="dk-keys-add dk-key-add" autocomplete="off">
+      <label><span>Name</span><input name="name" list="dk-key-names" required spellcheck="false" placeholder="e.g. OPENROUTER_API_KEY" pattern="[A-Z][A-Z0-9_]*" maxlength="64" title="capitals, digits and underscores"></label>
       <datalist id="dk-key-names">${PROVIDERS.map(([p, n]) => `<option value="${n}">${p}</option>`).join("")}</datalist>
       <label><span>Value</span><input name="value" type="password" autocomplete="new-password" required placeholder="paste it here"></label>
-      <div class="dk-keys-w"><span>Where</span><label><input type="radio" name="every" value="" checked> this desk</label><label><input type="radio" name="every" value="1"> every desk</label><button type="submit">Keep</button></div>
-      <p class="dk-keys-say" role="status">Kept where only you can read it and never shown again. Panels on this desk can use it now, as $(snyvi key NAME).</p>
-    </form>`;
-  sheet.querySelector(".dk-keys-add:not(.dk-acc-add)").addEventListener("submit", e => keyAdd(d, e));
+      <div class="dk-keys-w"><span>For</span><label><input type="radio" name="every" value="" checked> this desk</label><label><input type="radio" name="every" value="1"> every desk</label><button type="submit">Add</button></div>
+      <p class="dk-keys-say" role="status">Only you can read it, and it is never shown again. Use it as $(snyvi key NAME).</p>
+    </form></details>`;
+  sheet.querySelector(".dk-key-add").addEventListener("submit", e => keyAdd(d, e));
   sheet.querySelector(".dk-acc-add").addEventListener("submit", e => accAdd(d, e));
   sheet.querySelector(".dk-acc-live").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); accSignCode(); } });
   sheet.querySelector(".dk-acc-rows").addEventListener("change", e => { if (e.target.name === "acc") accPick(d, +e.target.value); });
+  sheet.querySelector(".dk-acc-rows").addEventListener("keydown", e => { if (e.target.matches(".dk-acc-name") && e.key === "Enter") { e.preventDefault(); accNamed(d, e.target); } });
+  // An "Add …" row, opened, puts the hand in its first field; the other one
+  // folds, so one form is open at a time.
+  for (const x of sheet.querySelectorAll(".dk-add")) x.addEventListener("toggle", () => {
+    if (!x.open) return;
+    for (const y of sheet.querySelectorAll(".dk-add")) if (y !== x) y.open = false;
+    [...x.querySelectorAll("input:not([type=radio])")].find(i => !i.hidden)?.focus();
+  });
   // What is typed is the sheet's: the page's own keys stay out of it.
   sheet.addEventListener("keydown", e => { if (e.key !== "Escape") e.stopPropagation(); });
   slot.append(sheet);
@@ -168,7 +188,7 @@ function keysSheet(d) {
   ctx.api("/api/accounts/signin").then(j => { signing = j.signin; signDraw(); signPoll(); }, () => {});
   document.addEventListener("pointerdown", keysOutside, true);
   document.addEventListener("keydown", keysKey, true);
-  sheet.querySelector("input[name=name]").focus();
+  (sheet.querySelector(".dk-acc-rows input:checked") || sheet.querySelector(".dk-acc-rows input") || sheet.querySelector("summary")).focus();
 }
 
 function keysRows(d) {
@@ -182,16 +202,22 @@ function keysRows(d) {
   // redraw of the desk.
   const html = ks.length ? ks.map(k => gone(k)
     ? `<div class="dk-key" role="status"><span class="dk-key-n">${esc(k.name)}</span><span class="dk-key-m">Removed · its value is gone in a moment</span><button type="button" class="dk-undo" data-a="key-back">Undo</button></div>`
-    : `<div class="dk-key${lit(k)}"><span class="dk-key-n">${esc(k.name)}</span><span class="dk-key-m">${k.provider ? esc(k.provider) + " · " : ""}${k.desk_id ? "this desk" : "every desk"} · ${k.used_at ? "a panel started with it " + ctx.relShort(k.used_at) : "no panel has started with it yet"}</span><button type="button" class="icon dk-key-x" data-a="key-x" data-n="${esc(k.name)}" data-every="${k.desk_id ? "" : "1"}" data-tip="Take it off ${k.desk_id ? "this desk" : "every desk"}" aria-label="Remove ${esc(k.name)}">${ctx.glyph("x")}</button></div>`).join("")
-    : `<p class="dk-keys-none">None yet. A key here goes into the environment of every panel on this desk, and Claude is told its name, never its value.</p>`;
+    : `<div class="dk-key${lit(k)}"><span class="dk-key-n">${esc(k.name)}</span><span class="dk-key-m">${k.provider ? esc(k.provider) + " · " : ""}${k.desk_id ? "this desk" : "every desk"} · ${usedSay(k.used_at)}</span><button type="button" class="icon dk-key-x" data-a="key-x" data-n="${esc(k.name)}" data-every="${k.desk_id ? "" : "1"}" data-tip="Take it off ${k.desk_id ? "this desk" : "every desk"}" aria-label="Remove ${esc(k.name)}">${ctx.glyph("x")}</button></div>`).join("")
+    : `<p class="dk-keys-none">None yet. A key goes into the environment of every panel here, and Claude is told its name, never its value.</p>`;
   if (rows.$html !== html) { rows.innerHTML = html; rows.$html = html; }
 }
 
 function keysOutside(e) { if (!e.target.closest(".dk-keys")) keysClose(); }
-function keysKey(e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); keysClose(true); } }
+function keysKey(e) {
+  if (e.key !== "Escape") return;
+  e.preventDefault(); e.stopPropagation();
+  // Esc in a name being changed leaves the name as it was, and the sheet open.
+  if (accNaming != null && document.activeElement?.matches(".dk-acc-name")) { accNaming = null; const d = current(); if (d) keysRows(d); return; }
+  keysClose(true);
+}
 function keysClose(back = false) {
   if (keysOpen == null) return;
-  keysOpen = null; accRenew = null;
+  keysOpen = null; accRenew = null; accMore = null; accNaming = null;
   document.removeEventListener("pointerdown", keysOutside, true);
   document.removeEventListener("keydown", keysKey, true);
   const sheet = ctx.docEl.querySelector(".dk-keys-sheet"); if (sheet) sheet.remove();
@@ -212,9 +238,7 @@ async function keyAdd(d, e) {
     setTimeout(() => { if (keyNew && keyNew.name === name) keyNew = null; }, 1600);
     const b = ctx.docEl.querySelector(".dk-keys-b");
     if (b) { b.classList.remove("kept"); void b.offsetWidth; b.classList.add("kept"); b.addEventListener("animationend", () => b.classList.remove("kept"), { once: true }); }
-    say.textContent = j.kept === "file"
-      ? `${name} is kept in a file only you can read. Panels on this desk can use it now, as $(snyvi key ${name}).`
-      : `${name} is kept in your keychain. Panels on this desk can use it now, as $(snyvi key ${name}).`;
+    say.textContent = `${name} is kept in ${j.kept === "file" ? "a file only you can read" : "your keychain"}. Panels here can use it now, as $(snyvi key ${name}).`;
     f.name.focus();
   } catch (err) { say.textContent = `Could not keep it · ${ctx.sayErr(err).why}`; }
   btn.disabled = false;
@@ -237,11 +261,13 @@ function keyBack(d) { if (!keysGone) return; clearTimeout(keysGone.timer); keysG
 
 /* ---------- Claude accounts (`crate::accounts`) ----------
  * In the keys sheet, since a token is kept as a key is: which account the
- * desk's panels start as, a token added or renewed, an account taken away.
- * An account is every desk's; which one a desk starts as is the desk's. */
+ * desk's panels start as, a token added or renewed, an account renamed or
+ * taken away. An account is every desk's; which one a desk starts as is the
+ * desk's. */
 const YEAR = 365 * 86400, RENEW_SOON = 30 * 86400;
-let accGone = null, accRenew = null;
-const accDate = t => new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+/** The account whose ⋯ is open, and the one whose name is being changed. */
+let accGone = null, accRenew = null, accMore = null, accNaming = null;
+const accDate = t => new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
 function accRows(d) {
   const rows = ctx.docEl.querySelector(".dk-keys-sheet .dk-acc-rows");
@@ -249,21 +275,42 @@ function accRows(d) {
   const { esc } = ctx, now = Date.now() / 1000;
   const all = accounts();
   const row = a => {
-    if (accGone && accGone.id === a.id) return `<div class="dk-key" role="status"><span class="dk-key-n">${esc(a.label)}</span><span class="dk-key-m">Removed · its token is gone in a moment</span><button type="button" class="dk-undo" data-a="acc-back">Undo</button></div>`;
+    if (accGone && accGone.id === a.id) return `<div class="dk-key" role="status"><span class="dk-key-n">${esc(a.label)}</span><span class="dk-key-m">Removed from every desk · its token is gone in a moment</span><button type="button" class="dk-undo" data-a="acc-back">Undo</button></div>`;
+    const on = a.id === (d.account || 0), radio = `<input type="radio" name="acc" value="${a.id}"${on ? " checked" : ""}>`;
+    if (accNaming === a.id) return `<div class="dk-key dk-acc">${radio}<input class="dk-acc-name" value="${esc(a.label)}" maxlength="40" spellcheck="false" aria-label="New name for ${esc(a.label)}"><span class="dk-key-m">Enter keeps it · Esc leaves it</span></div>`;
     const end = (a.created_at || 0) + YEAR, soon = a.id && end - now < RENEW_SOON;
-    const meta = !a.id ? "the account <code>/login</code> signed in"
-      : `${soon ? `<b>renew by ${accDate(end)}</b>` : `good until ${accDate(end)}`} · ${a.used_at ? "a panel started as it " + ctx.relShort(a.used_at) : "no panel has started as it yet"}`;
-    return `<div class="dk-key dk-acc"><label><input type="radio" name="acc" value="${a.id}"${a.id === (d.account || 0) ? " checked" : ""}><span class="dk-key-n">${esc(a.label)}</span></label><span class="dk-key-m">${meta}</span>` +
-      (a.id ? `<button type="button" class="dk-acc-renew" data-a="acc-renew" data-n="${a.id}">Renew</button><button type="button" class="icon dk-key-x" data-a="acc-x" data-n="${a.id}" data-tip="Remove ${esc(a.label)}" data-tip-sub="from every desk · its panels go back to your login" aria-label="Remove ${esc(a.label)}">${ctx.glyph("x")}</button>` : "") + `</div>`;
+    // One fact: the token's end when it is near -- and then it is the
+    // row's button -- otherwise when a panel last started as it.
+    const meta = !a.id ? `<span class="dk-key-m">Claude's own <code>/login</code></span>`
+      : soon ? `<button type="button" class="dk-acc-due" data-a="acc-renew" data-n="${a.id}" data-tip="Renew ${esc(a.label)}" data-tip-sub="its token ends ${accDate(end)}; sign in again or paste a new one">Renew by ${accDate(end)}</button>`
+      : `<span class="dk-key-m">${usedSay(a.used_at)}</span>`;
+    const more = accMore === a.id;
+    // Its ⋯ puts what reaches past this desk in the row's own place: the
+    // fact steps aside, the row keeps its height.
+    const acts = `<span class="dk-acc-acts"><button type="button" data-a="acc-name" data-n="${a.id}">Rename</button><button type="button" data-a="acc-renew" data-n="${a.id}">Renew</button><button type="button" class="danger" data-a="acc-x" data-n="${a.id}" data-tip="Remove ${esc(a.label)}" data-tip-sub="from every desk · their panels go back to your login">Remove from every desk</button></span>`;
+    return `<div class="dk-key dk-acc${on ? " on" : ""}"><label>${radio}<span class="dk-key-n">${a.id ? esc(a.label) : "Your login"}</span></label>${more ? acts : meta}` +
+      (a.id ? `<button type="button" class="icon dk-acc-dots" data-a="acc-more" data-n="${a.id}" aria-expanded="${more}" data-tip="${more ? "Done" : "Rename, renew or remove"}" aria-label="${more ? "Close" : "More for"} ${esc(a.label)}">${ctx.glyph(more ? "x" : "more")}</button>` : "") + `</div>`;
   };
   // Claude Code ranks these over an account's token (`accounts::OUTRANKS`).
   const over = d.account ? (d.keys || []).find(k => k.name === "ANTHROPIC_API_KEY" || k.name === "ANTHROPIC_AUTH_TOKEN") : null;
   const html = all.map(row).join("") + (over ? `<p class="dk-keys-say"><b>${esc(over.name)}</b> is a key here, and Claude Code uses it over the account picked.</p>` : "");
-  if (rows.$html !== html) { rows.innerHTML = html; rows.$html = html; }
+  if (rows.$html !== html) {
+    rows.innerHTML = html; rows.$html = html;
+    const nm = rows.querySelector(".dk-acc-name"); if (nm) { nm.focus(); nm.select(); }
+  }
   const more = ctx.docEl.querySelector(".dk-acc-more"), f = more && more.querySelector("form");
   const r = accRenew && all.find(a => a.id === accRenew);
-  if (f) { f.label.hidden = f.label.previousElementSibling.hidden = !!r; more.firstElementChild.textContent = r ? `Renew ${r.label}` : "Add a Claude account"; f.querySelector("button[type=submit]").textContent = r ? "Renew" : "Add"; }
+  if (f) { f.label.hidden = f.label.previousElementSibling.hidden = !!r; more.querySelector("summary > span").textContent = r ? `Renew ${r.label}` : "Add a Claude account"; f.querySelector("button[type=submit]").textContent = r ? "Renew" : "Add"; }
   signDraw();
+}
+/** A name changed in its row: Enter keeps it. */
+async function accNamed(d, input) {
+  const id = accNaming, label = input.value.trim();
+  if (id == null || !label) return;
+  try { await ctx.api(`/api/accounts/${id}/rename`, { label }); accNaming = null; accMore = null; await ctx.refresh(); }
+  catch (e) { ctx.toast("Could not rename the account", e); return; }
+  keysRows(d);
+  ctx.docEl.querySelector(`.dk-acc-rows input[value="${id}"]`)?.focus();
 }
 
 /* Sign in: snyvi runs `claude setup-token` out of sight and keeps the token
@@ -347,6 +394,8 @@ function keysAct(a, b, d) {
   else if (a === "acc-x") accRemove(d, +b.dataset.n);
   else if (a === "acc-back") accBack(d);
   else if (a === "acc-renew") accRenewing(d, +b.dataset.n);
+  else if (a === "acc-more") { accMore = accMore === +b.dataset.n ? null : +b.dataset.n; keysRows(d); ctx.docEl.querySelector(`.dk-acc-dots[data-n="${b.dataset.n}"]`)?.focus(); }
+  else if (a === "acc-name") { accNaming = +b.dataset.n; accMore = null; keysRows(d); }
   else if (a === "acc-in") accSignIn(d);
   else if (a === "acc-in-x") accSignCancel();
   else if (a === "acc-in-code") accSignCode();
@@ -373,6 +422,7 @@ async function accPick(d, account) {
 }
 
 function accRemove(d, id) {
+  accMore = null;
   if (accGone) { clearTimeout(accGone.timer); accGo(accGone); }
   accGone = { id, timer: 0 };
   accGone.timer = setTimeout(() => { const g = accGone; accGone = null; accGo(g); }, BACK_MS);
@@ -385,7 +435,7 @@ async function accGo(g) {
 }
 function accBack(d) { if (!accGone) return; clearTimeout(accGone.timer); accGone = null; keysRows(d); }
 function accRenewing(d, id) {
-  accRenew = id;
+  accRenew = id; accMore = null;
   keysRows(d);
   const more = ctx.docEl.querySelector(".dk-acc-more");
   if (more) { more.open = true; more.querySelector("input[name=token]").focus(); }
@@ -448,7 +498,7 @@ function tabs(d, all, shown) {
   // A number is the panel's slot and its key, so a tab says which, and why
   // it is a tab: full view, or a window with no room for it.
   const tip = v => shown.includes(v) ? `data-tip="Panel ${v.pane.slot}" data-key="ctrl+alt+${v.pane.slot}"`
-    : `data-tip="${need(v) ? "Waiting on you" : `Panel ${v.pane.slot}`}" data-tip-sub="${full ? "full view shows one" : "not enough room"}" data-key="ctrl+alt+${v.pane.slot}"`;
+    : `data-tip="${need(v) ? "Needs you" : `Panel ${v.pane.slot}`}" data-tip-sub="${full ? "full view shows one" : "not enough room"}" data-key="ctrl+alt+${v.pane.slot}"`;
   t.innerHTML = all.length > shown.length ? all.map(v => `<button type="button" data-focus="${v.id}" class="${shown.includes(v) ? "on" : ""}${!shown.includes(v) && need(v) ? " blk" : ""}" ${tip(v)}>[${v.pane.slot}]${!shown.includes(v) && need(v) ? "!" : ""}</button>`).join("") : "";
   // The + goes quiet when there is no pane to add, and says why under the
   // cursor. At the desk's own cap the count sits beside it -- 4/4 -- which

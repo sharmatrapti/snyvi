@@ -334,7 +334,7 @@
    * window never pays for it. Open means loaded. The opener is taken now,
    * as the reader presses, not when the chunk lands. */
   const railNarrow = matchMedia("(max-width: 1100px)"), sideNarrow = matchMedia("(max-width: 760px)");
-  const sideEl = $("#side");
+  // `sideEl` is 03-queue.js's, the sidebar's order held under the pointer.
   function closeSheet() { return !!root.dataset.sheet && acts.closeSheet(); }
   const toggleSheet = (which, opener = document.activeElement) => root.dataset.sheet === which ? closeSheet() : useActs().then(m => m.openSheet(actsCtx, which, opener));
   $("#scrim").addEventListener("click", () => { closeSheet(); closePop(); });
@@ -365,7 +365,7 @@
    * the popover; #pop is inside #trees, so the clicks the tree delegates
    * still reach it. One at a time; Esc, a click outside it, a link followed
    * in it and `\` close it. The numbers on the icons are the ones the
-   * sections say: waiting, panels waiting on you, agents connected. */
+   * sections say: waiting, panels that need you, agents connected. */
   const railNav = $("#rail-nav");
   ICONS.search = '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/>';
   for (const b of railNav.querySelectorAll("[data-ico]")) b.insertAdjacentHTML("afterbegin", icon(b.dataset.ico));

@@ -111,6 +111,22 @@ const OLD_1_30: &str = "ALTER TABLE desks DROP COLUMN account;
 /// And of 1.31's: a widget file's title on its seat (step 17).
 const OLD_1_31: &str = "ALTER TABLE widget_bodies DROP COLUMN title;";
 
+/// And of 1.32's: a widget file's owner (step 18), `widget_prefs` keyed by
+/// name again. Before `OLD_1_30`, which takes 1.30's columns off this shape.
+const OLD_1_32: &str = "CREATE TABLE widget_prefs_old (
+       name TEXT PRIMARY KEY,
+       hidden INTEGER NOT NULL DEFAULT 0,
+       settings TEXT NOT NULL DEFAULT '{}',
+       trusted_hash TEXT NOT NULL DEFAULT '',
+       rerun_edits INTEGER NOT NULL DEFAULT 0,
+       updated_at INTEGER NOT NULL,
+       desks TEXT NOT NULL DEFAULT '',
+       until INTEGER NOT NULL DEFAULT 0,
+       until_pane TEXT NOT NULL DEFAULT '');
+     DROP TABLE widget_prefs;
+     ALTER TABLE widget_prefs_old RENAME TO widget_prefs;
+     ALTER TABLE widget_bodies DROP COLUMN owner;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -789,6 +805,12 @@ fn the_queue_is_what_arrived_and_was_not_opened() {
         s.mark_unread(&cleared).unwrap().is_empty(),
         "already waiting"
     );
+    // A desk's own, read without being opened: only those, and once.
+    let d = s.insert(&new_id("d"), new_doc("D", "ddd", "w")).unwrap();
+    let read = s.mark_ids_read(&[d.id.clone(), "nope".into()]).unwrap();
+    assert_eq!(read, vec![d.id.clone()]);
+    assert_eq!(ids(s.queue(10).unwrap()), vec![cleared[0].clone()]);
+    assert!(s.mark_ids_read(&[d.id]).unwrap().is_empty(), "already read");
 }
 
 #[test]
@@ -915,6 +937,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
+         {OLD_1_32}
          {OLD_1_30}
          {OLD_1_31}
              {OLD_1_19}
@@ -1201,6 +1224,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
+         {OLD_1_32}
          {OLD_1_30}
          {OLD_1_31}
              {OLD_1_19}

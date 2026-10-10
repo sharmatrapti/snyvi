@@ -3,8 +3,8 @@
  * Fetched when the page opens (app.js `showSidebars`): arranging happens
  * once in a while, so first paint never pays for it. Two lists, the left's
  * and the right's, in the order the sidebars draw them; a row is dragged,
- * or moved with Alt+↑ ↓, and switched on or off. Your turn is fixed: first
- * on the right, never off. Every change is saved as it is made, and the
+ * or moved with Alt+↑ ↓, and switched on or off. Your turn is not a
+ * section any more: it waits in a desk's corner (ui/desk/10-onyou.js). Every change is saved as it is made, and the
  * real sidebar moves with it (the `layout` event). Under them the widgets:
  * each widget file with what it runs, whether it is allowed, its switch,
  * its settings and Rerun my edits, the desks it is on and how long it lasts
@@ -33,14 +33,12 @@ const STYLE = `
 .sb-row.over { box-shadow: inset 0 2px 0 var(--accent); }
 .sb-row.off .sb-nm { color: var(--fg-3); }
 .sb-grip { flex: none; width: 12px; color: var(--fg-3); cursor: grab; text-align: center; letter-spacing: -1px; }
-.sb-row.fixed .sb-grip { cursor: default; }
 .sb-nm { flex: none; }
 .sb-what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-small); color: var(--fg-3); font-weight: 400; }
 .sb-sw { flex: none; position: relative; width: 26px; height: 16px; border-radius: var(--r-pill); background: var(--rule-2); transition: background var(--t); }
 .sb-sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-raise); box-shadow: var(--shadow); transition: transform var(--t); }
 .sb-sw[aria-checked="true"] { background: var(--accent); }
 .sb-sw[aria-checked="true"]::after { transform: translateX(10px); }
-.sb-fixed { flex: none; font-size: var(--fs-micro); color: var(--fg-3); }
 .sb-w { padding: 6px 8px 8px; border-top: 1px solid var(--rule); }
 .sb-w:first-of-type { border-top: 0; }
 .sb-w-head { display: flex; align-items: center; gap: 8px; min-height: var(--row-h); font-size: var(--fs-ui); }
@@ -56,6 +54,8 @@ const STYLE = `
 .sb-btn { padding: 2px 10px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); font-size: var(--fs-small); color: var(--fg); }
 .sb-btn:hover:not(:disabled) { border-color: var(--accent); }
 .sb-btn.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.sb-btn.sb-rm { color: var(--danger); }
+.sb-btn.sb-rm:hover:not(:disabled) { border-color: var(--danger); }
 .sb-set { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; align-items: center; margin-top: 6px; font-size: var(--fs-small); color: var(--fg-2); }
 .sb-set input:not([type="checkbox"]), .sb-set select { min-width: 0; font: inherit; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
 .sb-folder { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); overflow-wrap: anywhere; }
@@ -71,13 +71,12 @@ const SECS = {
   desks: ["Desks", "your desks"],
   folders: ["Folders", "folders opened to read"],
   widgets: ["Widgets", "global widgets"],
-  turn: ["Your turn", "what only you can do"],
   panels: ["Panels", "this desk's panels"],
   points: ["Points", "passages kept for a panel"],
   docs: ["Documents", "what this desk's panels sent"],
   notes: ["Notes", "this desk's list"],
 };
-const DEFAULT = { left: ["inbox", "desks", "folders", "widgets"], right: ["turn", "panels", "points", "docs", "notes", "widgets"], hidden: [] };
+const DEFAULT = { left: ["inbox", "desks", "folders", "widgets"], right: ["panels", "points", "docs", "notes", "widgets"], hidden: [] };
 
 let c = null, data = null, styled = false;
 
@@ -105,12 +104,12 @@ function draw() {
   const { esc } = c, l = data.layout || DEFAULT;
   const at = document.activeElement?.closest?.("[data-sb]")?.dataset.sb;
   const row = (side, id) => {
-    const [name, what] = SECS[id] || [id, ""], fixed = id === "turn", on = !l.hidden.includes(hideId(side, id));
-    return `<li class="sb-row${fixed ? " fixed" : ""}${on ? "" : " off"}" data-sb="${side}:${id}" tabindex="0"${fixed ? "" : ` draggable="true"`} aria-label="${esc(name)}${fixed ? ", fixed" : ""}">` +
-      `<span class="sb-grip" aria-hidden="true">${fixed ? "⊘" : "⠿"}</span><span class="sb-nm">${esc(name)}</span><span class="sb-what">${esc(what)}</span>` +
-      (fixed ? `<span class="sb-fixed">fixed</span>` : `<button type="button" class="sb-sw" role="switch" aria-checked="${on}" data-sw="${side}:${id}" aria-label="${on ? "Shown" : "Hidden"}: ${esc(name)}"></button>`) + `</li>`;
+    const [name, what] = SECS[id], on = !l.hidden.includes(hideId(side, id));
+    return `<li class="sb-row${on ? "" : " off"}" data-sb="${side}:${id}" tabindex="0" draggable="true" aria-label="${esc(name)}">` +
+      `<span class="sb-grip" aria-hidden="true">⠿</span><span class="sb-nm">${esc(name)}</span><span class="sb-what">${esc(what)}</span>` +
+      `<button type="button" class="sb-sw" role="switch" aria-checked="${on}" data-sw="${side}:${id}" aria-label="${on ? "Shown" : "Hidden"}: ${esc(name)}"></button></li>`;
   };
-  const box = (side, title, ids) => `<section class="sb-box">${c.secHead(`sb-${side}`, title, { fixed: true })}<ul class="sb-list" data-side="${side}">${ids.map(id => row(side, id)).join("")}</ul></section>`;
+  const box = (side, title, ids) => `<section class="sb-box">${c.secHead(`sb-${side}`, title, { fixed: true })}<ul class="sb-list" data-side="${side}">${ids.filter(id => SECS[id]).map(id => row(side, id)).join("")}</ul></section>`;
   c.docEl.innerHTML = `<div class="sb">` +
     `<div class="sb-top"><h1 tabindex="-1">Sidebars</h1><button type="button" class="sb-btn" data-reset data-tip="Reset to default" data-tip-sub="Today's order, everything shown. Widgets keep their settings">Reset to default</button></div>` +
     `<p class="sb-say">Drag a row, or move it with Alt ↑ ↓. Changes are saved as you make them. The left is the same on every page; the right is the desk you are on.</p>` +
@@ -120,18 +119,28 @@ function draw() {
   if (back) back.focus({ preventScroll: true });
 }
 
+/** Remove, on an agent's widget alone: a desk's own widget file, or a box
+ *  a panel pushed. Its folder is kept in widgets/.removed/, and the row
+ *  says Undo where it was (`removeRow`). */
+const rmBtn = (name, desk, owner) => `<button type="button" class="sb-btn sb-rm" data-wrm="${c.esc(name)}" data-wd="${desk}" data-wown="${owner}" data-tip="Remove" data-tip-sub="An agent's widget: kept in widgets/.removed/, with Undo here for a moment">Remove</button>`;
+
 /** The widget files: each with what it runs, whether it may, and its
  *  switch, settings and Rerun my edits. */
 function filesBox() {
   const { esc } = c;
   const files = data.files || [];
   const one = f => {
-    if (!f.command) return `<div class="sb-w"><div class="sb-w-head"><b>${esc(f.name)}</b><span class="sb-w-meta"></span></div><p class="sb-w-err">${esc(f.error || "")}</p><p class="sb-folder">${esc(f.folder)}</p></div>`;
+    if (!f.command) return `<div class="sb-w" data-own="${f.owner || 0}"><div class="sb-w-head"><b>${esc(f.name)}</b><span class="sb-w-meta"></span></div><p class="sb-w-err">${esc(f.error || "")}</p>` +
+      (f.owner ? `<div class="sb-w-acts">${rmBtn(f.name, f.owner, f.owner)}</div>` : "") + `<p class="sb-folder">${esc(f.folder)}</p></div>`;
     const now = Date.now() / 1000, ended = f.hidden && ((f.until > 0 && f.until <= now) || !!f.until_pane);
     const state = ended ? [`Ended ${f.until ? new Date(f.until * 1000).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) : "with its panel"}`, ""]
       : f.allowed ? ["Allowed", "ok"] : f.changed ? ["Changed · needs Allow", "warn"] : ["Needs Allow", "warn"];
-    const ds = data.desks || [], every = !(f.desks || []).length;
-    const where = f.scope === "global" ? "" : `<div class="sb-w-acts sb-desks" role="group" aria-label="Desks it is on"><span>On</span>` +
+    const ds = data.desks || [], every = !(f.desks || []).length, mine = f.owner ? esc(f.owner_desk || `desk ${f.owner}`) : "";
+    // A desk's own (1.32) is on its desk alone: no desks to tick, and
+    // Share is the way to more of them.
+    const where = f.scope === "global" ? "" : f.owner ? `<div class="sb-w-acts sb-desks"><span>On ${mine} alone</span>` +
+      `<button type="button" class="sb-btn" data-wshare="${esc(f.name)}" data-tip="Share with other desks" data-tip-sub="It stays on ${mine}; tick more desks here after">Share with other desks</button></div>`
+      : `<div class="sb-w-acts sb-desks" role="group" aria-label="Desks it is on"><span>On</span>` +
       `<label><input type="checkbox" data-wdesks="${esc(f.name)}" data-d="all"${every ? " checked" : ""}>every desk</label>` +
       ds.map(d => `<label><input type="checkbox" data-wdesks="${esc(f.name)}" data-d="${d.id}"${!every && f.desks.includes(d.id) ? " checked" : ""}${every ? " disabled" : ""}>${esc(d.name)}</label>`).join("") + `</div>`;
     const pick = f.until_pane ? "panel" : f.until > now ? (f.until - now > 86400 ? "week" : "today") : "";
@@ -140,16 +149,16 @@ function filesBox() {
         `<button type="button" class="sb-btn${pick === k ? " primary" : ""}" data-wlast="${esc(f.name)}" data-v="${k}" aria-pressed="${pick === k}">${l}</button>`).join("") +
       (pick === "panel" ? `<span>while its panel is open</span>` : f.until > now ? `<span>until ${esc(new Date(f.until * 1000).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }))}</span>` : "") + `</div>`;
     const fields = Object.entries(f.fields || {});
-    return `<div class="sb-w" data-w="${esc(f.name)}"><div class="sb-w-head"><b>${esc(f.title || f.name)}</b>` +
-      `<span class="sb-w-meta">${f.scope === "global" ? "global" : "desk"} · <code>${esc(f.command)}</code> · every ${f.every} s</span>` +
+    return `<div class="sb-w" data-w="${esc(f.name)}" data-own="${f.owner || 0}"><div class="sb-w-head"><b>${esc(f.title || f.name)}</b>` +
+      `<span class="sb-w-meta">${f.scope === "global" ? "global" : f.owner ? `${mine}'s own` : "shared"} · <code>${esc(f.command)}</code> · every ${f.every} s</span>` +
       `<span class="sb-w-state ${state[1]}">${state[0]}</span>` +
       `<button type="button" class="sb-sw" role="switch" aria-checked="${!f.hidden}" data-wsw="${esc(f.name)}" aria-label="${f.hidden ? "Off" : "On"}: ${esc(f.title || f.name)}"></button></div>` +
       (f.error ? `<p class="sb-w-err">${esc(f.error)}</p>` : "") +
       `<div class="sb-w-acts">` + (f.allowed ? "" : `<button type="button" class="sb-btn primary" data-allow="${esc(f.name)}" data-tip="Allow it to run" data-tip-sub="As its folder is now. Only the snyvi window can allow">Allow</button>`) +
       `<label data-tip="Rerun my edits" data-tip-sub="A change to its folder runs without asking again. For a widget you are writing yourself"><input type="checkbox" data-rerun="${esc(f.name)}"${f.rerun_edits ? " checked" : ""}>Rerun my edits</label>` +
-      (ended ? `<button type="button" class="sb-btn primary" data-won="${esc(f.name)}">Turn on again</button>` : "") + `</div>` + where + lasts +
+      (ended ? `<button type="button" class="sb-btn primary" data-won="${esc(f.name)}">Turn on again</button>` : "") + (f.owner ? rmBtn(f.name, f.owner, f.owner) : "") + `</div>` + where + lasts +
       (fields.length ? `<div class="sb-set">` + fields.map(([k, d]) => {
-        const v = f.settings[k], id = `sb-${f.name}-${k}`, lab = `<label for="${id}">${esc(d.label || k)}</label>`, at = `id="${id}" data-set="${esc(f.name)}" data-k="${esc(k)}"`;
+        const v = f.settings[k], id = `sb-${f.owner || 0}-${f.name}-${k}`, lab = `<label for="${id}">${esc(d.label || k)}</label>`, at = `id="${id}" data-set="${esc(f.name)}" data-k="${esc(k)}"`;
         if (d.type === "boolean" || d.type === "bool") return lab + `<span><input type="checkbox" ${at}${v ? " checked" : ""}></span>`;
         if (d.type === "choice" && d.choices?.length) return lab + `<select ${at}>${d.choices.map(o => `<option${o === v ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
         return lab + `<input ${at} type="${d.type === "number" ? "number" : "text"}" value="${esc(v ?? "")}" spellcheck="false">`;
@@ -169,6 +178,7 @@ function pushedBox() {
   return `<section class="sb-box">${c.secHead("sb-pushed", "Pushed", { fixed: true, count: ps.length || "" })}` +
     (ps.length ? `<ul class="sb-list">` + ps.map(p => `<li class="sb-row${p.hidden ? " off" : ""}"><span class="sb-nm">${esc(p.name)}</span>` +
       `<span class="sb-what">${p.desk_id ? esc(p.desk || `desk ${p.desk_id}`) : "global"} · ${esc(p.writer)}</span>` +
+      (p.agent && p.desk_id ? rmBtn(p.name, p.desk_id, 0) : "") +
       `<button type="button" class="sb-sw" role="switch" aria-checked="${!p.hidden}" data-wsw="${esc(p.name)}" aria-label="${p.hidden ? "Off" : "On"}: ${esc(p.name)}"></button></li>`).join("") + `</ul>`
       : `<p class="sb-empty">None. An agent's <code>set_widget</code>, or <code>snyvi widget set</code> from a script.</p>`) + `</section>`;
 }
@@ -183,12 +193,11 @@ async function save(l) {
   } catch (e) { c.toast("Could not save the sidebars", { sub: e }); }
 }
 
-/** Move `id` on `side` to just before `before` (or the end), never above Your turn. */
+/** Move `id` on `side` to just before `before`, or to the end. */
 function move(side, id, before) {
   const l = structuredClone(data.layout || DEFAULT), list = l[side].filter(x => x !== id);
   let at = before ? list.indexOf(before) : list.length;
   if (at < 0) at = list.length;
-  if (side === "right") at = Math.max(at, 1);
   list.splice(at, 0, id);
   l[side] = list;
   save(l);
@@ -206,21 +215,27 @@ async function click(e) {
   const wsw = e.target.closest("[data-wsw]");
   if (wsw) {
     const on = wsw.getAttribute("aria-checked") === "true";
-    return prefs(wsw.dataset.wsw, { hidden: on });
+    return prefs(wsw.dataset.wsw, { hidden: on }, true, own(wsw));
   }
+  const sh = e.target.closest("[data-wshare]");
+  if (sh) return prefs(sh.dataset.wshare, { share: true }, true, own(sh));
   const wl = e.target.closest("[data-wlast]");
   if (wl) {
     const k = wl.dataset.v, t = new Date();
     t.setHours(24, 0, 0, 0);
     const until = k === "today" ? Math.floor(t / 1000) : k === "week" ? Math.floor(Date.now() / 1000) + 7 * 86400 : 0;
-    return prefs(wl.dataset.wlast, { until, until_pane: "" });
+    return prefs(wl.dataset.wlast, { until, until_pane: "" }, true, own(wl));
   }
   const wo = e.target.closest("[data-won]");
-  if (wo) return prefs(wo.dataset.won, { hidden: false, until: 0, until_pane: "" });
+  if (wo) return prefs(wo.dataset.won, { hidden: false, until: 0, until_pane: "" }, true, own(wo));
+  const rm = e.target.closest("[data-wrm]");
+  if (rm) return removeRow(rm);
+  const un = e.target.closest("[data-wun]");
+  if (un) return undoRow(un);
   const al = e.target.closest("[data-allow]");
   if (al) {
     al.disabled = true;
-    try { await c.deskApi(`/api/widgets/${al.dataset.allow}/allow`, {}); await again(); }
+    try { await c.deskApi(`/api/widgets/${al.dataset.allow}/allow`, { owner: own(al) }); await again(); }
     catch { al.disabled = false; c.toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" }); }
   }
 }
@@ -230,7 +245,7 @@ async function changed(e) {
   if (c.view() !== "sidebars") return;
   const t = e.target;
   if (t.dataset.rerun) {
-    try { await c.deskApi(`/api/widgets/${t.dataset.rerun}/allow`, { allow: false, rerun_edits: t.checked }); }
+    try { await c.deskApi(`/api/widgets/${t.dataset.rerun}/allow`, { allow: false, rerun_edits: t.checked, owner: own(t) }); }
     catch { t.checked = !t.checked; c.toast("Rerun my edits is set in the snyvi window"); }
     return;
   }
@@ -242,17 +257,43 @@ async function changed(e) {
     return prefs(name, ids.length ? { desks: ids } : { hidden: true });
   }
   if (t.dataset.set) {
-    const f = (data.files || []).find(x => x.name === t.dataset.set);
+    const f = (data.files || []).find(x => x.name === t.dataset.set && (x.owner || 0) === own(t));
     if (!f) return;
     const v = t.type === "checkbox" ? t.checked : t.type === "number" ? Number(t.value) : t.value;
     f.settings = { ...f.settings, [t.dataset.k]: v };
-    prefs(f.name, { settings: f.settings }, false);
+    prefs(f.name, { settings: f.settings }, false, own(t));
   }
 }
 
-async function prefs(name, body, redraw = true) {
+/** An agent's widget removed from its row: the row keeps its height and
+ *  says Undo for a moment, then the page is read again and it closes up --
+ *  the reader's click, so the page may move then. */
+let rmTimer = 0;
+const RM_MS = 4000;
+async function removeRow(b) {
+  const row = b.closest(".sb-w, .sb-row"), name = b.dataset.wrm, desk = +b.dataset.wd, owner = +b.dataset.wown;
+  b.disabled = true;
+  let j;
+  try { j = await c.deskApi(`/api/widgets/${name}/remove`, { desk, owner }); }
+  catch (e) { b.disabled = false; c.toast(`Could not remove ${name}`, { sub: e }); return; }
+  row.style.minHeight = `${row.offsetHeight}px`;
+  row.innerHTML = `<span class="sb-nm">Removed ${c.esc(name)}</span><button type="button" class="sb-btn" data-wun="${c.esc(name)}" data-wd="${desk}" data-wown="${owner}" data-wfrom="${c.esc(j.from || "")}">Undo</button>`;
+  row.querySelector("[data-wun]").focus({ preventScroll: true });
+  clearTimeout(rmTimer); rmTimer = setTimeout(again, RM_MS);
+}
+async function undoRow(b) {
+  b.disabled = true;
+  try { await c.deskApi(`/api/widgets/${b.dataset.wun}/restore`, { desk: +b.dataset.wd, owner: +b.dataset.wown, from: b.dataset.wfrom }); clearTimeout(rmTimer); await again(); }
+  catch (e) { b.disabled = false; c.toast(`Could not bring ${b.dataset.wun} back`, { sub: e }); }
+}
+
+/** The desk a widget file on this page belongs to (0: shared or global):
+ *  two desks may each own one of a name, so the name alone is not enough. */
+const own = el => +(el.closest(".sb-w")?.dataset.own || 0);
+
+async function prefs(name, body, redraw = true, owner = 0) {
   try {
-    const r = await fetch(`/api/widgets/${name}/prefs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(`/api/widgets/${name}/prefs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ owner, ...body }) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     if (redraw) await again();
   } catch (e) { c.toast("Could not save that", { sub: e }); }
@@ -272,9 +313,8 @@ function keys(e) {
   if (!row || !e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
   e.preventDefault(); e.stopPropagation();
   const [side, id] = row.dataset.sb.split(":");
-  if (id === "turn") return;
   const list = (data.layout || DEFAULT)[side], i = list.indexOf(id), j = i + (e.key === "ArrowUp" ? -1 : 1);
-  if (j < (side === "right" ? 1 : 0) || j >= list.length) return;
+  if (j < 0 || j >= list.length) return;
   move(side, id, e.key === "ArrowUp" ? list[j] : list[j + 1]);
 }
 

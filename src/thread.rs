@@ -810,6 +810,59 @@ pub fn seen(
     Ok(Some((t, changed)))
 }
 
+/// The threads a merge could have passed by: on a branch, past their plan,
+/// not merged and not put away. With the folder to ask git in, or the
+/// desk's when that worktree is gone. `(id, folder, branch)`.
+pub fn unmerged(conn: &Connection, desk_id: i64) -> Result<Vec<(i64, String, String)>> {
+    let mut st = conn.prepare(
+        "SELECT t.id, t.folder, d.root, t.branch FROM threads t JOIN desks d ON d.id = t.desk_id
+         WHERE t.desk_id = ?1 AND t.removed_at = 0 AND t.merged = '' AND t.branch != ''
+           AND t.stage NOT IN ('idea', 'planned', 'shipped')",
+    )?;
+    let rows = st.query_map(params![desk_id], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+        ))
+    })?;
+    let home = |p: &str| match (p.strip_prefix("~/"), dirs::home_dir()) {
+        (Some(rest), Some(h)) => h.join(rest),
+        _ => std::path::PathBuf::from(p),
+    };
+    Ok(rows
+        .filter_map(|r| r.ok())
+        .filter(|(.., b)| branch_ok(b))
+        .map(|(id, folder, root, b)| {
+            let f = home(&folder);
+            let at = if !folder.is_empty() && f.is_dir() {
+                f
+            } else {
+                home(&root)
+            };
+            (id, at.to_string_lossy().into_owned(), b)
+        })
+        .collect())
+}
+
+/// A merge git found that no panel reported (`git::merge_of`): the thread
+/// is merged and shipped as of the merge's own time, so Home does not call
+/// yesterday's merge new. Unlike `seen`, its notes are not ticked -- nobody
+/// here saw the reader merge it -- so they read "shipped · check it" and
+/// wait for the reader's tick. Whether it changed anything.
+pub fn landed(conn: &Connection, desk_id: i64, id: i64, merge: &str, at: i64) -> Result<bool> {
+    let merge = merge.trim().to_ascii_lowercase();
+    if !crate::desk::commit_ok(&merge) {
+        return Ok(false);
+    }
+    Ok(conn.execute(
+        "UPDATE threads SET merged = ?3, merged_at = ?4, stage = 'shipped', shipped_at = ?4
+         WHERE desk_id = ?1 AND id = ?2 AND merged = ''",
+        params![desk_id, id, merge, at],
+    )? > 0)
+}
+
 /// Put a thread away, or back. Its notes keep their link, so Undo brings the
 /// thread back whole.
 pub fn remove(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<bool> {
@@ -1362,12 +1415,15 @@ pub fn box_waiting(conn: &Connection, desk_id: i64, name: &str) -> Result<bool> 
 
 /// The widget file `name` an agent proposed and the reader added stopped:
 /// the agent that proposed it is told `note`, once, with its next prompt.
-pub fn tell_widget(conn: &Connection, name: &str, note: &str) -> Result<bool> {
+/// `owner` is the desk the widget belongs to, whose card it was; 0 for a
+/// shared one, whichever desk proposed it.
+pub fn tell_widget(conn: &Connection, owner: i64, name: &str, note: &str) -> Result<bool> {
     Ok(conn.execute(
         "UPDATE desk_suggestions SET note = ?2, told_at = 0
          WHERE id = (SELECT id FROM desk_suggestions WHERE kind = 'widget' AND name = ?1
-                     AND outcome = 'opened' ORDER BY settled_at DESC LIMIT 1)",
-        params![name, note],
+                     AND outcome = 'opened' AND (?3 = 0 OR desk_id = ?3)
+                     ORDER BY settled_at DESC LIMIT 1)",
+        params![name, note, owner],
     )? > 0)
 }
 

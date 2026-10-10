@@ -655,6 +655,20 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ),
     (
         "POST",
+        "/api/widgets/nope/remove",
+        Some("{}"),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
+        "/api/widgets/nope/restore",
+        Some("{}"),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
         "/api/panes/nope/propose-widget",
         Some("{}"),
         Gate::Token,

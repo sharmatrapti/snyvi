@@ -47,7 +47,7 @@ const later = () => {
 };
 const since = t => { const m = Math.max(0, Math.round((Date.now() / 1000 - t) / 60)); return m < 1 ? "just now" : m < 60 ? `${m} m` : `${Math.round(m / 60)} h`; };
 /** Who a restart waits on, the way the rail names them. */
-const named = w => [w.desk && `${w.desk} · panel ${w.slot}`, w.agent === "needs_you" ? "waiting on you" : w.agent === "working" ? `Claude working${w.since ? ` ${since(w.since)}` : ""}` : "printing"].filter(Boolean).join(" · ");
+const named = w => [w.desk && `${w.desk} · panel ${w.slot}`, w.agent === "needs_you" ? "needs you" : w.agent === "working" ? `Claude working${w.since ? ` ${since(w.since)}` : ""}` : "printing"].filter(Boolean).join(" · ");
 
 /** What the update block says now: the dot's class, one line, and the card's
  *  state, or nothing. */
@@ -55,7 +55,7 @@ function said(u) {
   const { capability, plural, version } = uc;
   const r = u && u.restart, w = (r && r.waiting) || [], n = r && r.waiting_on ? r.waiting_on.length : 0;
   if (u && (u.restarting || (updWaiting && r && r.now))) return { dot: "waiting", line: `Restarting${u.ready ? ` to ${u.ready}` : ""}`, card: "restarting" };
-  if (r) return n ? { dot: "waiting", line: `Waiting on ${plural(n, "panel")}`, card: "waiting", w } : { dot: "waiting", line: "Waiting for a check…", card: "waiting", w };
+  if (r) return n ? { dot: "waiting", line: `Waits for ${plural(n, "busy panel")}`, card: "waiting", w } : { dot: "waiting", line: "Waiting for a check…", card: "waiting", w };
   if (!u || !u.show) return null;
   if (u.failed_recent) return { dot: "failed", line: `${u.failed} did not start · kept ${version || ""}`.trim(), card: "failed" };
   if (u.ready) return { dot: u.amber ? "amber" : "ready", line: capability ? `snyvi ${u.ready} is ready` : `Update ready · ${u.ready}`, card: "ready" };
@@ -79,7 +79,6 @@ function renderUpd() {
   // Updated: once per landing, kept for the page it was first shown on, as a
   // toast whose action is the release notes.
   const at = u && u.last_applied;
-  if (!s && at && Date.now() / 1000 - at < 3600 && uc.landed) uc.landed(version, at * 1000);
   if (!s && at && Date.now() / 1000 - at < 86400 && updFresh !== at) {
     let seen = null; try { seen = localStorage.getItem("snyvi.updated"); } catch {}
     updFresh = at;

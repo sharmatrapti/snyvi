@@ -558,9 +558,7 @@ the next prompt after you add one says it is there. A desk's own key shadows an
 every-desk one of the same name. ✕ on a row offers Undo for a few
 seconds, then the value is gone -- the one removal in snyvi that is not
 kept, because a kept secret is still a secret. Closing
-a desk keeps its keys; `snyvi prune` ends them with the desk. Home's right
-column lists every key by name, with the desks it is on and when a panel
-last started with it. snyvi never uses a key itself, and no MCP tool
+a desk keeps its keys; `snyvi prune` ends them with the desk. snyvi never uses a key itself, and no MCP tool
 hands one over: a tool's answer would land in the conversation. A key is
 the panel's to use, though: the shell, the agent in it and every program
 that agent runs can ask `snyvi key` or see the variable the way they see
@@ -569,27 +567,30 @@ you would hand to anything you run on that desk. On Linux the file it
 rests in is readable by your user alone, as snyvi's own token is.
 
 The same sheet holds your Claude accounts, so one desk can run on your work
-plan and another on your own without a `/logout` between them. Under *Add a
-Claude account*, *Sign in…* opens Claude's sign-in page in your browser:
+plan and another on your own without a `/logout` between them. The sheet
+is two short lists, *Claude as* and *Keys*, and opens on the account the
+desk runs as; the desk's head names that account beside the key whenever
+it is not your login. Under *Add a Claude account*, *Sign in…* opens Claude's sign-in page in your browser:
 approve as the other account, paste the code if the page shows one, and the
 account is added. snyvi runs `claude setup-token` out of sight for this and
 keeps the token it prints the way a key's value is; the page never sees it.
 A token from running `claude setup-token` yourself can be pasted in the same
 place instead. Your `/login` account is always there as
-*your login*, and the one picked is what the desk's panels start as. A
+*Your login*, and the one picked is what the desk's panels start as. A
 panel can have its own: right-click it for *Run as…*, or *Continue as…* to
 restart it as the other account, back into the same conversation. Panels
 already running keep the account they started as, and changing the desk's
 offers to switch the ones with Claude open. Everything else under
 `~/.claude` -- settings, hooks, MCP servers, memory, the conversations
-`--resume` finds -- is shared by every account. A token lasts a year: the
-row says until when, in bold in its last month, and *Renew* signs in again
-for a new one. A desk key named `ANTHROPIC_API_KEY` or
+`--resume` finds -- is shared by every account. A token lasts a year: in
+its last month the row says *Renew by* the day it ends, and a click signs
+in again for a new one. An account's **⋯** holds *Rename*, *Renew* and
+*Remove from every desk*. A desk key named `ANTHROPIC_API_KEY` or
 `ANTHROPIC_AUTH_TOKEN` wins over any account,
 so the sheet says so when a desk has one. A token can't use claude.ai's
 connectors or Remote Control, which want the `/login` account. snyvi never
-switches an account on its own, and ✕ on an account puts its desks and
-panels back on your login and forgets the token, with Undo first.
+switches an account on its own, and *Remove from every desk* puts its desks
+and panels back on your login and forgets the token, with Undo first.
 
 The server also offers four prompts, the loop's own commands, listed in the
 `/` menu as `/snyvi:wrap-up (MCP)` and so on: `wrap-up` ticks what is
@@ -777,7 +778,7 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 44 px column of icons -- the inbox, projects, desks, folders, agents, an
 aside when there is one, and search -- and each opens its section beside
 the rail; Esc, a click outside, or following a link closes it. The inbox
-icon counts what waits, the desks icon the panels waiting on you. A window
+icon counts what waits, the desks icon the panels that need you. A window
 narrower than 760 px always shows the sidebar this way.
 
 **On a desk**, with any key going to the panel otherwise: `⌃⌥1`–`⌃⌥4` a
@@ -1025,9 +1026,10 @@ hide the sidebar and the rail, it gives the document the whole window.
 What wears a maker down is rarely the work; it is the bookkeeping around it.
 Which notes are one piece of work, which folder and branch it lives in, what
 was decided in a chat last Tuesday, and what is waiting on *you*. A Claude in
-a desk's panel files that for you, and the rail shows it only when there is
-something to show: a thread on its panel's row, Your turn and Suggested at
-the top.
+a desk's panel files that for you, and the desk shows it only when there is
+something to show: a thread on its panel's row, and Your turn and
+Suggested in the desk's bottom-right corner, where nothing they do moves
+the page.
 
 - **A thread** is one arc of work: a name, the notes it answers, the folder
   it lives in, and a stage -- idea, planned, building, review, waiting,
@@ -1047,7 +1049,16 @@ the top.
   prompt, and ✕ leaves its Undo in the row, as everywhere. A note's tip says which thread it is in and who has it; the
   note itself keeps its row for its own two lines, and under them one quiet
   line: its number, then its small marks -- the stage in a word, the
-  pictures.
+  pictures. The word says what the line asks of you, most first: **check
+  it** (its thread's branch is in main, whether a panel saw the merge or
+  snyvi found it in git later, and only your tick is left), **PR #n**
+  (coloured by its checks), **working**, **in progress** (an agent worked on
+  it and its chat has ended; it does not drop back to *planned*),
+  **planned** (opens the plan) and **read**; a line no agent has picked up
+  has none. Ticked lines fold into one row at the list's foot, **✓ 3
+  done**, which shows them, with **Clear** beside it and its Undo in the
+  same row. A ticked line keeps its number and pictures; its commit and PR
+  are in its tip and its menu (**Copy commit**, **Open PR #n**).
 - **Your turn** is what only you can do: a decision (`ask`, with two to four
   options and the one Claude recommends -- several asked at once are one
   card, a row each, with **Send answers** once all are answered), or a hand-over (`hand_over`): try
@@ -1057,18 +1068,29 @@ the top.
   conversation and Claude carries on (mid-turn, Claude Code holds it until
   the turn ends). **New panel** runs it in a shell of its own, and **Copy**
   copies it. A command with a newline or an escape in it is refused, so what
-  Run types is exactly what the card shows. Answer on the rail or on Home. Your answer goes
+  Run types is exactly what the card shows. Your answer goes
   with your next message to the panel that asked; while that panel is idle,
   **Send now** types it in and presses Enter for you. snyvi never starts a
   turn by itself.
+
+  A new one rises in the bottom-right corner as a small card, with a soft
+  chime (none in quiet mode), and you can answer it there. Left alone, it
+  settles after a few seconds into the **On you** pill, which opens the
+  tray: every turn in the order asked, then Suggested. Esc or a click
+  elsewhere closes it. A turn goes quiet once the panel that asked has
+  closed, or after half an hour: it no longer rises or rings, the pill's
+  count leaves it out, and the tray folds it under *older*. Claude's own
+  question dialog is on screen in its panel already, so it neither rises
+  nor waits in the corner; Home lists it.
 - **Suggested** is a panel or a desk Claude thinks the work wants, with the
   exact command it would run. **Open panel** opens it on this desk and runs
   that command; **Open desk** makes a desk for the folder. Nothing opens
   until you click, and three wait at most.
 
-Home lists **Your turn · across desks**, answerable in place, and
-**Threads**: what is moving, what rests (parked with its next step, or left
-by its panel), and what shipped this week. The desk brief names the threads
+Home's status line says how many things are on you; click it for **Your
+turn · across desks**, a sheet over the page, answerable in place. Each
+desk on Home lists its moving threads, a line each under its notes, with
+the PR and its checks. The desk brief names the threads
 panels are moving and the parked ones, and
 what is on you, and each prompt's changes carry your answers and the moves
 you made.
@@ -1084,8 +1106,9 @@ always the version of the snyvi that started the panel. In a panel with it:
 
 - One dim line above the prompt says the panel's thread and what is on you:
   `▸ Home + friends · building · claude/asides · 3 commits · your turn: try it`.
-- Claude's own questions (its multiple-choice dialog) appear under Your turn
-  too. Answer in the terminal or in snyvi; the first answer is the one
+- Claude's own questions (its multiple-choice dialog) are listed on Home's
+  Your turn too, never in the desk's corner, which would only repeat the
+  panel. Answer in the terminal or in snyvi; the first answer is the one
   Claude gets, and the other side closes.
 - The branch, the commits and the PR are *seen* from what git and gh did in
   the panel, and the checks on a PR are read once a minute until it merges.
@@ -1156,11 +1179,11 @@ takes it off again and puts the words back in the bar. `a` puts you in the
 bar, with the letter keys on.
 
 **Pick up** is one desk, large: the one you touched last, or the one you
-keep there with *Keep here*. It says when you last touched it, where the
+pin there with *Pin here* (*Unpin* lets it follow the desk touched last). It says when you last touched it, where the
 work was left -- or, when no one said, the last thing that happened on it,
 marked *Last* -- the open notes, what git says in its folder (the branch,
 what is changed, what is not pushed, the last commit), and each panel in
-words. Enter opens it. The other desks sit beside it with their age.
+words, and its moving threads. Enter opens it.
 
 **Your days** is what happened, day by day and desk by desk: notes ticked
 (with the commit and the link the agent gave), documents sent, commits in
@@ -1170,29 +1193,29 @@ lines; the rest are a click away. *Send this week as a doc*, on its
 heading, files the last seven days as a document in each desk's own
 project.
 
-**Projects** is every other desk, a card each, as many across as the
+**Other desks** is every other desk, a card each, as many across as the
 window fits: its age, where it was left, its first open notes (tick one
-where it stands), a **+** that puts the desk on the note bar's chip, and
-its last eight weeks, a bar a week as tall as the days with work in them.
-A desk quiet for ten days offers *Park it?*: it asks for the next step,
-takes the desk out of Pick up, and keeps it on a Parked shelf under the
-cards with that step until you take it down. Nothing on a parked desk is
-closed.
+where it stands), its moving threads, and a **+** that puts the desk on the
+note bar's chip. A desk quiet for ten days offers *Park it?*: it asks for
+the next step, takes the desk out of Pick up, and keeps it on a Parked
+shelf under the cards with that step until you *Unpark* it. Nothing on a
+parked desk is closed.
 
 The date is beside the title.
 
 **Arrived** heads the right-hand column: what came, in one place. An
 agent's offer to send a document to a friend comes first, since it asks
 you something -- Send or Not now in its row, and Not now has an Undo.
-Then a friend's lines, with **Keep on…**, which puts one on a desk in a
+Then a friend's lines, with **Add to a desk…**, which puts one on a desk in a
 click with their name on it, and ✕. Then the newest documents you have
 not read; a click opens one, and it leaves the list. Five rows at most,
 and "Everything in the Inbox →" when more are waiting. Arrived cannot be
-hidden, so nothing that arrives is put out of sight.
+hidden, so nothing that arrives is put out of sight. In a narrow window it
+comes right under the note bar.
 
 **Claude** has what is left of the five-hour and weekly windows, when that
 was read, and the fullest context window; a window past its reset is shown
-full again. When an update is ready, its card heads the column.
+full again.
 
 **Friends** shows once you have paired with someone: a line each, with
 where their things land (**→ own row**, or a desk you pick: their
@@ -1200,17 +1223,17 @@ documents go to its project and their lines become its suggestions),
 **Note…** for a line on their Home and **⋯** for Mute and Remove. A
 friend's document says *Keep on a desk…* in its head; once it is on one,
 *Save into the folder* writes it into that desk's folder under
-`from-<their name>/`, next to nothing it would overwrite. **Keys**
-is folded until you open it, and stays as you left it.
+`from-<their name>/`, next to nothing it would overwrite. Keys are on
+each desk, in its head.
 
 The foot says which snyvi this is, with *Check for updates* and *Pair with
-a friend…*.
+a friend…*; when an update is ready, its card is under the foot.
 
 Git is read only in a desk's own folder, never in your home directory,
 read-only and with a two-second limit, and nothing leaves the machine.
 Home is one read of the daemon, and it follows what changes while it is
-open. A side widget can be hidden; "2 hidden · Show" at the foot brings
-them back. The Inbox is at `/inbox`, and `i` still opens it. An empty
+open. Other desks, Claude and Friends can be hidden with *Hide* on their
+heading; "2 sections hidden · Show" at the foot brings them back. The Inbox is at `/inbox`, and `i` still opens it. An empty
 library still opens on Welcome.
 
 A document opens where you left it, however you open it -- the tree, the
@@ -1237,6 +1260,15 @@ else. "Mark all read" empties the queue without opening anything, for
 the day an agent sent thirty; it answers "Marked 30 read · Undo" where
 the bar was, and ⌘/ctrl Z puts them back. Twelve arrivals in two seconds are twelve
 rows and one bar that says twelve.
+
+On a desk there is no bar (1.32). It lay over the desk's head -- the
+folder, *Left off* and the window's drag grip -- carrying every desk's
+documents, and said again what the rail's Documents says. The head has
+a slot instead, beside the key: a document and how many this desk's
+panels sent that wait, shown only when the head is hovered while there
+are none. A click lists them under it: one opens over the desk, and
+**Mark these read** reads this desk's and no other's, with an Undo in
+the list. Other desks' documents wait in the sidebar.
 
 The one place an arrival opens by itself is the inbox with nothing
 waiting: the empty state exists to be filled. Before 0.14 an arrival
@@ -1495,6 +1527,25 @@ Project      detected from the sender's working directory (git root)
 └── Workflow   one Claude Code session, or a name the sender gives
     └── Document   immutable, rendered once on receipt
 ```
+
+A folder outside any git repository is a project of its own, so the
+folders a studio's jobs ran in -- four of them called `reel` -- are each
+one. In the sidebar a project whose folder is inside another project's
+hangs under it: the parent's row says how many (`11`), and opening it
+shows them first, each still its own project, with its own documents and
+URL. Nothing is re-filed; they are drawn one level down. The desk glyph on
+a project's row is green while an agent at its desk is working, amber
+while a panel there needs you, and quiet otherwise; the desk's own row in
+Desks says the same, with a hollow ring when only a shell or an agent
+between turns is running. While the pointer is over the sidebar, projects
+keep their order; one that something just arrived in moves to the top
+when the pointer leaves.
+
+A friend's document wears the friend: the first letter of their name in
+a small circle where a row's page glyph stands, "From Trapti" in its tip,
+whether it was filed into a folder you both have or under their own row,
+which wears the same circle. The circle is grey, and takes the accent only
+while the document waits to be read, as a page glyph does.
 
 Both names are guesses — a project takes the directory's name, a
 workflow the title of the first document its session sent — so either

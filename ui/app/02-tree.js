@@ -63,6 +63,9 @@
   let moreOpen = store.get("snyvi.more") === "1";
   /** The projects "more" holds right now, for the mark on it (`markActive`). */
   let moreHidden = new Set();
+  /** A subfolder project's parent, by id, as the last draw nested them
+   *  (03-queue.js `nest`): a folded parent holds its children's mark. */
+  let parentOf = new Map();
   /** The cap the last draw used, and whether it made room for the removed row,
    *  so a resize that leaves the cap where it was draws nothing. */
   let capSeen = null, awayRowSeen = false;
@@ -135,6 +138,10 @@
   /** Documents and files carry the document glyph, smaller and quieter
    *  than a row that holds things, so the left column is always an icon. */
   const docIco = () => icon("doc", 14);
+  /** A friend, as the first letter of their name in a small circle, where a
+   *  row's icon stands: their documents and their own row (audit 7c0fc42885:
+   *  4 of a friend's 5 sat in the reader's project looking like their own). */
+  const whoIco = (name, tip) => `<span class="r-who"${tip ? ` data-tip="${esc(tip)}"` : ""} aria-hidden="true">${esc((name || "?").trim().charAt(0).toUpperCase() || "?")}</span>`;
   /** Rows on their way: two bars where the rows will be (docs/DESIGN.md
    *  §7.4), never a bare "…". They wait --sk-wait, so a fast answer shows none. */
   const skRows = `<li class="t-wait"><span class="sk-bar" style="width:62%"></span></li><li class="t-wait"><span class="sk-bar" style="width:44%"></span></li>`;
@@ -214,7 +221,7 @@
   const W_TONE = { ok: "ok", warn: "warn", bad: "bad" };
   /** A widget's seat (docs/WIDGETS.md), on either side -- desk.js has it as
    *  ctx.seatFrame: a section like any other, so it folds and spaces itself
-   *  as they do, and under its head who wrote it and when. Its body keeps a
+   *  as they do, and its head's tip says who wrote it and when. Its body keeps a
    *  fixed room, `lines` × 20 px, so a new one never moves what is under
    *  it; a longer one opens where it is when clicked. A failed run says so
    *  over the last good body, which stays. Past its time it dims. The body
@@ -222,10 +229,12 @@
    *  The frame is drawn with what never changes -- the name, the fold -- and
    *  the rest is patched into it (`patchSeat`), so an update to a body is
    *  never a redraw of the side it is on. */
+  /** `data-wsrc` is "own" for a desk's own widget file (1.32), whose menu
+   *  shares it rather than picks its desks (menu.js `widgetItems`). */
   function seatFrame(w) {
     const key = `w:${w.name}`, t = w.title || wTitle(w.name);
-    return `<section class="sec wg${secFolded(key) ? " folded" : ""}" id="wg-${w.desk_id}-${w.name}" data-sec="${key}" data-w="${w.name}" data-wdesk="${w.desk_id}" data-wsrc="${w.source}">` +
-      secHead(key, t, { tip: t, sub: w.source === "file" ? "A widget file, run while it is in view" : "Set by an agent or a script" }) +
+    return `<section class="sec wg${secFolded(key) ? " folded" : ""}" id="wg-${w.desk_id}-${w.name}" data-sec="${key}" data-w="${w.name}" data-wdesk="${w.desk_id}" data-wsrc="${w.owner ? "own" : w.source}">` +
+      secHead(key, t, { tip: t }) +
       `<div class="sec-body"></div></section>`;
   }
   /** What a seat's body holds, apart, so an update patches it in place. */
@@ -237,8 +246,7 @@
    *  this desk until the reader says Try again (#111). Turn off here takes
    *  it off this desk; the rest keep it. */
   const wStopped = w => /^stopped: /.test(w.error || "");
-  const seatInner = w => `<p class="wg-by">${esc(w.writer || w.source)} · <span class="wg-age" data-t="${w.updated_at}">${relShort(w.updated_at)}</span></p>` +
-    (wAsks(w) ? `<p class="wg-ask" role="status">${esc(w.error.replace(/^\w+: /, ""))}<button type="button" class="wg-allow" data-wallow="${w.name}" data-tip="Allow it to run" data-tip-sub="Again whenever its folder changes, unless Rerun my edits is on for it on /sidebars. Only the snyvi window can allow">Allow</button></p>`
+  const seatInner = w => (wAsks(w) ? `<p class="wg-ask" role="status">${esc(w.error.replace(/^\w+: /, ""))}<button type="button" class="wg-allow" data-wallow="${w.name}" data-tip="Allow it to run" data-tip-sub="Again whenever its folder changes, unless Rerun my edits is on for it on /sidebars. Only the snyvi window can allow">Allow</button></p>`
       : wStopped(w) ? `<p class="wg-ask wg-stop" role="status">Stopped ${esc(w.error.replace(/^stopped: /, ""))}<button type="button" class="wg-allow" data-wretry="${w.name}" data-wd="${w.desk_id}" data-tip="Run it again" data-tip-sub="It stops again after three failures in a row">Try again</button>${w.desk_id ? `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Not on this desk" data-tip-sub="Other desks keep it; /sidebars puts it back">Turn off here</button>` : ""}</p>`
       : w.error ? wFailed(w) : "") +
     // Never printed: no room kept for a body, so the line is all there is.
@@ -282,6 +290,9 @@
     if (!body) return false;
     body.innerHTML = seatInner(w);
     markCut(el);
+    // Who writes it, how often and how long ago: the name's tip, not a line
+    // of the box's own, so the box is its name, its count and its body.
+    el.querySelector(".sec-fold").dataset.tipSub = `${w.writer || w.source} · ${relShort(w.updated_at)}`;
     el.classList.toggle("stale", wStale(w));
     const head = el.querySelector(":scope > .sec-head"), n = head.querySelector(".sec-n"), tone = W_TONE[w.tone] || "";
     if (w.count) {
@@ -318,6 +329,11 @@
   function markActive() {
     onPlace();
     for (const a of treesEl.querySelectorAll("a.active, .t-inbox.active")) { a.classList.remove("active"); a.removeAttribute("aria-current"); }
+    // Home has no row: the mark is its way, so on Home the mark is where the
+    // reader is, as any current row is (audit 67d008cb6f).
+    const brand = $(".side-head .brand"), home = state.view === "home";
+    brand.classList.toggle("active", home);
+    if (home) brand.setAttribute("aria-current", "page"); else brand.removeAttribute("aria-current");
     const on = state.view === "inbox" ? inboxRowEl.querySelector(state.recent ? ".t-inbox" : ".sec-all")
       : state.view === "desk" && state.deskId != null ? $("#desk-nav").querySelector(`a[data-desk="${state.deskId}"]`)
       // A document read over a desk is still the desk: the desk keeps the
@@ -336,7 +352,10 @@
     for (const s of treeEl.querySelectorAll(".holds-current")) { s.classList.remove("holds-current"); s.removeAttribute("aria-current"); delete s.dataset.tipSub; }
     let held = null;
     if (!on && state.doc && state.deskBehind == null && state.view !== "desk" && state.view !== "inbox") {
-      held = treeEl.querySelector(`.t-proj[data-pid="${state.doc.project_id}"]:not([open]) > summary`) ||
+      // The nearest folded row that holds it: its own, or, inside a folded
+      // parent, the parent's.
+      for (let pid = String(state.doc.project_id); pid && !held; pid = parentOf.get(pid)) held = treeEl.querySelector(`.t-proj[data-pid="${pid}"]:not([open]) > summary`);
+      held = held ||
         // Past the cap, "more" is the row that holds it, and it stays shut.
         (moreHidden.has(String(state.doc.project_id)) && !moreOpen ? treeEl.querySelector(".t-quiet") : null);
       if (held) { held.classList.add("holds-current"); held.setAttribute("aria-current", "location"); held.dataset.tipSub = `${state.doc.title || "the open document"} is in here · click to show it`; }
@@ -372,7 +391,12 @@
    *  the same project, and this is where the sidebar says so. */
   /** The desk's live state on its project's row, in the Desks rows' colours:
    *  a panel running, or one waiting on the reader. Idle says nothing. */
-  const deskState = d => { const m = mark3(d.panes); return m === "!" ? " blk" : m === "●" ? " on" : ""; };
+  /** The desk glyph on a project's row says one thing at a time: amber while
+   *  a panel waits on the reader, green while an agent is working, quiet
+   *  otherwise. It was green for any panel running -- a shell is one -- so
+   *  four rows in eight were always green (audit 7c0fc42885). */
+  const deskState = d => d.panes.some(p => p.status && p.status.blocked) ? " blk" : d.panes.some(p => p.status && p.status.agent === "working") ? " on" : "";
+  const deskSay = d => ({ " blk": "a panel needs you", " on": "an agent is working" })[deskState(d)] || "no agent working";
   /** A folder's key, for comparing and never for showing. On Windows the
    *  daemon has spelled roots with `\\?\`, and a drive path is one place in
    *  either slash and any case; elsewhere only a trailing slash is not
@@ -396,7 +420,7 @@
   const projDeskBtn = p => {
     if (!capability || !p.root) return "";
     const d = state.desks && state.desks.desks.find(x => sameRoot(x.root, p.root));
-    return d ? `<button type="button" class="b-new has${deskState(d)}" data-projdesk="${p.id}" data-deskof="${d.id}" data-tip="Show its desk" aria-label="Show desk ${esc(d.name)}">${icon("desk", 14)}</button>`
+    return d ? `<button type="button" class="b-new has${deskState(d)}" data-projdesk="${p.id}" data-deskof="${d.id}" data-tip="Show its desk" data-tip-sub="${deskSay(d)}" aria-label="Show desk ${esc(d.name)}">${icon("desk", 14)}</button>`
       : `<button type="button" class="b-new" data-projdesk="${p.id}" data-tip="New desk" aria-label="New desk for ${esc(p.name)}">${icon("desk", 14)}</button>`;
   };
 
@@ -418,7 +442,9 @@
     // Not "active": markActive puts that on, so the rows a reader moves between
     // draw the same and a move between two of them costs no redraw.
     const cls = waitingRow(d) ? "new" : "";
-    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}"${sizeOf(d)}${cut(d, mid(d.title, roomFor(ago)))}>${docIco()}<span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" data-tip="Pinned" data-tip-sub="kept by prune">${glyph("pin", 11)}</span>` : ""}<span class="k">${ago}</span>${removeBtn(d)}</a></li>`;
+    // A friend's, in a project of the reader's or their own, wears the
+    // friend where the page glyph stands, and says so in its tip.
+    return `<li class="t-doc${washCls(d.id)}"${moment(d.id)}><a href="/d/${d.id}" class="${cls}" data-id="${d.id}"${sizeOf(d)}${cut(d, mid(d.title, roomFor(ago)))}>${d.friend ? whoIco(d.friend, `From ${d.friend}`) : docIco()}<span class="title">${esc(mid(d.title, roomFor(ago)))}</span>${d.pinned ? `<span class="pin" data-tip="Pinned" data-tip-sub="kept by prune">${glyph("pin", 11)}</span>` : ""}<span class="k">${ago}</span>${removeBtn(d)}</a></li>`;
   };
   /** The ✕ on a document's row takes it out of the inbox. It is said as a
    *  removal because that is what it is: the daemon keeps the document, and

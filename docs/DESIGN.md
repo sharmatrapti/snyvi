@@ -109,8 +109,8 @@ stateDiagram-v2
   rest --> glad: something went right<br/>(Welcome, theme chosen, "Connected.",<br/>a desk's last open note ticked)
   rest --> whoa: something arrived
   rest --> oops: snyvi could not do it
-  rest --> love: the waiting count reached 0 / rare hover line
-  rest --> wink: late night / rare hover line
+  rest --> love: the waiting count reached 0
+  rest --> wink: a face drawn in a toast, never the mark
   rest --> asleep: daemon unreachable
   asleep --> rest: link back
   glad --> rest: 2.4 s
@@ -137,7 +137,7 @@ Adding a face means adding it to this diagram *and* to `FACES` in
 
 **It appears (earned moments):** empty states; first run and Welcome;
 something arriving; the queue emptying; a small failure snyvi is sorry
-about; the aside card; the hover line, only when you point at it;
+about; the aside card;
 milestones: a desk's last open note ticked, said by the mark in the
 sidebar with one hop and "Notes done · 5 of 5" on Home, never on the desk
 (later: a rung ticked, a project shipped); the daemon's own 404, which is
@@ -146,8 +146,8 @@ snyvi's miss.
 **It never appears:**
 
 - **on a desk**: the panels are the work, so no face in panel heads, the
-  terminal, desk toasts or the queue bar there (`:root[data-view="desk"]`
-  hides `.qb-who`);
+  terminal or desk toasts there (`:root[data-view="desk"]` hides
+  `.toast .who`), and no queue bar at all since 1.32;
 - on **destructive** or **irreversible** flows (Reset, closing a desk);
 - on **security** (tokens, capabilities, permissions, the link gate);
 - on **data-loss** errors ("Too late to undo"): a straight face;
@@ -162,18 +162,16 @@ words in its title**. `feelFor` goes in 1.8.
 
 ### 2.4 How it speaks: "it only ever answers"
 
-- **It speaks when spoken to.** The hover line appears only on a pointer
-  resting on the mark. Nothing opens on its own.
+- **The mark has no lines of its own (1.32).** Hovering it shows its tip,
+  "Home", as any control's; while the page cannot hear the daemon the tip
+  says "not connected" under it. A line drawn by lot in place of the word
+  "snyvi" hid the tip on the one way Home, and put "3 waiting" and "not
+  connected" in a draw beside "hi" (audit 67d008cb6f). Its faces still
+  answer: the hop when a desk's last note is ticked, the heart, sleep.
 - **It never instructs.** Teaching is done by snyvi's own asides in plain
-  words, with the face peeking behind them. The mascot's own lines are one
-  to three lowercase words ("good to see you" becomes "glad you're here").
-- **Its lines are rationed by weight.** "love you" stays rare enough to
-  mean something. A new line gets a weight.
-- **It never talks over an agent.** An unread agent aside silences snyvi's
-  own lines.
-- **It answers what just happened, for an hour.** "all done" after a
-  desk's list is cleared, "now 1.9.0" after an update landed; then the
-  lines are the usual ones again.
+  words, with the face peeking behind them.
+- **It never talks over an agent.** An unread agent aside keeps the mark at
+  rest.
 - **Outside the page, only when asked.** `snyvi hi` prints the face with
   the version and the address, and is not in the help. Never in an
   install's last line, never in a hook.
@@ -185,7 +183,7 @@ doesn't *explain* anything, and it only *answers* you.
 
 A **Quiet mascot** toggle in ⌘K and on the mark's menu, stored with the
 other looks as `data-mascot="quiet"`. Faces stay at `rest`; no hops, blinks
-or hearts (a waiting note is the lit nub); no hover lines; no peek. Under
+or hearts (a waiting note is the lit nub); no peek. Under
 `prefers-reduced-motion` the creature keeps its faces and loses its
 movement (§7.3).
 
@@ -797,8 +795,10 @@ is added later folds and spaces itself the same way for nothing.
   label 16 px in from the column's edge on both sides, sticky while its
   section scrolls.
 - **Chevron:** 4 px after the label, shown on hover, on focus and while
-  folded. A section that never folds (`fixed`: Your turn, Suggested) has
-  no chevron, and its head is not a button.
+  folded. A section that never folds (`fixed`: the boxes on `/sidebars`)
+  has no chevron, and its head is not a button. Your turn and Suggested
+  are not sections since 1.32: they wait in a desk's corner (§ the
+  corner, `ui/desk/10-onyou.js`).
 - **Tail**, right-aligned, in this order: the **count**, a figure, never a
   pill: `--fg-3`, `--accent` while something waits, `--warn` while
   something is blocked (`!2`); then the **actions**, icon buttons, shown
@@ -957,7 +957,7 @@ Decided 2026-09-28, and folded into the rules above.
 **snyvi:** draft 1 and its audit of `ui/`; the whole-app audit of 1.7.1
 (`053be5a`) and its five appendices; the hover audit (093251ff4a); the
 implementation plan (7c5f81607f), Part B and its decisions; `FACES`,
-`feelFor`, `SAYS` and `OWN` in `app.js`; ROADMAP.md, BRAINSTORM.md §7,
+`feelFor` and `OWN` in `app.js`; ROADMAP.md, BRAINSTORM.md §7,
 ONBOARDING-PLAN.md, film/DESIGN.md; src/mcp.rs.
 
 **Outside:** Linear (method, the design refresh); Vercel Geist (colours,

@@ -33,11 +33,11 @@
  * is this viewer's, in localStorage, since it is a preference about a page
  * and not a thing in the library, and so is the desk kept in Pick up. Arrived
  * cannot be hidden: what arrives is never put out of sight by a preference.
- * Friends shows once there is a friend, Keys is folded like the week, and
- * the version, Check for updates and Pair with a friend… are the foot's.
+ * Friends shows once there is a friend, and the version, Check for updates
+ * and Pair with a friend… are the foot's, with an update's card under it.
  * Nothing here moves when something arrives: the status line is one line
- * whatever it says, and a widget with nothing to say says so rather than
- * going away.
+ * whatever it says, Your turn opens over the page from it, and a widget
+ * with nothing to say says so rather than going away (audit 67d008cb6f).
  */
 
 const CSS = `
@@ -49,24 +49,46 @@ const CSS = `
 .hm-status a { color: var(--fg-2); text-decoration: none; }
 .hm-status a:hover { color: var(--fg); text-decoration: underline; }
 .hm-status.ring .hm-ring { color: var(--warn); font-weight: 600; }
+/* Your turn: a button in the status line, and a sheet over the page under
+   it -- the desk's "On you" corner's, so its coming moves nothing. */
+.hm-st { position: relative; }
+.hm-onyou { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--warn); cursor: pointer; }
+.hm-onyou:hover, .hm-onyou[aria-expanded="true"] { text-decoration: underline; }
+.hm-you { position: absolute; top: 24px; left: 0; z-index: var(--z-pop); width: min(640px, 100%); max-height: 60vh; overflow: auto; padding: 6px 16px 8px; background: var(--bg-raise, var(--bg)); border: 1px solid var(--rule); border-radius: var(--r-md); box-shadow: var(--shadow); }
+.hm-you .hm-turn:last-child { border-bottom: 0; }
+/* A desk's moving threads, a line each under its notes. */
+.hm-th { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; }
+.hm-th li { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-small); color: var(--fg-3); }
+.hm-th svg { flex: none; }
+.hm-th-n { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-2); font-weight: 500; }
+.hm-th .hm-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-upd { margin-top: 12px; max-width: 360px; }
 .hm .fact { font-family: var(--mono); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
 /* Pick up, the desks and the week on the left, the side column beside them. */
 .hm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); grid-template-areas: "main side"; gap: 32px 48px; align-items: start; }
 @container (max-width: 760px) {
-  .hm-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "side"; }
+  /* One column, and what arrived under the bar rather than under the week:
+     the columns step aside so their sections share one order. */
+  .hm-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; }
+  .hm-main, .hm-side { display: contents; }
+  .hm-nb { order: -2; }
+  .hm-arrived { order: -1; }
 }
 .hm-main { grid-area: main; display: grid; gap: 32px; min-width: 0; }
 .hm-side { grid-area: side; display: grid; gap: 32px; min-width: 0; }
 /* A section: a label on a hairline, and space doing the rest. */
 .hm-w { min-width: 0; }
 .hm-wh { display: flex; align-items: center; gap: 8px; height: 28px; margin: 0 0 8px; border-bottom: 1px solid var(--rule); }
-.hm-wh h2 { margin: 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); }
+/* A head reads as the head of what is under it: the rows' size, a step
+   brighter than their facts (audit 67d008cb6f; it was 11 px under 13). */
+.hm-wh h2 { margin: 0; font-size: var(--fs-ui); font-weight: 600; color: var(--fg-2); }
 .hm-wh h2 .n { margin-left: 6px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .hm-wh .hm-act { margin-left: auto; }
-.hm-hide { flex: none; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; opacity: 0; font-size: var(--fs-micro); }
+/* Hide, said: the ✕ that was here meant "remove" everywhere else on the page,
+   and showed only under the pointer. */
+.hm-hide { flex: none; height: 20px; padding: 0 6px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; font: inherit; font-size: var(--fs-micro); }
 .hm-wh .hm-act + .hm-hide { margin-left: 0; }
 .hm-wh h2 + .hm-hide { margin-left: auto; }
-.hm-w:is(:hover, :focus-within) .hm-hide { opacity: 1; }
 .hm-hide:hover { background: var(--rule-2); color: var(--fg); }
 .hm-quiet { margin: 0; color: var(--fg-3); font-size: var(--fs-small); line-height: 1.6; }
 .hm-s { flex: none; color: var(--fg-3); font-size: var(--fs-small); }
@@ -88,8 +110,6 @@ const CSS = `
 .hm-opt { padding: 1px 8px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-2); cursor: pointer; }
 .hm-opt:hover { color: var(--fg); border-color: var(--accent); }
 .hm-opt.rec { border-color: var(--accent); color: var(--fg); }
-.hm-kn { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--fg); }
-.hm-key .hm-t a { color: inherit; }
 .hm-link { padding: 0; border: 0; background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); cursor: pointer; }
 .hm-link:hover { color: var(--fg); text-decoration: underline; }
 .hm-link.hm-undo { color: var(--accent); }
@@ -100,7 +120,7 @@ const CSS = `
 .hm-dot.need { background: var(--warn); }
 /* Pick up: the one card on the page. */
 .hm-pick { padding: 18px 20px 16px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--bg-raise, var(--bg)); box-shadow: var(--shadow-1); min-width: 0; }
-.hm-pick > h2 { margin: 0 0 4px; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); }
+.hm-pick > h2 { margin: 0 0 4px; font-size: var(--fs-ui); font-weight: 600; color: var(--fg-2); }
 .hm-pk-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 0 0 12px; }
 .hm-pk-name { font-size: var(--fs-h3); font-weight: 650; letter-spacing: -.01em; color: var(--fg); text-decoration: none; }
 .hm-pk-name:hover { text-decoration: underline; }
@@ -278,12 +298,6 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-friend > .hm-fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fg); }
 .hm-friend > .hm-ren { flex: 1; min-width: 0; font: inherit; font-weight: 500; line-height: inherit; padding: 0 4px; margin: 0 0 0 -5px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
 /* Keys, folded like the week. */
-.hm-keys > summary { list-style: none; cursor: pointer; }
-.hm-keys > summary::-webkit-details-marker { display: none; }
-.hm-keys > summary > .s-chev { margin-left: 2px; }
-.hm-keys { position: relative; }
-.hm-keys > .hm-hide { position: absolute; top: 0; right: 0; }
-.hm-keys:not([open]) > summary { margin-bottom: 0; }
 .hm-meta { margin: 10px 0 0; font-size: var(--fs-small); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-meta a { color: inherit; text-decoration: none; }
 .hm-meta a:hover { color: var(--fg); text-decoration: underline; }
@@ -295,16 +309,35 @@ a.hm-panels:hover { color: var(--fg); }
 .inbox-removed > .t-away { width: auto; padding-left: 14px; }
 .inbox .rm { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title act" "sub act"; gap: 2px 16px; padding: 12px 14px; }
 .inbox .rm > .t-undo { grid-area: act; align-self: center; }
+/* The Inbox's list and its empty state: app.css's until 1.32. */
+.inbox { list-style: none; margin: 0; padding: 0; }
+.inbox li a { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title time" "sub sub"; gap: 2px 16px; padding: 12px 14px; margin: 0 -14px; border-radius: var(--r-md); color: inherit; border-bottom: 1px solid var(--rule); transition: background var(--t); }
+.inbox li a:hover { background: var(--bg-side); text-decoration: none; }
+.inbox .title { grid-area: title; font-weight: 600; font-size: var(--fs-body-s); letter-spacing: -.005em; }
+.inbox .time { grid-area: time; font-size: var(--fs-small); color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.inbox .sub { grid-area: sub; font-size: var(--fs-small); color: var(--fg-3); }
+.inbox .sub b { font-weight: 500; color: var(--fg-2); }
+.inbox a.new .title::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin: 0 9px 2px 0; vertical-align: middle; }
+.inbox-sec { display: flex; align-items: center; gap: 10px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; margin: 32px 0 4px; }
+.inbox-sec .n { background: var(--accent); color: var(--on-accent); border-radius: var(--r-pill); padding: 0 7px; line-height: 17px; font-variant-numeric: tabular-nums; font-size: var(--fs-micro); }
+.inbox-sec button { margin-left: auto; font-weight: 500; font-size: var(--fs-small); color: var(--fg-2); padding: 3px 8px; border-radius: var(--r-sm); }
+.inbox-sec button + button { margin-left: 0; }
+.inbox-sec button:hover { background: var(--rule); color: var(--fg); }
+.inbox.waiting { margin-bottom: 8px; }
+.empty-state { margin: 20vh auto 0; max-width: 46ch; text-align: center; color: var(--fg-2); }
+.empty-state h1 { font-size: var(--fs-h3); font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; color: var(--fg); }
+.empty-state p { margin: 0 0 18px; font-size: var(--fs-body-s); }
+.empty-state .hero .mk { display: block; width: 44px; height: 44px; margin: 0 auto 16px; }
+.empty-state pre { text-align: left; font-family: var(--mono); font-size: var(--fs-ui); background: var(--code-bg); padding: 12px 16px; border-radius: var(--r-sm); display: inline-block; margin: 0; }
 `;
 
-/** The widgets that can be hidden, in the order they stand. Pick up cannot:
- *  it is what the page is for. */
+/** The sections that can be hidden, in the order they stand. Pick up
+ *  cannot: it is what the page is for. Threads and Keys were sections until
+ *  1.32; a reader who hid them has nothing left to show. */
 const WIDGETS = [
-  ["threads", "Threads"],
-  ["desks", "Projects"],
+  ["desks", "Other desks"],
   ["claude", "Claude"],
   ["friends", "Friends"],
-  ["keys", "Keys"],
 ];
 
 const DAY = 86400;
@@ -527,24 +560,26 @@ function draw(j) {
   const { esc, plural } = c, hid = hidden();
   const w = (key, title, body, extra = "", act = "") => hid.includes(key) ? "" :
     `<section class="hm-w" data-w="${key}" data-part="home.${key}" aria-label="${esc(title)}"><div class="hm-wh"><h2>${esc(title)}${extra}</h2>${act}` +
-    `<button type="button" class="hm-hide" data-hm="hide" data-k="${key}" data-tip="Hide ${esc(title)}" data-tip-sub="Show brings it back" aria-label="Hide ${esc(title)}">✕</button></div>${body}</section>`;
+    `<button type="button" class="hm-hide" data-hm="hide" data-k="${key}" data-tip="Hide ${esc(title)}" data-tip-sub="the foot's Show brings it back" aria-label="Hide ${esc(title)}">Hide</button></div>${body}</section>`;
   drawnDay = startOfDay(Date.now() / 1000);
   // Friends only once there is one, or one removed to bring back.
   const anyFriend = !!(peers?.friends || []).length, fr = friendsOf();
-  // The update card heads the side column, and only while there is one.
-  const side = `<div class="hm-upd" hidden></div>` + arrived(j) + w("claude", "Claude", claude(j)) +
-    (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "") +
-    (hid.includes("keys") ? "" : keysW(j));
-  const desks = j.desks ? w("desks", "Projects", desksList(j), pickOf(j).rest.length ? ` <span class="n">${pickOf(j).rest.length}</span>` : "") : "";
-  const moving = (j.threads || []).filter(isMoving).length;
-  const threads = j.threads?.length ? w("threads", "Threads", threadsList(j), moving ? ` <span class="n">${moving} moving</span>` : "") : "";
+  // Seven blocks, none that comes and goes above another (audit 67d008cb6f):
+  // Your turn is a sheet from the status line, a thread is a line on its
+  // desk, the update card is under the foot, and keys are the desks' own.
+  const side = arrived(j) + w("claude", "Claude", claude(j)) +
+    (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "");
+  const desks = j.desks ? w("desks", "Other desks", desksList(j)) : "";
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
-    status(j) +
-    `<div class="hm-grid"><div class="hm-main">${bar(j)}${onYou(j)}${pick(j)}${threads}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
+    `<div class="hm-st">${status(j)}${onYou(j)}</div>` +
+    `<div class="hm-grid"><div class="hm-main">${bar(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
     `<p class="hm-foot" data-part="home.foot">snyvi ${esc(j.version || "")} · <button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
-    (n ? ` · ${plural(n, "widget")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p></div>`;
+    (n ? ` · ${plural(n, "section")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p>` +
+    // The update's card under the foot, where its coming moves nothing: the
+    // sidebar's card and the version's dot are where it is seen first.
+    `<div class="hm-upd" hidden></div></div>`;
   const a = document.activeElement;
   const key = b => b.dataset.hm + (b.dataset.k || "") + (b.dataset.n ? `:${b.dataset.n}` : "");
   const had = c.docEl.contains(a) && a.dataset.hm ? key(a) : null;
@@ -584,13 +619,14 @@ function status(j) {
     if (asking.length) {
       ring = true;
       const [d, p] = asking[0];
-      bits.push(`<a class="hm-ring" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${esc(d.name)} · ${esc(p.name || `panel ${p.slot}`)} ${p.agent === "needs_you" ? "is asking" : "rang"}${asking.length > 1 ? `, and ${asking.length - 1} more` : ""}</a>`);
-    } else if (on) bits.push(`${on === 1 ? "One thing is" : `${on} things are`} on you`);
-    else bits.push("Nothing needs you");
-    const moving = (j.threads || []).filter(isMoving).length;
-    if (moving) bits.push(`${plural(moving, "thread")} moving`);
+      bits.push(`<a class="hm-ring" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${esc(d.name)} · ${esc(p.name || `panel ${p.slot}`)} needs you${asking.length > 1 ? `, and ${asking.length - 1} more` : ""}</a>`);
+    }
+    // Your turn opens over the page from here, so its coming moves nothing
+    // (audit 67d008cb6f): the same sheet as a desk's "On you" corner.
+    if (on) bits.push(`<button type="button" class="hm-onyou" data-hm="turns" aria-haspopup="dialog" aria-expanded="${turnsOpen}">${on === 1 ? "One thing is" : `${on} things are`} on you ›</button>`);
+    if (!asking.length && !on) bits.push("Nothing needs you");
   }
-  bits.push(j.waiting ? `<a href="/inbox" data-nav="inbox">${plural(j.waiting, "document")} to read</a>` : bits.length ? "nothing to read" : "Nothing to read");
+  bits.push(j.waiting ? `<a href="/inbox" data-nav="inbox">${j.waiting} waiting</a>` : bits.length ? "nothing waiting" : "Nothing waiting");
   if (j.desks) {
     const n = j.desks.flatMap(d => d.panes).filter(p => p.agent === "working").length;
     bits.push(n ? `${plural(n, "Claude")} working` : "Claude idle");
@@ -611,9 +647,13 @@ function status(j) {
 const answeredHere = new Map();
 const TURN_ANSWERS = { try: ["Looks good"], merge: ["Merged"], key: ["Added"] };
 
+/** Whether Your turn's sheet is open: the status line's button opens it,
+ *  Esc, a click outside it or its last answer closes it. */
+let turnsOpen = false;
 function onYou(j) {
   const { esc } = c, turns = (j.turns || []).filter(w => !answeredHere.has(w.id));
-  if (!turns.length && !answeredHere.size) return "";
+  if (!turns.length && !answeredHere.size) turnsOpen = false;
+  if (!turnsOpen) return "";
   const name = id => j.desks?.find(d => d.id === id)?.name || "a desk";
   const slot = (desk, pane) => j.desks?.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot;
   // Questions asked together (#110) say which of how many each is: one card
@@ -638,7 +678,7 @@ function onYou(j) {
   };
   const said = [...answeredHere].map(([, a]) => `<li class="hm-turn said"><span class="hm-pw"><span class="hm-t hm-tq">${esc(a.text)}</span>` +
     `<span class="hm-t">${a.err ? esc(a.err) : `You said <b>${esc(a.answer)}</b> · it goes with your next message on ${esc(name(a.desk))}`}</span></span></li>`).join("");
-  return `<section class="hm-w hm-you" data-part="home.turns" aria-label="Your turn"><div class="hm-wh"><h2>Your turn · across desks${turns.length ? ` <span class="n">${turns.length}</span>` : ""}</h2></div>` +
+  return `<section class="hm-you" role="dialog" data-part="home.turns" aria-label="Your turn, across desks"><div class="hm-wh"><h2>Your turn · across desks</h2></div>` +
     `<ul class="hm-list">${turns.map(row).join("")}${said}</ul></section>`;
 }
 
@@ -647,17 +687,15 @@ function onYou(j) {
  *  lists nowhere (#109). */
 const isMoving = t => t.stage !== "shipped" && !t.rest;
 
-/** The threads, by where they are: what is moving, and what shipped this
- *  week. */
-function threadsList(j) {
-  const { esc } = c, ts = j.threads || [];
-  const name = id => j.desks?.find(d => d.id === id)?.name || "";
-  const row = t => `<li class="hm-pj"><span class="hm-pw"><a class="hm-pn" href="/desk/${t.desk_id}" data-desk="${t.desk_id}">${esc(t.name)}</a>` +
-    `<span class="hm-t">${[name(t.desk_id), t.notes.length ? t.notes.map(n => `#${n}`).join(" ") : "", t.stage === "parked" && t.next ? `next: ${t.next}` : t.branch, t.pr ? `PR ${t.pr}${t.ci ? ` ${t.ci}` : ""}` : ""].filter(Boolean).map(esc).join(" · ")}</span></span>` +
-    `<span class="hm-age fact">${esc(t.stage === "shipped" ? `shipped ${age(t.shipped_at || t.moved_at)}` : t.rest && t.stage !== "parked" ? `${t.stage} · ${t.rest}` : t.stage)}</span></li>`;
-  const group = (title, xs) => xs.length ? `<h3 class="hm-sub">${title}</h3><ul class="hm-list">${xs.map(row).join("")}</ul>` : "";
-  return group("Moving", ts.filter(isMoving)) +
-    group("Shipped this week", ts.filter(t => t.stage === "shipped"));
+/** A desk's threads that are moving, one line each under its notes: where
+ *  each is, its PR and how its checks went. The Threads block said these
+ *  apart from their desks, and counted them twice (audit 67d008cb6f). */
+function threadLines(j, d) {
+  const { esc } = c, ts = (j.threads || []).filter(t => t.desk_id === d.id && isMoving(t));
+  if (!ts.length) return "";
+  return `<ul class="hm-th" aria-label="Threads on ${esc(d.name)}">` + ts.slice(0, 2).map(t =>
+    `<li>${BRANCH}<span class="hm-th-n">${esc(t.name)}</span><span class="hm-t">${[t.pr ? `PR ${t.pr}${t.ci ? ` ${t.ci}` : ""}` : t.branch, t.stage].filter(Boolean).map(esc).join(" · ")}</span></li>`).join("") +
+    (ts.length > 2 ? `<li class="hm-s"><a href="/desk/${d.id}" data-desk="${d.id}">and ${ts.length - 2} more</a></li>` : "") + `</ul>`;
 }
 
 async function answerTurn(id, desk, answer) {
@@ -702,7 +740,7 @@ function pick(j) {
   if (!j.desks) return box(`<p class="hm-quiet">Desks are in the snyvi window; a browser tab cannot see them. Everything your agents sent is in <a href="/inbox" data-nav="inbox">the Inbox</a>.</p>`);
   if (!j.desks.length) return box(`<h2>Pick up</h2><p class="hm-quiet">No desks yet. A desk is one project: its folder, and up to four panels in it.</p><div class="hm-pk-go"><button type="button" class="btn btn-primary" data-hm="newdesk">+ New desk</button></div>`);
   const { hero: d, rest, isKept } = pickOf(j);
-  if (!d) return box(`<h2>Pick up</h2><p class="hm-quiet">Every desk is parked. Take one down in Projects when you are ready for it.</p>`);
+  if (!d) return box(`<h2>Pick up</h2><p class="hm-quiet">Every desk is parked. Unpark one under Other desks when you are ready for it.</p>`);
   const l = d.left_off, x = d.last;
   const left = l
     ? `<p class="hm-pk-left"><b>Left off</b>${esc(l.text)}<span class="fact">${l.by ? `${esc(l.by)} · ` : ""}${live(l.at)}</span></p>`
@@ -720,14 +758,14 @@ function pick(j) {
   const panels = d.panes.map(p =>
     `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${paneWord(p)}</span></a>`).join("");
   const facts = git || panels ? `<p class="hm-facts">${git}${panels}</p>` : "";
-  // The other desks, as chips, only while Projects below is hidden: it lists them.
+  // The other desks, as chips, only while Other desks below is hidden: it lists them.
   const chips = rest.length && hidden().includes("desks") ? `<p class="hm-chips"><span class="hm-s">or</span>${rest.map(o =>
     `<a class="hm-chip" href="/desk/${o.id}" data-desk="${o.id}" data-tip="${esc(o.name)} · ${o.touched ? touched(o.touched) : "not opened yet"}" data-tip-sub="${esc(o.panes.map(p => `${p.name || `panel ${p.slot}`} ${paneWord(p)}`).join(" · ") || "no panels")}">` +
     `${esc(o.name)}${liveDots(o)}<span class="fact">${o.touched ? age(o.touched) : "new"}</span></a>`).join("")}</p>` : "";
   return box(`<h2>Pick up</h2><div class="hm-pk-top"><a class="hm-pk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="fact">${touched(d.touched)}</span>${spark(d.pulse)}</div>` +
-    left + next + facts +
+    left + next + threadLines(j, d) + facts +
     `<div class="hm-pk-go"><a class="btn btn-primary" href="/desk/${d.id}" data-desk="${d.id}" data-hm-open>Open desk<kbd>↵</kbd></a>` +
-    (rest.length || isKept ? `<button type="button" class="hm-link" data-hm="keep" data-k="${d.id}" data-tip="${isKept ? "Let Pick up follow the desk touched last" : "Keep this desk in Pick up"}" data-tip-sub="${isKept ? "instead of this one" : "instead of whichever was touched last"}">${isKept ? "Kept here · Follow the last touched" : "Keep here"}</button>` : "") +
+    (rest.length || isKept ? `<button type="button" class="hm-link" data-hm="keep" data-k="${d.id}" data-tip="${isKept ? "Let Pick up follow the desk touched last" : "Pin this desk in Pick up"}" data-tip-sub="${isKept ? "instead of this one" : "instead of whichever was touched last"}">${isKept ? "Unpin" : "Pin here"}</button>` : "") +
     `</div>` + chips);
 }
 
@@ -949,13 +987,14 @@ function desksList(j) {
   const shelf = j.desks.filter(d => d.parked && d.id !== justParked).sort((a, b) => b.parked.at - a.parked.at);
   const shelved = shelf.length ? `<div class="hm-shelf-w"><h3 class="hm-sub">Parked</h3><ul class="hm-list hm-shelf">${shelf.map(d =>
     `<li class="hm-pj"><span class="hm-pw"><a class="hm-pn" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="hm-t">${d.parked.next ? `next: ${esc(d.parked.next)}` : ""}</span></span>` +
-    `<button type="button" class="hm-link" data-hm="unpark" data-k="${d.id}">Take down</button><span class="hm-age fact">${age(d.parked.at)}</span></li>`).join("")}</ul></div>` : "";
-  if (!rest.length) return `<p class="hm-quiet">Your other projects show here, each with its open notes. One project, one desk.</p>` + shelved;
+    `<button type="button" class="hm-link" data-hm="unpark" data-k="${d.id}">Unpark</button><span class="hm-age fact">${age(d.parked.at)}</span></li>`).join("")}</ul></div>` : "";
+  if (!rest.length) return `<p class="hm-quiet">Your other desks show here, each with its open notes. One project, one desk.</p>` + shelved;
   const all = desksAll(), shown = all ? rest : rest.slice(0, DESKS_SHOWN - 1), more = rest.length - (DESKS_SHOWN - 1);
   const card = d => {
-    const done = (j.days || []).filter(r => r.desk === d.id && r.kind === "tick" && r.at >= now - 7 * DAY).length;
+    // A card says where the desk is, not how it went: its notes ticked are
+    // the week's, and its eight weeks are Pick up's (audit 67d008cb6f).
     let left = d.left_off ? `<p class="hm-dk-left" data-tip="Left off" data-tip-sub="${esc(d.left_off.text)}"><b>Left off</b>${esc(d.left_off.text)}</p>` : "";
-    let foot = done ? `<span class="hm-s" data-tip="${done} ${done === 1 ? "note" : "notes"} ticked in the last seven days">${done} done</span>` : "";
+    let foot = "";
     if (d.id === justParked) foot = `<span class="hm-s">Parked</span><button type="button" class="hm-link hm-undo" data-hm="unpark" data-k="${d.id}">Undo</button>`;
     else if (parking === d.id) left = `<div class="hm-park"><input data-hm="next" data-k="${d.id}" maxlength="200" placeholder="The next step, for when you come back" aria-label="The next step on ${esc(d.name)}" value="${esc(parkDraft)}">` +
       `<button type="button" class="hm-link" data-hm="parkgo" data-k="${d.id}">Park</button><button type="button" class="hm-link" data-hm="parkno">Cancel</button>${parkFailed ? `<span class="hm-s">Could not park</span>` : ""}</div>`;
@@ -965,8 +1004,8 @@ function desksList(j) {
     return `<div class="hm-dk">` +
       `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? age(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}` +
       `<button type="button" class="hm-dk-add${d.open ? "" : " hm-dk-n"}" data-hm="addopen" data-k="${d.id}" data-tip="New note on ${esc(d.name)}" data-tip-sub="in the bar at the top" aria-label="A new note on ${esc(d.name)}">+</button></div>` +
-      left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) +
-      `<div class="hm-dk-foot">${foot}${spark(d.pulse)}</div></div>`;
+      left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) + threadLines(j, d) +
+      (foot ? `<div class="hm-dk-foot">${foot}</div>` : "") + `</div>`;
   };
   return `<div class="hm-dks">` + shown.map(card).join("") + `</div>` +
     (more > 0 ? `<button type="button" class="hm-link hm-dks-more" data-hm="desks" aria-expanded="${all}">${all ? "Show fewer desks" : `${more} more ${more === 1 ? "desk" : "desks"}`}</button>` : "") + shelved;
@@ -1193,7 +1232,7 @@ function lineRow(n, j) {
     `<button type="button" role="menuitem" class="hm-nb-o" data-hm="akeepto" data-k="${n.id}" data-n="${d.id}"><span class="hm-t">${esc(d.name)}</span>${d.parked ? `<span class="fact">parked</span>` : ""}</button>`).join("")}</div>` : "";
   return `<li data-part="home.arrived.line"><span class="hm-ag" aria-hidden="true">“</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
     (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at, age)}</span>` +
-      (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Keep it on a desk" data-tip-sub="a note there, from ${esc(n.from)}">Keep on… ▾</button>` : "") +
+      (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Add it to a desk" data-tip-sub="a note there, from ${esc(n.from)}">Add to a desk… ▾</button>` : "") +
       `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
     `</span></span>${list}</li>`;
 }
@@ -1282,38 +1321,6 @@ async function friendAct(k, id) {
   return true;
 }
 
-function keysOf(j) {
-  const by = new Map();
-  for (const d of j.desks || []) for (const k of d.keys || []) {
-    const r = by.get(k.name) || { name: k.name, provider: "", every: false, desks: [], used: 0 };
-    if (k.desk_id) r.desks.push(d); else r.every = true;
-    r.provider ||= k.provider || "";
-    r.used = Math.max(r.used, k.used_at || 0);
-    by.set(k.name, r);
-  }
-  return [...by.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
-const keysOpen = () => { try { return localStorage.getItem("snyvi.home.keys") === "1"; } catch { return false; } };
-const setKeysOpen = on => { try { localStorage.setItem("snyvi.home.keys", on ? "1" : "0"); } catch {} };
-/** Keys, folded like the week and kept as the reader left it: a setting
- *  looked at now and then, not something the evening starts from. */
-function keysW(j) {
-  const { esc } = c, n = keysOf(j).length;
-  return `<details class="hm-w hm-keys" data-w="keys" data-part="home.keys"${keysOpen() ? " open" : ""}><summary class="hm-wh"><h2>Keys${n ? ` <span class="n">${n}</span>` : ""}</h2><span class="s-chev" aria-hidden="true"></span></summary>` +
-    // Its ✕ beside the head and not in it: a button inside a <summary> is
-    // a control inside a control.
-    `<button type="button" class="hm-hide" data-hm="hide" data-k="keys" data-tip="Hide ${esc("Keys")}" data-tip-sub="Show brings it back" aria-label="Hide Keys">✕</button>${keys(j)}</details>`;
-}
-function keys(j) {
-  const { esc } = c;
-  if (!j.desks) return `<p class="hm-quiet">Open the window to see your keys.</p>`;
-  const rows = keysOf(j);
-  if (!rows.length) return `<p class="hm-quiet">None yet. A desk's head has a Keys slot: paste one there, and every panel on that desk can use it at once.</p>`;
-  return `<ul class="hm-list">${rows.map(r =>
-    `<li class="hm-pj hm-key"><span class="hm-pw"><span class="hm-kn">${esc(r.name)}</span><span class="hm-t">${r.provider ? esc(r.provider) + " · " : ""}${r.every ? "every desk" : r.desks.map(d => `<a href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>`).join(", ")}</span></span>` +
-    `<span class="hm-age fact" data-tip="${r.used ? "a panel last started with it" : "no panel has started with it yet"}">${r.used ? age(r.used) : "unused"}</span></li>`).join("")}</ul>`;
-}
-
 /** What is left of one rate-limit window, as a share from 0 to 100 and a
  *  line of words. Claude Code drops a window once its reset time passes, and
  *  the daemon keeps the last reading it was given, so a window past its reset
@@ -1337,7 +1344,7 @@ function claude(j) {
     const ps = j.desks.flatMap(d => d.panes.map(p => ({ ...p, desk: d.name, deskId: d.id })));
     const working = ps.filter(p => p.agent === "working").length, done = ps.filter(p => p.agent === "done").length;
     const hot = ps.filter(p => p.ctx_pct != null).sort((a, b) => b.ctx_pct - a.ctx_pct)[0];
-    if (working || done) out.push(`<p class="hm-meta">${working ? `${plural(working, "Claude")} working` : ""}${working && done ? " · " : ""}${done ? `${done} done` : ""}</p>`);
+    if (working || done) out.push(`<p class="hm-meta">${working ? `${plural(working, "Claude")} working` : ""}${working && done ? " · " : ""}${done ? `${done} idle` : ""}</p>`);
     if (hot) out.push(`<p class="hm-meta"><a href="/desk/${hot.deskId}" data-desk="${hot.deskId}" data-slot="${hot.slot}">Fullest context: ${esc(hot.desk)} · ${esc(hot.name || `panel ${hot.slot}`)} at ${hot.ctx_pct}%${hot.model ? ` (${esc(hot.model)})` : ""}</a></p>`);
   }
   if (!out.length) return `<p class="hm-quiet">No Claude at work. The quota shows here once one in a panel has answered.</p>`;
@@ -1350,19 +1357,31 @@ async function park(id, next) {
   return true;
 }
 
+/** Esc closes Your turn and puts the hand back on what opened it. */
+function turnsKeys(el) {
+  el.addEventListener("keydown", e => {
+    if (e.key !== "Escape" || !turnsOpen) return;
+    e.preventDefault(); e.stopPropagation();
+    turnsOpen = false; draw(last);
+    c.docEl.querySelector("[data-hm=turns]")?.focus({ preventScroll: true });
+  });
+}
+
 function wire() {
   const el = c.docEl.querySelector(".hm");
   if (!el || el.dataset.wired) return;
   el.dataset.wired = "1";
   el.addEventListener("click", async e => {
-    // A click anywhere else closes a Keep on… list.
+    // A click anywhere else closes an Add to a desk… list, or Your turn.
     if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }
+    if (turnsOpen && !e.target.closest(".hm-st")) { turnsOpen = false; draw(last); }
     const b = e.target.closest("button[data-hm]");
     if (!b) return;
     const k = b.dataset.hm, id = +b.dataset.k || 0;
     // The ✕ in a folded widget's head hides it; it does not fold it.
     if (k === "hide") { e.preventDefault(); setHidden([...new Set([...hidden(), b.dataset.k])]); draw(last); c.docEl.querySelector("[data-hm=unhide]")?.focus({ preventScroll: true }); }
     else if (k === "unhide") { setHidden([]); draw(last); }
+    else if (k === "turns") { turnsOpen = !turnsOpen; draw(last); (c.docEl.querySelector(".hm-you .hm-opt, .hm-you .hm-link") || c.docEl.querySelector("[data-hm=turns]"))?.focus({ preventScroll: true }); }
     else if (k === "check") c.checkUpdates(b);
     else if (k === "newdesk") c.newDesk(b);
     else if (k === "keep") { keep(kept() === id ? 0 : id); draw(last); c.docEl.querySelector("[data-hm=keep]")?.focus({ preventScroll: true }); }
@@ -1396,6 +1415,7 @@ function wire() {
     }
     else friendClick(k, id, b);
   });
+  turnsKeys(el);
   el.addEventListener("input", e => {
     if (e.target.dataset?.hm === "next") parkDraft = e.target.value;
     else if (e.target.dataset?.hm === "bar") { barDraft = e.target.value; if (barSaid?.err) { say(null); sayNow(); } hashMenu(e.target); }
@@ -1427,7 +1447,7 @@ function wire() {
   el.addEventListener("compositionstart", () => { composing = true; });
   el.addEventListener("compositionend", () => { composing = false; setTimeout(drawHeld, 0); });
   // The week stays as the reader left it, folded or open.
-  el.addEventListener("toggle", e => { if (e.target.matches?.(".hm-week")) setWeekOpen(e.target.open); else if (e.target.matches?.(".hm-keys")) setKeysOpen(e.target.open); }, true);
+  el.addEventListener("toggle", e => { if (e.target.matches?.(".hm-week")) setWeekOpen(e.target.open); }, true);
   // The hand leaving the bar closes its list; what is typed in it waits, as typed.
   el.addEventListener("focusout", e => {
     if (drawing || !e.target.closest?.(".hm-nb")) return;
@@ -1683,6 +1703,7 @@ export async function removedLine(fresh, { view, capability, deskApi, docEl, esc
 /** The Inbox's own page, drawn here beside Home: what is waiting first,
  *  oldest first, then everything, newest first. */
 export function inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown, recent }) {
+  style();
   const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
   // The one empty state (docs/DESIGN.md §3.4): snyvi at rest, one
   // sentence, one button.

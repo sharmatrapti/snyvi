@@ -2,6 +2,11 @@
 //! `widget.json` and the command it names, which snyvi runs on a timer
 //! while the widget is in view and draws what it prints (docs/WIDGETS.md).
 //!
+//! A desk's own widget is one level down, in `<config>/widgets/@<desk
+//! id>/<name>/` (1.32): `@` is in no widget's name, so the two never meet,
+//! and a desk renamed keeps its widgets. A name is shared or owned, never
+//! both (`taken`).
+//!
 //! Nothing in here runs anything: this reads the folders, says what each
 //! one asks for, hashes what the reader allowed, and writes a starter. The
 //! running is the daemon's (`crate::server::widget_run`).
@@ -24,6 +29,114 @@ pub const TIMEOUT_DEFAULT: u64 = 10;
 /// Where the reader's widget folders are.
 pub fn dir(config_dir: &Path) -> PathBuf {
     config_dir.join("widgets")
+}
+
+/// Where desk `desk`'s own widgets are.
+pub fn owned_dir(config_dir: &Path, desk: i64) -> PathBuf {
+    dir(config_dir).join(format!("@{desk}"))
+}
+
+/// The folder of `owner`'s widget `name`: in its desk's folder, or for 0 --
+/// shared or global -- in the widgets folder itself.
+pub fn folder_of(config_dir: &Path, owner: i64, name: &str) -> PathBuf {
+    if owner == 0 {
+        dir(config_dir).join(name)
+    } else {
+        owned_dir(config_dir, owner).join(name)
+    }
+}
+
+/// Where a pruned desk's widgets are kept: out of the runner's sight, and
+/// still on disk (snyvi never deletes).
+pub fn pruned_dir(config_dir: &Path) -> PathBuf {
+    dir(config_dir).join(".pruned")
+}
+
+/// Where a removed agent's widget is kept: out of the runner's sight, as a
+/// pruned desk's are, until Undo or a move by hand puts it back.
+pub fn removed_dir(config_dir: &Path) -> PathBuf {
+    dir(config_dir).join(".removed")
+}
+
+/// Desk `owner`'s widget `name` out of sight, to `.removed/<owner>-<name>-
+/// <now>` (a `-2` after it when that is there already): moved, never
+/// deleted. The id it is kept under, which Undo hands back.
+pub fn remove(config_dir: &Path, owner: i64, name: &str, now: i64) -> Result<String, String> {
+    let to = removed_dir(config_dir);
+    std::fs::create_dir_all(&to).map_err(|e| format!("could not keep it: {e}"))?;
+    let base = format!("{owner}-{name}-{now}");
+    let id = (1..)
+        .map(|n| {
+            if n == 1 {
+                base.clone()
+            } else {
+                format!("{base}-{n}")
+            }
+        })
+        .find(|id| !to.join(id).exists())
+        .unwrap_or(base);
+    std::fs::rename(folder_of(config_dir, owner, name), to.join(&id))
+        .map_err(|e| format!("could not move it: {e}"))?;
+    Ok(id)
+}
+
+/// A removed widget back where it was: Undo. Refused for an id that is not
+/// `owner`'s `name`, and when the name was taken meanwhile.
+pub fn restore(config_dir: &Path, id: &str, owner: i64, name: &str) -> Result<(), String> {
+    let ours = id
+        .strip_prefix(&format!("{owner}-{name}-"))
+        .is_some_and(|t| {
+            t.starts_with(|c: char| c.is_ascii_digit())
+                && t.bytes().all(|b| b.is_ascii_digit() || b == b'-')
+        });
+    let from = removed_dir(config_dir).join(id);
+    if !ours || !from.is_dir() {
+        return Err(format!("{name} was not removed from here"));
+    }
+    if let Some(why) = taken(config_dir, owner, name) {
+        return Err(why);
+    }
+    std::fs::rename(&from, folder_of(config_dir, owner, name))
+        .map_err(|e| format!("could not move it back: {e}"))
+}
+
+/// The desk an `@<id>` folder is for.
+fn owner_of(folder_name: &str) -> Option<i64> {
+    folder_name
+        .strip_prefix('@')
+        .and_then(|n| n.parse::<i64>().ok())
+        .filter(|n| *n > 0)
+}
+
+/// Why `name` cannot be `owner`'s (0: shared), or None when it can. A
+/// desk's own name may be another desk's own too, but not a shared one's;
+/// a shared name may be no desk's own.
+pub fn taken(config_dir: &Path, owner: i64, name: &str) -> Option<String> {
+    clash(config_dir, None, owner, name)
+}
+
+/// Why widget `name` cannot move from `from` to `to` (0: shared), or None.
+/// Its own folder is not in its way.
+pub fn taken_moving(config_dir: &Path, from: i64, to: i64, name: &str) -> Option<String> {
+    clash(config_dir, Some(from), to, name)
+}
+
+fn clash(config_dir: &Path, from: Option<i64>, to: i64, name: &str) -> Option<String> {
+    if folder_of(config_dir, to, name).exists() {
+        return Some(format!("a widget called {name} is already there"));
+    }
+    if to != 0 {
+        let shared = from != Some(0) && dir(config_dir).join(name).exists();
+        return shared.then(|| format!("a shared widget is called {name}: pick another name"));
+    }
+    std::fs::read_dir(dir(config_dir))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| owner_of(&e.file_name().to_string_lossy()))
+        .filter(|d| Some(*d) != from)
+        .find(|d| owned_dir(config_dir, *d).join(name).exists())
+        .map(|d| format!("desk {d} has a widget of its own called {name}: rename one first"))
 }
 
 /// Where a widget runs: on the desk on the page, in the desk's folder, or
@@ -121,28 +234,81 @@ pub struct Found {
     pub name: String,
     pub folder: PathBuf,
     pub spec: Result<Spec, String>,
+    /// The desk it belongs to; 0 for a shared or global one.
+    pub owner: i64,
 }
 
-/// Every widget folder, by name. A folder whose `widget.json` does not read,
-/// or names another widget, is listed with the reason, so /sidebars can
-/// say it rather than leave the reader guessing.
-pub fn scan(config_dir: &Path) -> Vec<Found> {
-    let Ok(rd) = std::fs::read_dir(dir(config_dir)) else {
+impl Found {
+    /// The widget's key among all of them: its name, or `@<desk>/<name>`
+    /// for a desk's own, since two desks may each own a `status`.
+    pub fn key(&self) -> String {
+        if self.owner == 0 {
+            self.name.clone()
+        } else {
+            format!("@{}/{}", self.owner, self.name)
+        }
+    }
+}
+
+/// The widget folders directly in `parent`, each for `owner`.
+fn scan_in(parent: &Path, owner: i64) -> Vec<Found> {
+    let Ok(rd) = std::fs::read_dir(parent) else {
         return Vec::new();
     };
-    let mut out: Vec<Found> = rd
-        .flatten()
+    rd.flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             name_ok(&name).then(|| Found {
-                spec: read(&e.path(), &name),
+                spec: read(&e.path(), &name).and_then(|s| {
+                    if owner != 0 && s.scope == Scope::Global {
+                        Err(
+                            "a desk's own widget is on its desk: its widget.json cannot say global"
+                                .into(),
+                        )
+                    } else {
+                        Ok(s)
+                    }
+                }),
                 name,
                 folder: e.path(),
+                owner,
             })
         })
-        .collect();
+        .collect()
+}
+
+/// Every widget folder: the shared and global ones by name, then each
+/// desk's own. A folder whose `widget.json` does not read, or names another
+/// widget, is listed with the reason, so /sidebars can say it rather than
+/// leave the reader guessing; so is a shared one whose name a desk owns.
+pub fn scan(config_dir: &Path) -> Vec<Found> {
+    let base = dir(config_dir);
+    let mut out = scan_in(&base, 0);
     out.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut desks: Vec<i64> = std::fs::read_dir(&base)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| owner_of(&e.file_name().to_string_lossy()))
+        .collect();
+    desks.sort_unstable();
+    let mut owned = Vec::new();
+    for d in desks {
+        let mut mine = scan_in(&owned_dir(config_dir, d), d);
+        mine.sort_by(|a, b| a.name.cmp(&b.name));
+        owned.extend(mine);
+    }
+    for f in out.iter_mut() {
+        if let Some(o) = owned.iter().find(|o| o.name == f.name) {
+            f.spec = Err(format!(
+                "desk {} has a widget of its own called {}: rename one of them",
+                o.owner, f.name
+            ));
+        }
+    }
+    out.extend(owned);
     out
 }
 
@@ -496,6 +662,122 @@ mod tests {
         std::fs::set_permissions(w.join(script), std::fs::Permissions::from_mode(0o755)).unwrap();
         let spec = read(&w, "git").unwrap();
         assert_eq!(lint(&spec, &w), Ok(()));
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    fn write_spec(folder: &Path, name: &str, scope: &str) {
+        std::fs::create_dir_all(folder).unwrap();
+        std::fs::write(
+            folder.join("widget.json"),
+            format!(r#"{{"name":"{name}","scope":"{scope}","run":{{"command":"run.sh"}}}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_desks_own_widgets_are_found_under_its_id() {
+        let cfg = folder("owned");
+        write_spec(&dir(&cfg).join("git"), "git", "desk");
+        write_spec(&folder_of(&cfg, 7, "arena"), "arena", "desk");
+        write_spec(&folder_of(&cfg, 9, "arena"), "arena", "desk");
+        write_spec(&folder_of(&cfg, 7, "left"), "left", "global");
+        // Not a desk's folder: no id, or not one.
+        write_spec(&dir(&cfg).join("@x").join("odd"), "odd", "desk");
+        write_spec(&pruned_dir(&cfg).join("3-1").join("old"), "old", "desk");
+        let found = scan(&cfg);
+        let keys: Vec<String> = found.iter().map(Found::key).collect();
+        assert_eq!(keys, ["git", "@7/arena", "@7/left", "@9/arena"]);
+        assert!(found[0].spec.is_ok() && found[1].spec.is_ok() && found[3].spec.is_ok());
+        assert!(found[2]
+            .spec
+            .as_ref()
+            .unwrap_err()
+            .contains("cannot say global"));
+        assert_eq!((found[1].owner, found[3].owner), (7, 9));
+        // A shared folder a desk owns the name of is not run.
+        write_spec(&dir(&cfg).join("arena"), "arena", "desk");
+        let found = scan(&cfg);
+        let shared = found.iter().find(|f| f.key() == "arena").unwrap();
+        assert!(shared
+            .spec
+            .as_ref()
+            .unwrap_err()
+            .contains("desk 7 has a widget of its own"));
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[test]
+    fn a_name_is_shared_or_owned_never_both() {
+        let cfg = folder("taken");
+        write_spec(&dir(&cfg).join("git"), "git", "desk");
+        write_spec(&folder_of(&cfg, 7, "arena"), "arena", "desk");
+        // Another desk may own one of the same name; the same desk may not.
+        assert_eq!(taken(&cfg, 9, "arena"), None);
+        assert!(taken(&cfg, 7, "arena").unwrap().contains("already there"));
+        // A desk may not own a shared name, nor share an owned one.
+        assert!(taken(&cfg, 7, "git").unwrap().contains("shared widget"));
+        assert!(taken(&cfg, 0, "arena").unwrap().contains("desk 7"));
+        assert_eq!(taken(&cfg, 0, "new"), None);
+        // Moving, its own folder is not in its way; another desk's is.
+        assert_eq!(taken_moving(&cfg, 7, 0, "arena"), None);
+        assert_eq!(taken_moving(&cfg, 0, 7, "git"), None);
+        write_spec(&folder_of(&cfg, 9, "arena"), "arena", "desk");
+        assert!(taken_moving(&cfg, 7, 0, "arena")
+            .unwrap()
+            .contains("desk 9"));
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[test]
+    fn a_folder_moved_keeps_its_hash() {
+        let cfg = folder("moved");
+        let from = dir(&cfg).join("git");
+        std::fs::write(from.join("run.sh"), "echo a").unwrap();
+        let before = hash(&from).unwrap();
+        let to = folder_of(&cfg, 7, "git");
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::rename(&from, &to).unwrap();
+        assert_eq!(
+            hash(&to).unwrap(),
+            before,
+            "what was allowed is still allowed"
+        );
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[test]
+    fn a_removed_widget_is_kept_out_of_sight_and_comes_back() {
+        let cfg = folder("removed");
+        write_spec(&folder_of(&cfg, 7, "arena"), "arena", "desk");
+        std::fs::write(folder_of(&cfg, 7, "arena").join("run.sh"), "echo a").unwrap();
+        let before = hash(&folder_of(&cfg, 7, "arena")).unwrap();
+        let id = remove(&cfg, 7, "arena", 100).unwrap();
+        assert_eq!(id, "7-arena-100");
+        assert!(
+            scan(&cfg).iter().all(|f| f.name != "arena"),
+            "nothing runs from .removed"
+        );
+        assert!(
+            removed_dir(&cfg).join(&id).join("run.sh").is_file(),
+            "moved, not deleted"
+        );
+        // Removed again in the same second: kept beside it, not over it.
+        write_spec(&folder_of(&cfg, 7, "arena"), "arena", "desk");
+        assert_eq!(remove(&cfg, 7, "arena", 100).unwrap(), "7-arena-100-2");
+        // Undo only puts back what was this desk's and this name's.
+        assert!(restore(&cfg, &id, 9, "arena").is_err());
+        assert!(restore(&cfg, "../../etc", 7, "arena").is_err());
+        assert!(restore(&cfg, "7-arena-", 7, "arena").is_err());
+        restore(&cfg, &id, 7, "arena").unwrap();
+        assert_eq!(
+            hash(&folder_of(&cfg, 7, "arena")).unwrap(),
+            before,
+            "allowed as it was"
+        );
+        // The name taken meanwhile: the other stays where it is kept.
+        assert!(restore(&cfg, "7-arena-100-2", 7, "arena")
+            .unwrap_err()
+            .contains("already there"));
         let _ = std::fs::remove_dir_all(&cfg);
     }
 
