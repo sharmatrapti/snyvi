@@ -410,6 +410,9 @@ pub(crate) fn talk(app: &App, doc: &Doc) -> Talk {
 /// Send to… shows on the reader's own documents from one, and on a friend's
 /// from two, since the one there is is who sent it.
 pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> String {
+    // A document stored before 1.34 opens with its players as buttons too.
+    let body = render::lazy_players(body);
+    let body: &str = &body;
     let e = html_escape::encode_text;
     // What goes inside a quoted attribute: a friend names themselves and
     // their documents, and a `"` there must stay a character.
@@ -443,7 +446,8 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
             format!(" · {}", e(&doc.workflow_title))
         };
         format!(
-            "from {} · <span data-tip=\"Signed with the key you paired with\">verified</span>{filed}{on}{flow}",
+            "{}from {} · <span data-tip=\"Signed with the key you paired with\">verified</span>{filed}{on}{flow}",
+            friend_mark(who),
             e(who)
         )
     } else {
@@ -515,6 +519,30 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
         "<div class=\"doc-acts\" style=\"display:flex;flex-wrap:wrap;gap:2px 18px;margin:6px 0 0;font-size:var(--fs-ui);color:var(--fg-3)\">{acts}</div>"
     );
     head(doc, body, &sub, &acts, talk)
+}
+
+/// A friend's initial in their own colour, before their name in the head of
+/// what they sent (#123): the sidebar, Waiting, Home and a desk's notes wear
+/// the same one (`ui/app/02-tree.js` `whoIco`), so a friend's reads as theirs
+/// wherever it is. Inline, as the rest of the head's look is.
+fn friend_mark(name: &str) -> String {
+    let initial: String = name
+        .trim()
+        .chars()
+        .next()
+        .map_or("?".into(), |c| c.to_uppercase().collect());
+    format!(
+        "<span class=\"r-who\" style=\"--h:{};display:inline-grid;vertical-align:-3px;margin-right:6px\" \
+         aria-hidden=\"true\">{}</span>",
+        friend_hue(name),
+        html_escape::encode_text(&initial)
+    )
+}
+
+/// The friend's colour, as a hue from their name: `whoIco`'s `hueOf`, the
+/// same sum over the same code points, so the page and the daemon agree.
+pub(crate) fn friend_hue(name: &str) -> u32 {
+    name.chars().fold(7, |h, c| (h * 31 + c as u32) % 360)
 }
 
 /// The head and the article around it: the title, the sub line, a friend's

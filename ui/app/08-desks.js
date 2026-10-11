@@ -148,16 +148,21 @@
       const m = mark3(d.panes), n = d.panes.length, full = fullest(d);
       const say = m === "!" ? needYou(d.panes.filter(p => p.status && p.status.blocked).length) : m === "●" ? "An agent is working" : m === "◦" ? "Running" : "Idle";
       // The row's end says only what is unusual: a panel that needs you, a
-      // context window nearly full, three panels or more (two is what most
-      // desks have, so a 2 on every row told them apart by nothing). A live
-      // desk is a dot and an idle one is nothing; the tip carries the rest.
+      // context window nearly full, documents waiting from its panels. A live
+      // desk is a dot and an idle one is nothing; the tip carries the rest,
+      // the count of panels with it: "4" beside "▣ 1" read as "1 4", so the
+      // one figure on a row is what waits for the reader (1.34).
       const working = d.panes.filter(p => p.status && (p.status.agent === "working" || p.status.running)).length;
       const fp = full == null ? null : d.panes.find(p => p.status && p.status.ctx_pct === full);
-      const tip = [plural(n, "panel"), working ? `${working} working` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
+      // What its panels sent that waits to be read (#122): the corner card
+      // on another desk says it once and settles, and this is where it went.
+      // Not on the desk on screen, whose rail lists it already, in bold.
+      const w = on && state.deskId === d.id ? 0 : state.queue.filter(q => q.desk && q.desk.id === d.id).length;
+      const tip = [plural(n, "panel"), working ? `${working} working` : "", w ? `${w} to read` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" draggable="false" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
         deskSaid && deskSaid.id === d.id ? `<span class="end"><span class="t-said" role="status" data-tip="${esc(deskSaid.text)}" data-tip-sub="${esc(deskSaid.why)}">${esc(deskSaid.text)}</span></span>` :
-        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : m === "●" ? `<span class="dot on"></span>` : m === "◦" ? `<span class="dot run"></span>` : ""}<span class="vh">${say}</span>${n > 2 ? `<span class="k">${n}</span>` : ""}</span>`,
+        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : m === "●" ? `<span class="dot on"></span>` : m === "◦" ? `<span class="dot run"></span>` : ""}<span class="vh">${say}</span>${w ? `<span class="k">▣ ${w}</span>` : ""}</span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row
@@ -205,7 +210,7 @@
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, icons: ICONS, who: whoIco, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root });
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -473,6 +478,8 @@
     holdQueue();   // a burst's events carry counts ahead of the rows this page holds
     state.cache.delete(d.id);
     renderTree(); markActive();
+    // On a desk, one from elsewhere rises in its corner (#122).
+    if (state.view === "desk" && desk) desk.elsewhere(d);
     await refreshTree(d.project_id);
     deskDocs();
     // First in the library, wherever the reader is -- on a desk, most

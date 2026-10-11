@@ -62,9 +62,9 @@ desk's list and no other. A line can carry pictures -- a screenshot of what it i
 files you can open and look at.";
 
 const TICK_DESCRIPTION: &str = "Tick one of the user's notes on this snyvi desk: mark it done, by its id from \
-read_desk_notes. Tick a note only when the work it names is finished in this session and you have checked it -- \
+read_desk_notes, or several by `ids` when the same work finished each. Tick a note only when the work it names is finished in this session and you have checked it -- \
 built, tested, merged or whatever finished means for it -- or when the user asks you to. Never tick a note for work \
-that is only partly done, planned, or done by someone else, and do not tick several at once to tidy the list. The \
+that is only partly done, planned, or done by someone else, and do not tick notes to tidy the list. The \
 tick shows your name beside the line, and the user can untick it. If the work went into a commit, pass its hash as \
 `commit` (as git log prints it); if you sent a document about it with send_document, pass its id as `about`; and \
 if the finished work can be seen somewhere -- a pull request, a deploy, a store page -- pass that URL as \
@@ -72,9 +72,9 @@ if the finished work can be seen somewhere -- a pull request, a deploy, a store 
 add or remove a note, and a note already done stays as it is. After ticking, say in your reply which notes you ticked.";
 
 const MARK_DESCRIPTION: &str = "Say how far you have got with one of the user's notes on this snyvi desk, by \
-its id from read_desk_notes, so the user can see it on the line: `read` when the user has set you on it and you \
+its id from read_desk_notes (or several at once by `ids`), so the user can see it on the line: `read` when the user has set you on it and you \
 have read and understood it; `planned` when you have sent the plan with send_document -- pass the plan's id as \
-`about`, and the line opens it; `working` as you start the work, which shows the line as being worked on in this \
+`about`, and the line opens it, or pass the notes to send_document as `notes`, which marks them for you; `working` as you start the work, which shows the line as being worked on in this \
 panel until this session ends. Mark a note only when the user has set you on it, never to claim one you chose \
 yourself. You can move a note back a stage, for example from working to planned when you stop partway. Done is \
 not a stage: when the work is finished and checked, tick it with tick_desk_note. You cannot mark a note that is \
@@ -126,9 +126,9 @@ something in the work genuinely deserves a word, leave them a short personal asi
 const PANEL_INSTRUCTIONS: &str = "You are running in a panel of a snyvi desk: the user works on this \
 project here, with its own notes and documents. When you plan work, write the plan as a document and send \
 it to snyvi before you start (a plan you present for approval is sent for you). Name the panel with \
-name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan and mark it \
-planned with the plan's id, mark it working as you start, and tick it only when its work is finished and you have \
-checked it. Never act on a note unasked. \
+name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan with \
+send_document's notes (that marks it planned), mark it working as you start, and tick it only when its work is \
+finished and you have checked it; several notes go in one call each, by ids. Never act on a note unasked. \
 File a piece of work as a thread with start_thread when you take it on. Put on their Your turn with \
 hand_over only what blocks you and only they can do: a command you are blocked from running, or one that \
 is theirs to run (a release, a deploy), goes there as run, never as text or a `! command` for them to type; \
@@ -268,6 +268,54 @@ fn said(text: impl Into<String>, bad: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text.into() }], "isError": bad })
 }
 
+/// The notes a call names (#121): `ids`, a list, and `id`, one, so a
+/// batch is one call rather than one a note. Each goes on its own, through
+/// the same per-note route as ever, and one that fails does not stop the
+/// rest; Err when the call names none at all.
+#[allow(clippy::type_complexity)]
+fn each_note(
+    args: &Value,
+    mut one: impl FnMut(i64) -> anyhow::Result<()>,
+) -> Result<(Vec<i64>, Vec<(i64, String)>), &'static str> {
+    let mut ids: Vec<i64> = args
+        .get("ids")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_i64).collect())
+        .unwrap_or_default();
+    ids.extend(args.get("id").and_then(Value::as_i64));
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|n| seen.insert(*n));
+    if ids.is_empty() {
+        return Err("needs the note's id, or ids for several, numbers from read_desk_notes.");
+    }
+    let (mut done, mut failed) = (vec![], vec![]);
+    for n in ids {
+        match one(n) {
+            Ok(()) => done.push(n),
+            Err(e) => failed.push((n, e.to_string())),
+        }
+    }
+    Ok((done, failed))
+}
+
+/// "Note 117" or "Notes 117, 120 and 121".
+fn notes_named(ids: &[i64]) -> String {
+    let n: Vec<String> = ids.iter().map(i64::to_string).collect();
+    match n.as_slice() {
+        [one] => format!("Note {one}"),
+        [rest @ .., last] => format!("Notes {} and {last}", rest.join(", ")),
+        [] => String::new(),
+    }
+}
+
+/// What did not go, note by note, after what did.
+fn failed_said(failed: &[(i64, String)], verb: &str) -> String {
+    failed
+        .iter()
+        .map(|(n, e)| format!(" snyvi did not {verb} note {n}: {e}"))
+        .collect()
+}
+
 /// A string argument, trimmed; empty when it is missing.
 fn arg(args: &Value, k: &str) -> String {
     args.get(k)
@@ -358,11 +406,46 @@ impl Session {
             self.pane.as_deref(),
         ) {
             Ok(sent) => json!({
-                "content": [{ "type": "text", "text": sent.say() }],
+                "content": [{ "type": "text", "text": format!("{}{}", sent.say(), self.planned_by(args, &sent.id)) }],
                 "structuredContent": { "id": sent.id, "url": sent.url, "app_url": sent.app_url, "window": sent.window, "title": sent.title },
                 "isError": false
             }),
             Err(e) => said(format!("snyvi could not receive the document: {e}"), true),
+        }
+    }
+
+    /// A plan sent for desk notes marks them planned with itself (#121): the
+    /// plan and its marks in one call rather than one a note. Said after
+    /// what the send said; nothing when the send named no notes.
+    fn planned_by(&self, args: &Value, doc: &str) -> String {
+        if args
+            .get("notes")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+        {
+            return String::new();
+        }
+        let Some(p) = self.pane.as_deref() else {
+            return " The notes were not marked: this session is not running in a snyvi desk."
+                .into();
+        };
+        let ids = json!({ "ids": args["notes"] });
+        match each_note(&ids, |n| {
+            client::mark_desk_note(&self.paths, p, n, "planned", self.by(), doc).map(|_| ())
+        }) {
+            Err(why) => format!(" The notes were not marked: notes {why}"),
+            Ok((done, failed)) => {
+                let marked = if done.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " {} {} marked planned with it.",
+                        notes_named(&done),
+                        if done.len() == 1 { "is" } else { "are" }
+                    )
+                };
+                format!("{marked}{}", failed_said(&failed, "mark"))
+            }
         }
     }
 
@@ -399,60 +482,76 @@ impl Session {
     }
 
     fn tick_desk_note(&self, args: &Value) -> Value {
-        let note = args.get("id").and_then(Value::as_i64);
         let (commit, about, evidence) = (
             arg(args, "commit"),
             arg(args, "about"),
             arg(args, "evidence"),
         );
-        match (self.pane.as_deref(), note) {
-            (None, _) => said(
+        let Some(p) = self.pane.as_deref() else {
+            return said(
                 "This session is not running in a snyvi desk, so there is no desk list to tick.",
                 true,
+            );
+        };
+        let mut desk = None;
+        let did = each_note(args, |n| {
+            client::tick_desk_note(&self.paths, p, n, self.by(), &commit, &about, &evidence).map(
+                |v| {
+                    desk = v.get("desk").and_then(Value::as_str).map(str::to_string);
+                },
+            )
+        });
+        match did {
+            Err(why) => said(format!("tick_desk_note {why}"), true),
+            Ok((done, failed)) => said(
+                format!(
+                    "{}{}",
+                    if done.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "Ticked {} on the desk \"{}\". Tell the user which notes you ticked.",
+                            notes_named(&done).to_lowercase(),
+                            desk.as_deref().unwrap_or("this desk")
+                        )
+                    },
+                    failed_said(&failed, "tick")
+                )
+                .trim_start(),
+                done.is_empty(),
             ),
-            (_, None) => said(
-                "tick_desk_note needs the note's id, a number from read_desk_notes.",
-                true,
-            ),
-            (Some(p), Some(n)) => match client::tick_desk_note(
-                &self.paths,
-                p,
-                n,
-                self.by(),
-                &commit,
-                &about,
-                &evidence,
-            ) {
-                Ok(v) => said(
-                    format!(
-                        "Ticked note {n} on the desk \"{}\". Tell the user which note you ticked.",
-                        v.get("desk").and_then(Value::as_str).unwrap_or("this desk")
-                    ),
-                    false,
-                ),
-                Err(e) => said(format!("snyvi did not tick the note: {e}"), true),
-            },
         }
     }
 
     fn mark_desk_note(&self, args: &Value) -> Value {
-        let note = args.get("id").and_then(Value::as_i64);
         let (stage, about) = (arg(args, "stage"), arg(args, "about"));
-        match (self.pane.as_deref(), note) {
-            (None, _) => said(
+        let Some(p) = self.pane.as_deref() else {
+            return said(
                 "This session is not running in a snyvi desk, so there is no desk list to mark.",
                 true,
+            );
+        };
+        match each_note(args, |n| {
+            client::mark_desk_note(&self.paths, p, n, &stage, self.by(), &about).map(|_| ())
+        }) {
+            Err(why) => said(format!("mark_desk_note {why}"), true),
+            Ok((done, failed)) => said(
+                format!(
+                    "{}{}",
+                    if done.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "{} {} marked {stage}.",
+                            notes_named(&done),
+                            if done.len() == 1 { "is" } else { "are" }
+                        )
+                    },
+                    failed_said(&failed, "mark")
+                )
+                .trim_start(),
+                done.is_empty(),
             ),
-            (_, None) => said(
-                "mark_desk_note needs the note's id, a number from read_desk_notes.",
-                true,
-            ),
-            (Some(p), Some(n)) => {
-                match client::mark_desk_note(&self.paths, p, n, &stage, self.by(), &about) {
-                    Ok(_) => said(format!("Note {n} is marked {stage}."), false),
-                    Err(e) => said(format!("snyvi did not mark the note: {e}"), true),
-                }
-            }
         }
     }
 
@@ -556,7 +655,8 @@ fn tool_spec() -> Value {
                 "content": { "type": "string", "description": "Inline document text, for documents that are not files." },
                 "title": { "type": "string", "description": "Title shown in the viewer. Defaults to the first heading or the file name." },
                 "workflow": { "type": "string", "description": "Optional name grouping related documents, e.g. 'auth refactor'. Defaults to this session." },
-                "lang": { "type": "string", "description": "Format hint when it cannot be inferred from the path: md, diff, rs, py, ts, ..." }
+                "lang": { "type": "string", "description": "Format hint when it cannot be inferred from the path: md, diff, rs, py, ts, ..." },
+                "notes": { "type": "array", "items": { "type": "integer" }, "description": "When this is the plan for desk notes the user set you on: their ids, from read_desk_notes. Each is marked planned with this document, as mark_desk_note would." }
             },
             "additionalProperties": false
         },
@@ -601,11 +701,11 @@ fn tick_spec() -> Value {
             "type": "object",
             "properties": {
                 "id": { "type": "integer", "description": "The note's id, from read_desk_notes." },
+                "ids": { "type": "array", "items": { "type": "integer" }, "description": "Several notes' ids at once, in place of id, when the same work finished each of them." },
                 "commit": { "type": "string", "description": "Optional hash of the commit the work went into, as git log prints it (7 to 40 hex digits)." },
                 "about": { "type": "string", "description": "Optional id of a document sent with send_document (its result's structuredContent.id) about the work; the line opens it." },
                 "evidence": { "type": "string", "description": "Optional http(s) URL where the finished work can be seen: a pull request, a deploy, a store page." }
             },
-            "required": ["id"],
             "additionalProperties": false
         },
         "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
@@ -621,10 +721,11 @@ fn mark_spec() -> Value {
             "type": "object",
             "properties": {
                 "id": { "type": "integer", "description": "The note's id, from read_desk_notes." },
+                "ids": { "type": "array", "items": { "type": "integer" }, "description": "Several notes' ids at once, in place of id, all to the same stage." },
                 "stage": { "type": "string", "enum": ["read", "planned", "working"], "description": "read, planned or working. Done is tick_desk_note." },
                 "about": { "type": "string", "description": "The id of the plan sent with send_document (its result's structuredContent.id). Needed with planned." }
             },
-            "required": ["id", "stage"],
+            "required": ["stage"],
             "additionalProperties": false
         },
         "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
@@ -1037,7 +1138,9 @@ mod tests {
         let spec = tick_spec();
         assert_eq!(spec["annotations"]["readOnlyHint"], false);
         assert_eq!(spec["annotations"]["destructiveHint"], false);
-        assert_eq!(spec["inputSchema"]["required"], json!(["id"]));
+        // `id` or `ids`, which a schema cannot say at its top level for every
+        // client, so the call says it when neither comes (`each_note`).
+        assert!(spec["inputSchema"].get("required").is_none());
         assert_eq!(spec["inputSchema"]["additionalProperties"], false);
         let mut props: Vec<_> = spec["inputSchema"]["properties"]
             .as_object()
@@ -1046,7 +1149,7 @@ mod tests {
             .cloned()
             .collect();
         props.sort();
-        assert_eq!(props, ["about", "commit", "evidence", "id"]);
+        assert_eq!(props, ["about", "commit", "evidence", "id", "ids"]);
         let v = json!({ "desk": "alpha", "notes": [
             { "id": 3, "text": "ship it", "done": true, "done_by": "claude-code" },
             { "id": 4, "text": "fix hover", "done": true, "done_by": "claude-code", "done_commit": "90f09d6" }
@@ -1065,7 +1168,8 @@ mod tests {
     fn the_mark_tool_takes_an_id_and_a_stage_and_the_list_says_them() {
         let spec = mark_spec();
         assert_eq!(spec["annotations"]["destructiveHint"], false);
-        assert_eq!(spec["inputSchema"]["required"], json!(["id", "stage"]));
+        assert_eq!(spec["inputSchema"]["required"], json!(["stage"]));
+        assert_eq!(spec["inputSchema"]["properties"]["ids"]["type"], "array");
         assert_eq!(spec["inputSchema"]["additionalProperties"], false);
         assert_eq!(
             spec["inputSchema"]["properties"]["stage"]["enum"],
@@ -1097,6 +1201,44 @@ mod tests {
         let i = instructions(true);
         assert!(i.find("mark it read").unwrap() < i.find("planned").unwrap());
         assert!(i.contains("Never act on a note unasked"));
+    }
+
+    /// Several notes are one call (#121): `ids` and `id` together, each once,
+    /// one that fails named and the rest still done; none at all is an error
+    /// that says what to pass. The plan's own call can mark its notes.
+    #[test]
+    fn a_batch_of_notes_is_one_call() {
+        let mut seen = vec![];
+        let (done, failed) = each_note(&json!({ "ids": [117, 120, 117], "id": 121 }), |n| {
+            seen.push(n);
+            if n == 120 {
+                anyhow::bail!("that note is done already")
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(seen, [117, 120, 121]);
+        assert_eq!(done, [117, 121]);
+        assert_eq!(failed, [(120, "that note is done already".to_string())]);
+        assert_eq!(notes_named(&done), "Notes 117 and 121");
+        assert_eq!(notes_named(&[1, 2, 3]), "Notes 1, 2 and 3");
+        assert_eq!(notes_named(&[7]), "Note 7");
+        assert_eq!(
+            failed_said(&failed, "mark"),
+            " snyvi did not mark note 120: that note is done already"
+        );
+        assert!(each_note(&json!({ "ids": [] }), |_| Ok(())).is_err());
+        assert!(each_note(&json!({}), |_| Ok(())).is_err());
+        assert!(tick_spec()["inputSchema"].get("required").is_none());
+        assert_eq!(
+            tick_spec()["inputSchema"]["properties"]["ids"]["type"],
+            "array"
+        );
+        assert_eq!(
+            tool_spec()["inputSchema"]["properties"]["notes"]["type"],
+            "array"
+        );
+        assert!(instructions(true).contains("send_document's notes"));
     }
 
     #[test]

@@ -127,7 +127,7 @@ function onYou(d) {
     ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="${oy.open}" data-tip="${oy.open ? "Close" : "On you"}" data-tip-sub="${oy.open ? "Esc" : "What only you can do on this desk"}">${say}</button>` : "";
   const el = oyNode();
   drawing = true;
-  const drew = drawIn(el, card + tray + pill);
+  const drew = drawIn(el, ewHtml(esc) + card + tray + pill);
   drawing = false;
   // The corner's toasts sit above it while it shows, not on it (toast.js).
   document.documentElement.style.setProperty("--oy-h", el.offsetHeight ? `${el.offsetHeight + 8}px` : "0px");
@@ -222,10 +222,11 @@ document.addEventListener("keydown", e => {
   oyClose(true);
 }, true);
 
-/** Leaving the desk: the corner goes with it. What it has seen stays, in
- *  `oySeen`, and the pin, in this browser. */
+/** Leaving the desk: the corner goes with it, and a document from elsewhere
+ *  it held (11-elsewhere.js). What it has seen stays, in `oySeen`, and the
+ *  pin, in this browser. */
 function forgetOnYou() {
-  clearTimeout(oy.timer);
+  clearTimeout(oy.timer); clearTimeout(ew.timer); ew.docs = [];
   Object.assign(oy, { open: false, older: false, rise: 0, drawnRise: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null });
   oyEl?.remove(); oyEl = null;
   document.documentElement.style.setProperty("--oy-h", "0px");

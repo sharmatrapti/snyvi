@@ -2304,7 +2304,7 @@ async function deskRows(cdp, base, token) {
   const [da, db] = [a.desk ? a.desk.id : a.id, b.desk ? b.desk.id : b.id];
   const pane = (await post(`/api/desks/${da}/panes`)).pane.id;
   await post(`/api/panes/${pane}/start`, { cmd: `while :; do printf "\\033]0;work %s\\007" $RANDOM; sleep 0.1; done` });
-  let second = null;
+  let second = null, third = null;
 
   const { targetId, sessionId } = await tab(cdp);
   await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
@@ -2364,10 +2364,35 @@ async function deskRows(cdp, base, token) {
     const hd = await p.ev(`(() => ({ bar: !document.querySelector("#queue-bar").hidden, slot: !!document.querySelector(".dk-head .dk-arr") }))()`);
     rows.push(["a desk has no arrivals bar or slot; its rail lists what it sent", listed && !hd.bar && !hd.slot,
       hd.bar ? "the queue bar lay over the desk's head" : hd.slot ? "the head still has an arrivals slot" : !listed ? "the rail's Documents did not list the panel's document" : "no bar, no slot, and the rail lists it"]);
+
+    // #122: a document from a panel on another desk was heard nowhere on
+    // this one. It rises in the corner, says who sent it, and Later leaves
+    // it waiting -- counted on that desk's row; this desk's own never rose.
+    // On still-a whatever the rows above left, and one of its own sent first.
+    if (await p.ev("location.pathname") !== `/desk/${da}`) { await p.clickOn(`a[data-desk="${da}"]`); await until(`location.pathname === "/desk/${da}" && !!document.querySelector(".dk .pn")`, 50); }
+    const own = (await post("/api/docs", { content: "# Mine\n\nFrom panel 2.", title: "Mine again", origin: "mcp", pane: second }, TK)).doc;
+    await until(`!!document.querySelector('#rail [data-read="${own && own.id}"]')`, 30);
+    const ownRose = await p.ev(`!!document.querySelector("#onyou .oy-doc")`);
+    third = (await post(`/api/desks/${db}/panes`)).pane.id;
+    const away = (await post("/api/docs", { content: "# There\n\nFrom still-b.", title: "Sent from still-b", origin: "mcp", pane: third }, TK)).doc;
+    const rose = !!away && await until(`/still-b · panel 1 sent a document/.test(document.querySelector("#onyou .oy-doc .oy-from")?.textContent || "") && /Sent from still-b/.test(document.querySelector("#onyou .oy-doc .oy-title")?.textContent || "")`, 40);
+    // Once it has risen: a press mid-rise lands where the button is going.
+    if (rose) { await sleep(500); await p.clickOn('#onyou [data-a="ew-later"]'); }
+    const settled = rose && await until(`!document.querySelector("#onyou .oy-doc") && /▣ 1/.test(document.querySelector('a[data-desk="${db}"] .end')?.textContent || "")`, 30);
+    const settledSaid = settled ? "" : JSON.stringify(await p.ev(`({ card: !!document.querySelector("#onyou .oy-doc"), row: document.querySelector('a[data-desk="${db}"] .end')?.textContent || "" })`));
+    const away2 = (await post("/api/docs", { content: "# Again\n\nFrom still-b.", title: "Again from still-b", origin: "mcp", pane: third }, TK)).doc;
+    const rose2 = !!away2 && await until(`!!document.querySelector('#onyou [data-a="ew-open"]')`, 40);
+    if (rose2) { await sleep(500); await p.clickOn('#onyou [data-a="ew-open"]'); }
+    const opened2 = rose2 && await until(`location.pathname === "/d/${away2 && away2.id}"`, 40);
+    rows.push(["a document from another desk rises here; Later leaves it counted on its desk, Open reads it", !ownRose && rose && settled && opened2,
+      ownRose ? "this desk's own document rose in the corner" : !rose ? "no card said still-b's panel sent a document" : !settled ? `Later did not leave ▣ 1 on still-b's row: ${settledSaid}` :
+      !opened2 ? `Open landed on ${await p.ev("location.pathname")}` : "it rose over this desk, Later left ▣ 1 on still-b, and Open read the next one"]);
+    if (opened2) { await p.ev("history.back(), 1"); await until(`location.pathname === "/desk/${da}"`, 30); }
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     await p.pointerAway();
   } finally {
     if (second) await post(`/api/panes/${second}/stop`).catch(() => {});
+    if (third) await post(`/api/panes/${third}/stop`).catch(() => {});
     await post(`/api/panes/${pane}/stop`).catch(() => {});
     for (const d of [da, db]) await post(`/api/desks/${d}/delete`).catch(() => {});
     await cdp.send("Target.closeTarget", { targetId }).catch(() => {});

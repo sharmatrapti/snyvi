@@ -12,7 +12,10 @@ use std::sync::{Arc, Mutex};
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
+mod media;
 mod pictures;
+use media::players;
+pub use media::{lazy_players, media_body, media_kind};
 #[cfg(test)]
 use pictures::picture_size;
 use pictures::sized;
@@ -741,49 +744,6 @@ pub const IMAGE_EXTS: &[&str] = &[
 
 pub fn is_image_ext(ext: &str) -> bool {
     IMAGE_EXTS.contains(&ext)
-}
-
-/// What a browser can play: video, then audio. `.ogg` is usually audio, and an
-/// `<audio>` element plays it; `.ogv` is the video one.
-pub const MEDIA_EXTS: &[(&str, &str)] = &[
-    ("mp4", "video"),
-    ("webm", "video"),
-    ("mov", "video"),
-    ("m4v", "video"),
-    ("ogv", "video"),
-    ("mp3", "audio"),
-    ("wav", "audio"),
-    ("m4a", "audio"),
-    ("ogg", "audio"),
-    ("oga", "audio"),
-    ("flac", "audio"),
-    ("opus", "audio"),
-    ("aac", "audio"),
-];
-
-/// "video" or "audio" for an extension a player can take, else None.
-pub fn media_kind(ext: &str) -> Option<&'static str> {
-    MEDIA_EXTS.iter().find(|(e, _)| *e == ext).map(|(_, k)| *k)
-}
-
-/// The player for a media document or file, pointed at wherever its bytes are
-/// served. `preload="metadata"` asks for the first range only, so opening one
-/// fetches its duration and first frame and nothing more until play is pressed.
-///
-/// Styled inline rather than in app.css: app.css is first paint, which is at
-/// its budget, and a player is only ever inside a document body.
-pub fn media_body(src_url: &str, ext: &str) -> String {
-    let src = html_escape::encode_double_quoted_attribute(src_url);
-    match media_kind(ext) {
-        Some("video") => format!(
-            "<p class=\"doc-image doc-media\"><video controls preload=\"metadata\" src=\"{src}\" \
-             style=\"max-width:100%;max-height:70vh;border-radius:var(--radius)\"></video></p>"
-        ),
-        _ => format!(
-            "<p class=\"doc-image doc-media\"><audio controls preload=\"metadata\" src=\"{src}\" \
-             style=\"width:100%\"></audio></p>"
-        ),
-    }
 }
 
 /// The lowercased extension of a path, or "" when it has none.
@@ -1542,72 +1502,6 @@ impl SyntaxHighlighterAdapter for Highlighter<'_> {
     }
 }
 
-/// A Markdown image whose path is a video or a song, `![take 2](take2.mp4)`,
-/// becomes a player for it, the alt text its title. Done on the finished
-/// HTML, where comrak (`<img src=".." alt=".." />`) and ammonia
-/// (`<img src=".." alt="..">`) both write the attributes escaped and
-/// double-quoted, so they are copied across as they are.
-///
-/// A video sits in a 16:9 box from the first paint, letterboxed, so the page
-/// does not move when the take's own size arrives; a song's controls are one
-/// fixed height. Inline styles, as `media_body`: app.css is first paint.
-///
-/// A picture under the document's own folder (`files`: the `/files/<id>/`
-/// prefix its paths carry, and the folder on disk) is given its size from
-/// the file's header and `loading="lazy"`: a page of screenshots fetches
-/// only the ones in view, and the box of each is there before it is, so
-/// nothing moves when one arrives. A picture whose size cannot be read --
-/// a remote one, an SVG, a file that is not what its name says -- stays as
-/// it was: eager, and never a shift.
-fn players(html: String, files: Option<(&str, &Path)>) -> String {
-    const IMG: &str = "<img src=\"";
-    if !html.contains(IMG) {
-        return html;
-    }
-    let attr = |tag: &str, name: &str| -> Option<String> {
-        let at = tag.find(&format!(" {name}=\""))? + name.len() + 3;
-        let end = tag[at..].find('"')?;
-        Some(tag[at..at + end].to_string())
-    };
-    let mut out = String::with_capacity(html.len());
-    let mut rest = html.as_str();
-    while let Some(i) = rest.find(IMG) {
-        out.push_str(&rest[..i]);
-        let tail = &rest[i..];
-        let Some(close) = tail.find('>') else {
-            break;
-        };
-        let tag = &tail[..=close];
-        let src = attr(tag, "src").unwrap_or_default();
-        let path = src.split(['?', '#']).next().unwrap_or("");
-        match media_kind(&ext_of(path)) {
-            None => match files.and_then(|(base, dir)| sized(tag, path, base, dir)) {
-                Some(t) => out.push_str(&t),
-                None => out.push_str(tag),
-            },
-            Some(kind) => {
-                let title = attr(tag, "alt").filter(|a| !a.is_empty());
-                let title = title.map(|t| format!(" title=\"{t}\"")).unwrap_or_default();
-                if kind == "video" {
-                    out.push_str(&format!(
-                        "<video controls preload=\"metadata\" src=\"{src}\"{title} \
-                         style=\"display:block;width:100%;aspect-ratio:16/9;max-height:70vh;\
-                         object-fit:contain;background:#000;border-radius:var(--radius)\"></video>"
-                    ));
-                } else {
-                    out.push_str(&format!(
-                        "<audio controls preload=\"metadata\" src=\"{src}\"{title} \
-                         style=\"display:block;width:100%;height:54px\"></audio>"
-                    ));
-                }
-            }
-        }
-        rest = &tail[close + 1..];
-    }
-    out.push_str(rest);
-    out
-}
-
 /// Relative image paths resolve against the source document's directory via `/files/<id>/`.
 fn rewrite_image_url(base: &str, url: &str) -> String {
     let u = url.trim();
@@ -2140,49 +2034,6 @@ mod tests {
         assert!(html.contains("src=\"/files/abc/shot.png\""), "{html}");
         let plain = r.render(Kind::Markdown, None, "![alt](shot.png)");
         assert!(plain.contains("src=\"shot.png\""), "{plain}");
-    }
-
-    #[test]
-    fn a_video_or_a_song_in_markdown_plays_in_place() {
-        let r = Renderer::new();
-        let md = |src: &str| r.render_with_base(Kind::Markdown, None, src, Some("/files/abc/"));
-        for (file, tag) in [
-            (
-                "take2.mp4",
-                "<video controls preload=\"metadata\" src=\"/files/abc/take2.mp4\"",
-            ),
-            (
-                "cut.webm",
-                "<video controls preload=\"metadata\" src=\"/files/abc/cut.webm\"",
-            ),
-            (
-                "song.mp3",
-                "<audio controls preload=\"metadata\" src=\"/files/abc/song.mp3\"",
-            ),
-            (
-                "bed.ogg",
-                "<audio controls preload=\"metadata\" src=\"/files/abc/bed.ogg\"",
-            ),
-        ] {
-            let html = md(&format!("Here:\n\n![take \"2\"]({file})\n"));
-            assert!(html.contains(tag), "{file}: {html}");
-            assert!(
-                html.contains("title=\"take &quot;2&quot;\""),
-                "{file}: {html}"
-            );
-            assert!(!html.contains("<img"), "{file}: {html}");
-        }
-        // A video's box is there before its size is known, so nothing moves.
-        assert!(md("![a](a.mp4)").contains("aspect-ratio:16/9"));
-        // A picture stays a picture, and a query is not an extension.
-        assert!(md("![a](a.png)").contains("<img src=\"/files/abc/a.png\""));
-        assert!(md("![a](a.mp4?t=3)").contains("<video"));
-        // Raw HTML takes the sanitizer's road and still gets its player, but
-        // a player written by hand does not get through.
-        let raw =
-            md("<b>hi</b>\n\n![a](a.mp4)\n\n<video src=\"x.mp4\" onplay=\"alert(1)\"></video>");
-        assert_eq!(raw.matches("<video").count(), 1, "{raw}");
-        assert!(!raw.contains("onplay"), "{raw}");
     }
 
     /// A tiny PNG, JPEG, GIF and WebP: only the header each is read for.

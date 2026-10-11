@@ -284,6 +284,7 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-arr > li + li { border-top: 1px solid var(--rule); }
 .hm-ag { flex: none; width: 1em; line-height: 20px; text-align: center; color: var(--fg-3); }
 .hm-ag.ask { color: var(--accent); font-weight: 600; }
+.hm-ag > .r-who { display: inline-grid; width: 14px; height: 14px; vertical-align: -2px; }
 .hm-ab { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .hm-ab > .hm-t { line-height: 20px; color: var(--fg); text-decoration: none; }
 .hm-ab > a.hm-t:hover { text-decoration: underline; }
@@ -1230,7 +1231,7 @@ function lineRow(n, j) {
   const desks = [...ds.filter(d => !d.parked), ...ds.filter(d => d.parked)];
   const list = keepOpen === n.id && !s ? `<div class="hm-keepl" role="menu" aria-label="Keep it on">${desks.map(d =>
     `<button type="button" role="menuitem" class="hm-nb-o" data-hm="akeepto" data-k="${n.id}" data-n="${d.id}"><span class="hm-t">${esc(d.name)}</span>${d.parked ? `<span class="fact">parked</span>` : ""}</button>`).join("")}</div>` : "";
-  return `<li data-part="home.arrived.line"><span class="hm-ag" aria-hidden="true">“</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
+  return `<li data-part="home.arrived.line"><span class="hm-ag">${c.who(n.from)}</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
     (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at, age)}</span>` +
       (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Add it to a desk" data-tip-sub="a note there, from ${esc(n.from)}">Add to a desk… ▾</button>` : "") +
       `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
@@ -1240,7 +1241,9 @@ function lineRow(n, j) {
 function docRow(d) {
   const { esc } = c;
   const from = d.origin === "peer" && d.sender ? `from ${esc(d.sender)}` : `${esc(d.project)}${d.sender ? ` · ${esc(d.sender)}` : ""}`;
-  return `<li data-part="home.arrived.doc"><span class="hm-ag" aria-hidden="true">▣</span><span class="hm-ab"><a class="hm-t" href="/d/${esc(d.id)}" data-id="${esc(d.id)}">${esc(d.title)}</a>` +
+  // A friend's wears their initial in their colour, as in the sidebar (#123).
+  const ag = d.origin === "peer" && d.sender ? c.who(d.sender) : `<span aria-hidden="true">▣</span>`;
+  return `<li data-part="home.arrived.doc"><span class="hm-ag">${ag}</span><span class="hm-ab"><a class="hm-t" href="/d/${esc(d.id)}" data-id="${esc(d.id)}">${esc(d.title)}</a>` +
     `<span class="hm-acts"><span class="hm-s">${from} · ${live(d.received_at, age)}</span></span></span></li>`;
 }
 

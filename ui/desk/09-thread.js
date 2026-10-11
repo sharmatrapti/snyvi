@@ -487,6 +487,7 @@ function addKeyOpen(d) {
 
 /** The section's clicks; true when one of them was this file's. */
 async function filedAct(a, b, d) {
+  if (ewAct(a)) return true;
   if (!a.startsWith("th-") && !a.startsWith("tn-") && !a.startsWith("sg-") && !a.startsWith("oy-") && a !== "fd-back") return false;
   if (a === "oy-open") { oyToggle(); return true; }
   if (a === "oy-older") { oy.older = !oy.older; rail(); return true; }

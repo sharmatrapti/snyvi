@@ -546,6 +546,7 @@ function noteRow(x, esc) {
   // is a question and these are its two answers.
   if (x.suggested_by) {
     return `<li class="dk-note dk-sug"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span>` +
+      (x.sent_by ? ctx.who(x.sent_by, `From ${x.sent_by}`) : "") +
       `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
       `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
       `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc);
@@ -578,7 +579,8 @@ function noteRow(x, esc) {
     `<span class="dk-marks">${marks}</span></span>` +
     // A friend's open line says whose it is, on a line of its own; ticked,
     // its "Tell Trapti ✓" is one of the marks above.
-    (!x.done && x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span></span>` : "") +
+    // Their initial, in their colour, as everywhere a friend shows (#123).
+    (!x.done && x.sent_by ? `<span class="dk-by">${ctx.who(x.sent_by)}<span>from ${esc(x.sent_by)}</span></span>` : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
     `</li>` + errLine(`n${x.id}`, esc);
 }

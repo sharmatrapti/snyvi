@@ -365,7 +365,7 @@
     catch { homeLoading = null; if (state.view === "home") docEl.innerHTML = `<div class="inbox-head"><h1>Home</h1>${noReach("home")}</div>`; return; }
     if (state.view !== "home") return;
     if (push) main.scrollTo({ top: 0, behavior: "instant" });
-    await homeMod.show({ view: () => state.view, esc, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates, peerCtx,
+    await homeMod.show({ view: () => state.view, esc, who: whoIco, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates, peerCtx,
       next: openNext, newDesk: b => askWhere(b, b.matches(":focus-visible")), notes: () => state.notes });
     if (push) swapIn();
     afterRender();
@@ -383,6 +383,15 @@
     else if (w === "connect") connectClaude(b);
     // A friend's buttons in a document's head: Send to…, Keep on a desk…, Save.
     else if (w === "send") peerUse().then(m => m.head(peerCtx, b), () => toast("Could not open that"));
+    // A song or a video is a button until it is pressed, its player waiting
+    // inert in the template beside it (render.rs `player`, #117 #120): the
+    // press puts the player in the button's box, plays it and hands it the
+    // keyboard. Made here, on the press, it sounds in half a second in the
+    // Linux window, where one made with the page took 8.6 s.
+    else if (w === "play") {
+      const t = b.nextElementSibling, m = t && t.content && t.content.firstElementChild;
+      if (m) { b.replaceWith(m); t.remove(); m.play().catch(() => {}); m.focus(); }
+    }
   });
   /** The count beside the brand mark: how many agents hold a stream on the
    *  daemon now, by the name each gave. Zero is drawn too, dim -- "no agent
