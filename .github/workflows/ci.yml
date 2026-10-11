@@ -788,6 +788,11 @@ jobs:
           # runner has the SDK, so here it is not allowed to be silent.
           grep -q "no icon resource" build.log && {
             echo "snyvi.exe was built without its icon"; exit 1; } || true
+      - name: Nothing to install beside the executables
+        # The Visual C++ runtime, above all: a clean Windows does not have it,
+        # and every runner does. packaging/check-imports.ps1 says more.
+        shell: pwsh
+        run: pwsh packaging/check-imports.ps1
       - name: Smoke test the daemon
         shell: bash
         run: |

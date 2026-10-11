@@ -221,7 +221,9 @@ stay shared. [How](docs/GUIDE.md#claude-code).
 <summary><b>Windows says it "protected your PC".</b></summary>
 
 The Windows installer isn't signed yet, so SmartScreen asks once: *More
-info*, then *Run anyway*. Scoop installs without the prompt.
+info*, then *Run anyway*. Scoop installs without the prompt. Signing is on
+its way; the [code signing policy](CODE-SIGNING.md) says what will be
+signed, and how.
 </details>
 
 <details>
@@ -241,5 +243,6 @@ them for anything about snyvi.
   <a href="docs/DESK.md">Desks</a> ·
   <a href="docs/ROADMAP.md">Roadmap</a> ·
   <a href="film/README.md">The film</a> ·
+  <a href="CODE-SIGNING.md">Code signing</a> ·
   MIT
 </p>
