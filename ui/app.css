@@ -119,8 +119,10 @@
      popovers, cards, dialogs, toasts · counts and pills. */
   --r-xs: 4px; --r-sm: 6px; --r-md: 10px; --r-pill: 999px;
   /* Layers, named. A local 0-5 inside one component is allowed. Toasts sit
-     above dialogs, so an answer is never hidden by the dialog that asked. */
-  --z-sticky: 10; --z-rail: 20; --z-dialog: 30; --z-pop: 40; --z-tip: 50; --z-toast: 60; --z-over: 70;
+     above dialogs, so an answer is never hidden by the dialog that asked.
+     Tips sit above toasts: a tip from a button in the On you corner, which
+     is at the toast's level, was drawn under the card it explains (#114). */
+  --z-sticky: 10; --z-rail: 20; --z-dialog: 30; --z-pop: 40; --z-toast: 60; --z-tip: 65; --z-over: 70;
   /* Motion: instant for what happens a hundred times a day, quick by
      default, move for what travels; the spring is the mascot's alone.
      Exits take the in-curve and about a fifth less time. */

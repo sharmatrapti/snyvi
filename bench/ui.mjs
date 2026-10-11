@@ -3436,6 +3436,58 @@ async function panelRows(cdp, base, token) {
       refusedCmd.status !== 400 ? `an escape in the command answered ${refusedCmd.status}` : handed.status !== 201 ? `the hand-over answered ${handed.status}` :
         !card ? "no card with the command and Run" : !typed.length ? "Run typed nothing" : `typed ${JSON.stringify(typed)}${ranGone ? "" : ", and the card stayed"}`]);
 
+    // #114: a key handed over rises whole -- it was cut at two lines, "...then"
+    // and no way on -- says where its link goes, and offers Add key..., which
+    // opens this desk's keys sheet at its Add a key form; a tip from inside
+    // the corner is drawn above the corner, not under it.
+    const keyText = "Create a classic GitHub token with only public_repo (no expiry or a long one), then add it on this desk as WINGET_TOKEN so the release can open the winget PR for you.";
+    const keyHanded = await agent("handover", { kind: "key", text: keyText, link: "https://github.com/settings/tokens/new?scopes=public_repo", by: "bench-agent" });
+    const keyTurn = (await keyHanded.json().catch(() => ({}))).turn?.id;
+    const keyRose = keyHanded.status === 201 && await until(`!!document.querySelector('#onyou .oy-card [data-a="tn-key"]')`, 60);
+    const keyCard = keyRose ? await q.ev(`(() => { const c = document.querySelector('#onyou .oy-card'), t = c.querySelector('.tn-q'), z = n => +getComputedStyle(document.documentElement).getPropertyValue(n);
+      return { whole: t.textContent.length > 150 && t.scrollHeight <= t.clientHeight + 1 && getComputedStyle(t).webkitLineClamp !== "2", by: c.querySelector('.tn-by').textContent, tipOver: z("--z-tip") > z("--z-toast") }; })()`) : null;
+    if (keyRose) await q.clickOn('#onyou .oy-card [data-a="tn-key"]');
+    const keyForm = keyRose && await until(`!!document.querySelector('.dk-keys-sheet .dk-key-more[open]')`, 30);
+    rows.push(["a key hands over whole, says where its link goes, and Add key... opens the keys sheet at its form",
+      !!keyCard && keyCard.whole && keyCard.by.includes("github.com") && !keyCard.by.includes("scopes=") && keyCard.tipOver && keyForm,
+      !keyRose ? `no key card rose with Add key... (${keyHanded.status})` : !keyCard.whole ? "the question is cut" : !keyCard.by.includes("github.com") || keyCard.by.includes("scopes=") ? `its by-line: "${keyCard.by}"` :
+        !keyCard.tipOver ? "tips are under the corner" : !keyForm ? "the keys sheet did not open at Add a key" : `"${keyCard.by}", the sheet open at Add a key`]);
+    await q.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
+    await until(`!document.querySelector('.dk-keys-sheet')`, 20);
+
+    // #115: pinned, the tray stays open while the reader works elsewhere --
+    // a click on the desk, an Esc there -- and is pinned again on the next
+    // visit; the pill closes it, and unpins.
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#onyou .oy-pill");
+    const trayUp = await until(`!!document.querySelector('#onyou .oy-tray [data-a="oy-pin"]')`, 20);
+    if (trayUp) await q.clickOn('#onyou .oy-tray [data-a="oy-pin"]');
+    const pinOn = trayUp && await until(`document.querySelector('#onyou .oy-pin')?.getAttribute("aria-pressed") === "true"`, 20);
+    if (pinOn) await q.clickOn('.dk-sec[data-sec="panels"]');
+    await q.ev(`document.activeElement?.blur?.(); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
+    await sleep(300);
+    const pinHeld = pinOn && await q.ev(`!!document.querySelector('#onyou .oy-tray')`);
+    const pinKept = await q.ev(`(() => { try { return JSON.parse(localStorage.getItem("snyvi.onyou.pin") || "[]").length === 1; } catch { return false; } })()`);
+    if (pinHeld) await q.clickOn("#onyou .oy-pill");
+    const pinOff = pinHeld && await until(`!document.querySelector('#onyou .oy-tray')`, 20)
+      && await q.ev(`JSON.parse(localStorage.getItem("snyvi.onyou.pin") || "[]").length === 0`);
+    rows.push(["a pinned tray stays open through a click and an Esc on the desk; the pill closes it and unpins",
+      pinHeld && pinKept && pinOff,
+      !trayUp ? "no tray with a pin" : !pinOn ? "the pin did not press" : !pinHeld ? "the tray closed under the pin" : !pinKept ? "the pin was not remembered" : !pinOff ? "the pill left it open, or pinned" : "held open, remembered, then closed and unpinned"]);
+
+    // #118: with nothing fresh, the pill says "N older", and its tray opens
+    // onto them -- not onto one more "N older" to press in an empty box. An
+    // hour on the page's clock makes every waiting turn an older one.
+    await q.ev(`window.__now = Date.now; Date.now = () => window.__now.call(Date) + 3600e3; 1`);
+    const later = await agent("handover", { kind: "try", text: "bench: try the older tray", by: "bench-agent" });
+    const laterTurn = (await later.json().catch(() => ({}))).turn?.id;
+    const olderPill = await until(`/^\\d+ older$/.test(document.querySelector('#onyou .oy-pill')?.textContent || "")`, 60);
+    if (olderPill) await q.clickOn("#onyou .oy-pill");
+    const olderOpen = olderPill && await until(`(() => { const t = document.querySelector('#onyou .oy-tray'); return !!t && !t.querySelector('.oy-older') && t.querySelectorAll('.dk-turn').length >= 2; })()`, 30);
+    rows.push(["with nothing fresh the pill says older, and its tray opens onto them", olderOpen,
+      !olderPill ? `the pill said "${await q.ev(`document.querySelector('#onyou .oy-pill')?.textContent || ""`)}"` : !olderOpen ? "the tray held only a fold to press" : "the pill said older, and its tray opened onto them"]);
+    await q.ev(`Date.now = window.__now; document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
+    for (const id of [keyTurn, laterTurn]) if (id) await agent(`turns/${id}`, { drop: true });
+
     // A sidebar document's menu: Remove leaves the row's own Undo.
     const doc = await q.ev(`document.querySelector("#trees a[data-id]")?.dataset.id || ""`);
     if (doc) {

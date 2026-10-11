@@ -27,6 +27,7 @@ const ICO = {
   again: '<path d="M3 8a5 5 0 1 0 1.5-3.5M3 2.5v3h3"/>',
   plus: '<path d="M8 3.5v9M3.5 8h9"/>',
   done: '<path d="M2.5 5l1.5 1.5L7 3.5M2.5 11l1.5 1.5L7 9.5M9.5 5h4M9.5 11h4"/>',
+  pin: '<path d="M6 2.5h4l-.6 3.8 2.1 2.2h-7l2.1-2.2zM8 8.5v5"/>',
   pic: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.75" cy="6.25" r="1.1"/><path d="M2.5 11.5l3.5-3.5 2.5 2.5 2-2 3 3"/>',
 };
 const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k]}</svg>`;

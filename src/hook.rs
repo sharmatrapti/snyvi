@@ -70,6 +70,12 @@ struct Event {
     source: Str,
     /// SessionStart: the title the session already has, if any.
     session_title: Str,
+    /// Stop: the text of the reply that just ended the turn.
+    last_assistant_message: Str,
+    /// Stop: true when Claude Code is already going on because a Stop hook
+    /// asked it to. Taken as any value, so a shape nobody expected is only
+    /// this field missing.
+    stop_hook_active: Option<Value>,
 }
 
 /// The few fields of a tool's input or response this reads. `plan` and
@@ -270,6 +276,12 @@ pub fn run(paths: &Paths) -> Result<()> {
         // when something did: most prompts get nothing, and nothing is
         // printed. It rides on the reader's own message, so snyvi still
         // never starts a turn.
+        if name == "Stop" {
+            if let Some(out) = stop_output(&event) {
+                println!("{out}");
+            }
+            return Ok(());
+        }
         if name == "UserPromptSubmit" {
             let c = client::changes(paths, pane, state, session);
             tell_anyway(c.as_ref());
@@ -423,6 +435,50 @@ fn prompt_output(event: &Event, context: &str, title: &str, desk: &str) -> Optio
         out["sessionTitle"] = json!(title);
     }
     Some(json!({ "hookSpecificOutput": out }).to_string())
+}
+
+/// What a Stop hook in a panel prints: once, when the reply that ended the
+/// turn asked the reader to type a `! command` themselves (#119). In a panel
+/// that command belongs on their Your turn, where Run types it for them on
+/// one click; printed in the reply, they copy it out by hand. The agent is
+/// told so and carries on, and it is the agent that hands it over -- snyvi
+/// makes no card of what an agent wrote. Not again on the turn this one
+/// kept going (`stop_hook_active`), and only for Claude Code, which is where
+/// Run types and the only client known to take the field.
+fn stop_output(event: &Event) -> Option<String> {
+    if event.stop_hook_active.as_ref().and_then(Value::as_bool) == Some(true)
+        || !event
+            .session_id
+            .get()
+            .is_some_and(crate::desk::valid_session)
+    {
+        return None;
+    }
+    let cmd = bang_line(event.last_assistant_message.get()?)?;
+    let context = format!(
+        "Your reply asks the user to type `! {cmd}` themselves. In a snyvi panel a command \
+         that is theirs to run goes on their Your turn: call hand_over with kind run and cmd \
+         set to that command, so they can press Run, then end your turn. If you already \
+         handed it over, end your turn without repeating it."
+    );
+    Some(
+        json!({ "hookSpecificOutput": { "hookEventName": "Stop", "additionalContext": context } })
+            .to_string(),
+    )
+}
+
+/// The first line of a reply that is a `! command` for the reader to type,
+/// as Claude Code's shell mode takes it: `!`, a space, and a command word,
+/// bare or in backticks. The command, without its `!`.
+fn bang_line(reply: &str) -> Option<&str> {
+    reply.lines().find_map(|l| {
+        let l = l.trim().trim_matches('`').trim();
+        let cmd = l.strip_prefix("! ")?.trim();
+        let word = cmd.split_whitespace().next()?;
+        word.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._/-~".contains(c))
+            .then_some(cmd)
+    })
 }
 
 /// A title snyvi gave, and so one it may give again: the old
@@ -1353,6 +1409,54 @@ mod tests {
 
     fn event(v: Value) -> Event {
         serde_json::from_slice(v.to_string().as_bytes()).unwrap()
+    }
+
+    /// A reply that leaves the reader a `! command` to type is answered once
+    /// with a word to hand it over (#119); prose with a `!` in it, a turn a
+    /// Stop hook already kept going, and a client that is not Claude Code
+    /// are left alone.
+    #[test]
+    fn a_bang_command_in_a_reply_is_sent_back_to_hand_over() {
+        let sid = "0a1b2c3d-4e5f-4061-8728-394a5b6c7d8e";
+        let stop = |msg: &str, active: Value| {
+            event(json!({ "hook_event_name": "Stop", "session_id": sid,
+                "last_assistant_message": msg, "stop_hook_active": active }))
+        };
+        let reply = "PR #75 is merged.\n\n! gh workflow run release.yml -f version=1.33.0\n\nOnce it starts, I'll watch.";
+        let out: Value =
+            serde_json::from_str(&stop_output(&stop(reply, json!(false))).unwrap()).unwrap();
+        assert_eq!(out["hookSpecificOutput"]["hookEventName"], "Stop");
+        let said = out["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(
+            said.contains("`! gh workflow run release.yml -f version=1.33.0`"),
+            "{said}"
+        );
+        assert!(said.contains("hand_over with kind run"), "{said}");
+
+        assert_eq!(
+            bang_line("Run `! cargo test` -- no, this:\n`! cargo test --all`"),
+            Some("cargo test --all")
+        );
+        assert_eq!(
+            bang_line("  ! ./install.sh --port 7801"),
+            Some("./install.sh --port 7801")
+        );
+        for prose in [
+            "Done! All green.",
+            "! Careful: this is a warning",
+            "!cargo test",
+            "a ! b",
+        ] {
+            assert_eq!(bang_line(prose), None, "{prose}");
+        }
+        assert!(stop_output(&stop(reply, json!(true))).is_none());
+        assert!(stop_output(&stop("All done.", json!(false))).is_none());
+        assert!(stop_output(&stop(reply, json!("odd"))).is_some());
+        let codex = event(json!({ "hook_event_name": "Stop", "session_id": "codex-1",
+            "last_assistant_message": reply }));
+        assert!(stop_output(&codex).is_none());
     }
 
     /// A resume or a fork is handed this binary's rules ahead of the brief,

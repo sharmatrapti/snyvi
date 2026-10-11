@@ -130,8 +130,9 @@ name_panel when you take on a task. When the user sets you on a desk note, mark 
 planned with the plan's id, mark it working as you start, and tick it only when its work is finished and you have \
 checked it. Never act on a note unasked. \
 File a piece of work as a thread with start_thread when you take it on. Put on their Your turn with \
-hand_over only what blocks you and only they can do: a command you are blocked from running goes there as \
-run, never as text for them to paste; a key; a merge. Asking them to try a change goes in your reply. When \
+hand_over only what blocks you and only they can do: a command you are blocked from running, or one that \
+is theirs to run (a release, a deploy), goes there as run, never as text or a `! command` for them to type; \
+a key; a merge. Asking them to try a change goes in your reply. When \
 you need the user to decide something before you go on, put it on their Your turn with ask (several at once \
 as its questions), or in your own question tool when they are at this panel, never only as a list in your \
 reply. \
@@ -1140,6 +1141,8 @@ mod tests {
             instructions(true).len()
         );
         assert!(instructions(true).contains("as run, never as"));
+        // #119: a release is the reader's to run, and goes on Your turn too.
+        assert!(instructions(true).contains("theirs to run"));
         // #110: a decision goes on Your turn, not only into the reply.
         assert!(instructions(true).contains("with ask (several at once"));
         // Your turn is what blocks the agent, not a "try it" the reader is
