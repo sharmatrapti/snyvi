@@ -1,0 +1,10 @@
+# The C runtime goes inside the Windows executables. Without this, snyvi.exe
+# and snyvi-app.exe import VCRUNTIME140.dll, which is not part of Windows but
+# of the Visual C++ Redistributable: most machines have it from something
+# else, a clean one does not, and there snyvi did not start at all and the
+# silent install hung on the loader's "DLL not found" box -- winget's install
+# test on 1.32.0 is where that was seen. The universal CRT (api-ms-win-crt-*)
+# is part of Windows 10 and 11 and is linked statically along with it.
+# packaging/check-imports.ps1 fails the build if the import comes back.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
