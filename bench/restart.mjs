@@ -242,10 +242,12 @@ async function main() {
       row("an offered panel comes back as its shell and keeps its command", cmdNow === "" && /exec sleep 300/.test(paneNow.cmd || ""),
         `started ${JSON.stringify(cmdNow)}, Start keeps ${JSON.stringify(paneNow.cmd)}`);
       // Its button does something to see: the resume goes in and the strip
-      // with it, or the strip stays and says why where the click was.
+      // with it, or the strip stays and says why where the click was. A
+      // shell not at its prompt is waited for first (OFFER_WAIT_MS, 8 s),
+      // and then the strip offers the restart, hence the long wait here.
       await sleep(1500);
       await ev(`document.querySelector('.pn[data-id="${wander}"] [data-offer="go"]')?.click(); 1`);
-      const went = await until(() => ev(`(() => { const o = document.querySelector('.pn[data-id="${wander}"] .pn-offer'); return o && (o.hidden ? "went" : o.querySelector("span.why") ? o.querySelector("span").textContent : ""); })()`), 20);
+      const went = await until(() => ev(`(() => { const o = document.querySelector('.pn[data-id="${wander}"] .pn-offer'); return o && (o.hidden ? "went" : o.querySelector("span.why") ? o.querySelector("span").textContent : ""); })()`), 60);
       let away = went === "went";
       if (went && !away) {
         await ev(`document.querySelector('.pn[data-id="${wander}"] [data-offer="x"]')?.click(); 1`);

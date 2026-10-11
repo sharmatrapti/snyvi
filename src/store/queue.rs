@@ -5,23 +5,12 @@
 use super::*;
 
 impl Store {
-    /// What arrived and has not been opened, oldest first: the order things
-    /// came in is the order to read them in. Every insert joins it and every
-    /// open leaves it, so it is the unread set with an order and nothing more.
+    /// What arrived and has not been opened, newest first, as Home's
+    /// Arrived and a desk's rail read: the one an agent just said is waiting
+    /// is the top row, not the seventh behind "N more" (audit bf13a1859b,
+    /// decision R8). Every insert joins it and every open leaves it, so it is
+    /// the unread set with an order and nothing more.
     pub fn queue(&self, limit: usize) -> Result<Vec<Doc>> {
-        let conn = self.conn.lock().unwrap();
-        let rows = conn
-            .prepare(&format!(
-                "SELECT {DOC_COLS} {HEAD_FROM} WHERE d.unread = 1 ORDER BY d.received_at, d.rowid LIMIT ?1"
-            ))?
-            .query_map(params![limit as i64], row_to_doc)?
-            .collect::<std::result::Result<_, _>>()?;
-        Ok(rows)
-    }
-
-    /// The newest documents still unread, newest first: Home's Arrived,
-    /// which reads what came last, where the queue reads oldest first.
-    pub fn newest_unread(&self, limit: usize) -> Result<Vec<Doc>> {
         let conn = self.conn.lock().unwrap();
         let rows = conn
             .prepare(&format!(

@@ -246,7 +246,6 @@ function rail() {
   if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); docsScroll(docsTop); loadImgs(); fillSeats(d); }
   drawIn(stripEl(), stripHtml(d, vs, waiting));
   onYou(d);
-  arrSlot(d);
   meta();
 }
 
@@ -1205,7 +1204,7 @@ function resumeHere(v, enter) {
   const n = v.pane.slot;
   if (!talked(v) || !v.pane.resume) return "";
   if (!v.status.running) { run(v, "", false, true); return ""; }
-  const why = !v.mode[1] ? `Panel ${n} is not at a prompt, so nothing is typed into it.`
+  const why = !v.mode[1] ? `Panel ${n}'s shell isn't at its prompt, so nothing was typed. Try again in a moment.`
     : Date.now() - (v.typed || 0) < TYPED_MS ? `You are typing in panel ${n}.` : "";
   if (why) return why;
   input(v, bracket(v, v.pane.resume));

@@ -1,7 +1,8 @@
 /* ui/app/03-queue.js: a part of app.js. build.rs joins ui/app/*.js in name order inside
  * one function scope (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
   // ---------- the queue ----------
-  /* What arrived and has not been opened, in the order it came. An arrival
+  /* What arrived and has not been opened, newest first (1.33: an agent's
+   * "it is waiting" is the top row, not the seventh behind "N more"). An arrival
    * joins it and an open leaves it, wherever the open came from: it is the
    * unread set with an order, not a second list to keep. It never takes the
    * page away from a reader. Before 0.14 an arrival opened itself whenever
@@ -21,7 +22,7 @@
   function unmarkRows(ids) {
     for (const wfs of state.sub.values()) for (const w of wfs) for (const d of w.docs) if (d.unread && (!ids || ids.has(d.id))) d.unread = false;
   }
-  /** Fewer held than are waiting, and room to hold more: ask for the oldest
+  /** Fewer held than are waiting, and room to hold more: ask for the newest
    *  again. A moment later, so a burst of twelve is one ask and not twelve. */
   let holdTimer = 0;
   function holdQueue() {
@@ -93,7 +94,7 @@
   let qbWas = 0, qbSettle = 0, waitedWas = 0;   // the bar's count last drawn, the face's way back to rest, and the count last seen
   // The bar's ✕ hides it, read nothing, until the next arrival.
   let arrivals = 0, qbShut = -1;
-  let qbAt = null;   // the waiting document the bar shows, by id; null is the oldest
+  let qbAt = null;   // the waiting document the bar shows, by id; null is the newest
   /** ‹ or › on the bar: the one before or after, round the ends. */
   function qbStep(by) {
     const q = state.queue, n = q.length;
@@ -161,8 +162,8 @@
     // Not on a desk (1.32): there the bar lay over the desk's head -- its
     // folder, Left off and the window's drag grip -- with other desks'
     // documents in it, and said again what the rail's Docs says. A desk's
-    // own count is a slot in its head (desk.js `docsSlot`); the rest wait
-    // in the sidebar. Audit dc5adb4641. Nor on Home (1.32): it lay under
+    // own arrivals are at the top of its rail's Documents, marked new; the
+    // rest wait in the sidebar. Audit dc5adb4641. Nor on Home (1.32): it lay under
     // Home's own sticky note bar and said again what Arrived and the status
     // line say. Audit 67d008cb6f.
     const off = state.view === "inbox" || state.view === "desk" || state.view === "home";
@@ -180,7 +181,7 @@
     // rise for one more arrival, and twelve arrivals rose twelve times.
     // ‹ › step through what this page holds (#100), by id: an arrival or a
     // read elsewhere leaves the one shown where it is, and if it goes, the
-    // bar is back on the oldest.
+    // bar is back on the newest.
     let at = qbAt ? state.queue.findIndex(d => d.id === qbAt) : 0;
     if (at < 0) { at = 0; qbAt = null; }
     const cur = state.queue[at], one = state.queue.length < 2;
@@ -196,7 +197,7 @@
       queueBar.innerHTML = `<div class="qb${one ? " one" : ""}"><span class="qb-who"></span>` +
         `<button type="button" class="icon qb-step" data-q="prev" data-tip="Previous" aria-label="Previous one waiting">${glyph("prev", 14)}</button><span class="qb-n">${count}</span>` +
         `<button type="button" class="icon qb-step" data-q="step" data-tip="Next" aria-label="Next one waiting">${glyph("next", 14)}</button><span class="qb-next">${next}</span>` +
-        `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the oldest · letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox" class="qb-all" data-nav="inbox">Show all</a>` +
+        `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the newest · letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox" class="qb-all" data-nav="inbox">Show all</a>` +
         `<button type="button" class="icon" data-q="clear" data-tip="Mark all read" aria-label="Mark all read">${glyph("checks", 14)}</button>` +
         `<button type="button" class="icon" data-q="shut" data-tip="Hide this bar" data-tip-sub="they stay waiting in the sidebar" aria-label="Hide this bar">${glyph("x", 14)}</button></div>`;
       qbFeel("whoa");
@@ -252,8 +253,9 @@
     fetch(`/api/docs/${id}/read`, { method: "POST" }).catch(() => {});
   }
 
-  /** `n`: the oldest waiting document. Opening it takes it off, so the next
-   *  `n` is the one after; a reader drains the queue with one key. */
+  /** `n`: the newest waiting document, the one an agent just said is there.
+   *  Opening it takes it off, so the next `n` is the one before it; a reader
+   *  drains the queue with one key. */
   function openNext() {
     const d = state.queue[0];
     if (!d) { toast("Nothing waiting", { sub: "every document that arrived has been opened" }); return; }

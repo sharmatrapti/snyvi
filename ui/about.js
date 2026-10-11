@@ -415,6 +415,7 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 .welcome .w-mark .mk { width: 44px; height: 44px; }
 .welcome .doc-title { margin: 14px 0 12px; }
 .w-lede { font-size: 16px; line-height: 1.55; color: var(--fg-2); margin: 0 0 36px; }
+.w-lede b { color: var(--fg); font-weight: 600; }
 .w-q { font-size: var(--fs-h3); font-weight: 600; margin: 0 0 14px; }
 .w-or { margin: 26px 0 8px; font-size: var(--fs-ui); color: var(--fg-3); }
 .w-places { list-style: none; margin: 0; padding: 0; }
@@ -878,7 +879,7 @@ export function welcome({ cap, places, tilde, mascot, esc }) {
     : `<p class="w-tab">Desks live in the snyvi window: <code>snyvi app</code>.</p>`;
   return `<div class="connect welcome"><div class="w-mark">${mascot}</div>` +
     `<h1 class="doc-title">All your passion projects, in one calm place.</h1>` +
-    `<p class="w-lede">More projects than hours? Give each one a desk: its folder, its agents side by side, and everything they write kept.</p>` +
+    `<p class="w-lede">Agents make it easy to start. <b>snyvi helps you finish.</b> Give each project a desk: its folder, its agents side by side, and everything they write kept.</p>` +
     ask + `<p class="connect-foot"><a href="/start" data-nav="start">How snyvi works</a></p></div>`;
 }
 
@@ -934,7 +935,7 @@ export function start({ cap }) {
       `<p>When an agent writes something worth reading, it sends it here and replies with a link, and by the time you read the reply the document is already open. It is filed under its project, the folder the agent was working in, and under its workflow, one per Claude Code session. There is nothing to import or save: what arrives stays until you remove it, and Undo brings it back. ${showLink("arrives")}</p>`,
       `${kb("mod", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("/")} find in this one`) +
     sec("waiting", "What is waiting",
-      `<p>A document that arrives while you read never takes the page away. It waits, as a row under Waiting in the sidebar and a count in the bar above what you are reading (or a number on the inbox icon, when the sidebar is folded). ${kb("n")} opens the oldest and takes it off, so the next ${kb("n")} is the one after: one key, in the order they came. Opening one any other way counts as read too, and Mark all read clears the list without opening anything. Opened one from the bar in the middle of another? ‹ at the top left takes you back to it, where you were, and once more to the panels; hold it for the last ten places. ${showLink("waiting")}</p>`,
+      `<p>A document that arrives while you read never takes the page away. It waits, as a row under Waiting in the sidebar and a count in the bar above what you are reading (or a number on the inbox icon, when the sidebar is folded). ${kb("n")} opens the newest and takes it off, so the next ${kb("n")} is the one before it: one key, from the latest back. Opening one any other way counts as read too, and Mark all read clears the list without opening anything. Opened one from the bar in the middle of another? ‹ at the top left takes you back to it, where you were, and once more to the panels; hold it for the last ten places. ${showLink("waiting")}</p>`,
       `${kb("n")} the next one waiting · ${kb("alt", "←")} ${kb("alt", "→")} back / forward · ${kb("h")} home · ${kb("i")} the inbox · ${kb("Del")} remove, ${kb("mod", "Z")} put it back`) +
     sec("notes", "Out of your head: notes, points and asides",
       `<p>Three small things, each going one way. <em>Notes</em> are yours: a list kept with each desk (+ New note), ticked off as things get done. An agent in that desk's panels can read it and tick a line, and nothing more. <em>Points</em> go from you to a panel: select a passage in a document you read over a desk and press + Point for panel 2. They gather under the panel until Put it in panel 2 types them into its input, quoted. Nothing is sent until you press Enter there.</p>` +

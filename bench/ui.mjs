@@ -196,14 +196,15 @@ async function main() {
     // own content, through the API. What the queue rows send while reading.
     let arrivals = 0;
     // `o` sends a named file (`name`, `body`), again if it was sent before,
-    // under a `workflow` of its own.
+    // under a `workflow` of its own, and as the hook or an agent (`origin`,
+    // `title`) would.
     const arrive = async (o = {}) => {
       const n = ++arrivals, path = join(tmp, o.name || `arrival-${n}.md`);
       writeFileSync(path, o.body || `# Arrival ${n}\n\nA document that came in while something else was being read.\n`);
       const r = await fetch(`${base}/api/docs`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ path, cwd: tmp, ...(o.workflow ? { workflow: o.workflow } : {}) }),
+        body: JSON.stringify({ path, cwd: tmp, ...(o.workflow ? { workflow: o.workflow } : {}), ...(o.origin ? { origin: o.origin, title: o.title } : {}) }),
       });
       if (!r.ok) throw new Error(`send: ${r.status} ${await r.text()}`);
       return (await r.json()).doc;
@@ -267,6 +268,7 @@ async function main() {
     await section("the panes' edges", () => widthRows(p, url));
     await section("a diagram, filled", () => diagramRows(p, diagramUrl));
     await section("arrivals, while reading", () => queueRows(p, url, arrive));
+    await section("a draft, then the send", () => draftRows(p, url, arrive));
     await section("a delete, and the way back", () => deleteRows(p, arrive));
     await section("nothing lost when snyvi says no", () => lossRows(p, base, token, arrive, browsed));
     await section("by keyboard, and back", () => reachRows(p, base, token, arrive));
@@ -1009,6 +1011,39 @@ async function diagramRows(p, url) {
   return rows;
 }
 
+/** 1.33: what the hook saves as Claude writes is a draft -- a row in its
+ *  project, and nothing announced: no bar, no count, no row under Waiting,
+ *  no wash. The agent's send of the same bytes takes the draft over, and
+ *  that is the arrival: one row, washed once, with the agent's title. */
+async function draftRows(p, url, arrive) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  await p.goto(url);
+  await p.ev(`fetch("/api/queue/clear", { method: "POST" }).then(r => r.status)`);
+  await p.reload();
+  await p.pointerAway();
+  const body = "# Draft heading\n\nSaved as Claude wrote it, not sent yet.\n";
+  const draft = await arrive({ name: "draft.md", body, origin: "hook" });
+  const listed = await until(`!!document.querySelector('#tree a[data-id="${draft.id}"]')`, 30);
+  await sleep(300);
+  const hushed = await p.ev(`({ bar: !document.querySelector("#queue-bar").hidden, queued: !!document.querySelector('#queue a[data-id="${draft.id}"]'),
+    washed: document.querySelectorAll(".wash").length, marked: !!document.querySelector('#tree a.new[data-id="${draft.id}"]') })`);
+  const counted = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.length)`);
+  rows.push(["a draft is listed and says nothing", listed && !hushed.bar && !hushed.queued && !hushed.washed && !hushed.marked && counted === 0,
+    !listed ? "the draft is not in the tree" : hushed.bar ? "the bar came up" : hushed.queued ? "it is under Waiting" : hushed.washed ? "something washed" : hushed.marked ? "the tree marks it new" : counted ? `the daemon counts ${counted} waiting`
+      : "in the tree, unmarked; no bar, no Waiting row, no wash, nothing counted"]);
+
+  const sent = await arrive({ name: "draft.md", body, origin: "mcp", title: "The draft, sent" });
+  const came = await until(`!!document.querySelector('#queue a[data-id="${sent.id}"]')`, 30);
+  const washes = await p.ev(`(() => { const li = document.querySelector('#queue li.t-doc.wash:has(> a[data-id="${sent.id}"])'); return li ? li.getAnimations().filter(x => x.animationName === "land").length : -1; })()`);
+  const title = await p.ev(`document.querySelector('#queue a[data-id="${sent.id}"] .title')?.textContent || ""`);
+  rows.push(["the send takes the draft over, and arrives", sent.id === draft.id && came && washes === 1 && title === "The draft, sent",
+    sent.id !== draft.id ? "a second row, not the draft" : !came ? "nothing under Waiting" : washes !== 1 ? `${washes < 0 ? "no" : washes} wash on the row` : title !== "The draft, sent" ? `the row says "${title}"`
+      : "one row, under Waiting, washed once, with the agent's title"]);
+  await p.ev(`fetch("/api/queue/clear", { method: "POST" }).then(r => r.status)`);
+  return rows;
+}
+
 /** 0.14: an arrival joins a queue and the page stays where it is; `n` reads
  *  down the line; Back returns to the place; the count survives a reload. */
 async function queueRows(p, url, arrive) {
@@ -1067,7 +1102,7 @@ async function queueRows(p, url, arrive) {
   const served = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.map(d => d.title))`);
   const inOrder = many.side.join("|") === served.slice(0, 6).join("|");
   rows.push(["twelve at once", twelve && many.side.length === 6 && /6 more/.test(many.more || "") && inOrder,
-    !twelve ? `the bar reads "${many.bar ? many.bar.slice(0, 20) : "nothing"}"` : many.side.length !== 6 ? `${many.side.length} rows in the sidebar` : !/6 more/.test(many.more || "") ? `"${many.more}" under them` : !inOrder ? `the sidebar's order is not the daemon's` : "bar reads 1/12; six rows and \"6 more\" in the sidebar, in arrival order"]);
+    !twelve ? `the bar reads "${many.bar ? many.bar.slice(0, 20) : "nothing"}"` : many.side.length !== 6 ? `${many.side.length} rows in the sidebar` : !/6 more/.test(many.more || "") ? `"${many.more}" under them` : !inOrder ? `the sidebar's order is not the daemon's` : "bar reads 1/12; six rows and \"6 more\" in the sidebar, newest first"]);
 
   await p.reload();
   const kept = await read();
@@ -2319,31 +2354,16 @@ async function deskRows(cdp, base, token) {
     rows.push(["an aside from a panel goes back to that panel", !!there,
       !from ? "the daemon did not say where the aside came from" : !led ? "the card does not lead to the panel" : !there ? `the click landed on ${await p.ev("location.pathname")}, not panel 2 of still-a` : "the click opened still-a with panel 2 focused"]);
 
-    // 1.32: no queue bar on a desk (audit dc5adb4641). The head keeps room to
-    // drag the window by, its slot counts this desk's waiting and no other's,
-    // and Mark these read leaves every other desk's waiting, with an Undo.
+    // 1.32: no queue bar on a desk (audit dc5adb4641). 1.33: no slot in the
+    // head either -- the rail's Documents already shows what waits here, in
+    // bold -- so the head keeps its room to drag the window by.
     const TK = { "content-type": "application/json", authorization: `Bearer ${token}` };
     await post("/api/queue/clear", {}, TK);
     const mine = (await post("/api/docs", { content: "# Here\n\nFrom panel 2.", title: "Sent here", origin: "mcp", pane: second }, TK)).doc;
-    const other = (await post("/api/docs", { content: "# Elsewhere\n\nFrom no desk.", title: "Sent elsewhere", origin: "mcp" }, TK)).doc;
-    const counted = await until(`document.querySelector(".dk-arr-b .n")?.textContent === "1"`);
-    const hd = await p.ev(`(() => { const l = document.querySelector(".dk-left")?.getBoundingClientRect(), n = document.querySelector(".dk-arr")?.getBoundingClientRect();
-      return { bar: !document.querySelector("#queue-bar").hidden, gap: l && n ? Math.round(n.left - l.right) : -1, says: document.querySelector(".dk-arr-b")?.textContent || "" }; })()`);
-    rows.push(["a desk has no arrivals bar; its head counts only its own", counted && !hd.bar,
-      hd.bar ? "the queue bar lay over the desk's head" : !counted ? `the head's slot says "${hd.says}", not 1 of the 2 waiting` : "no bar, and the slot says 1 of the 2 waiting"]);
-    rows.push(["the desk's head keeps room to drag the window by", hd.gap > 40, `${hd.gap} px free between Left off and the slot`]);
-    await p.clickOn(".dk-arr-b");
-    const listed = !!mine && await until(`!!document.querySelector('.dk-arr-sheet a[data-read="${mine.id}"]')`, 30);
-    const strays = listed && await p.ev(`!!document.querySelector('.dk-arr-sheet a[data-read="${other?.id}"]')`);
-    if (listed) await p.clickOn('.dk-arr-sheet [data-a="arr-read"]');
-    const undo = listed && await until(`!!document.querySelector('.dk-arr-sheet [data-a="arr-back"]')`, 30);
-    const left = (await (await fetch(`${base}/api/queue`)).json()).map(x => x.id);
-    rows.push(["Mark these read on a desk reads its own, and leaves the rest waiting", !!undo && !strays && left.includes(other?.id) && !left.includes(mine?.id),
-      !listed ? "the sheet did not list this desk's document" : strays ? "the sheet listed another desk's document" : !undo ? "no Undo where Mark these read was"
-        : !left.includes(other?.id) ? "the other desk's document was read too" : left.includes(mine?.id) ? "this desk's document is still waiting" : "this desk's read, the other waiting, and an Undo"]);
-    if (undo) await p.clickOn('.dk-arr-sheet [data-a="arr-back"]');
-    const back = undo && await until(`document.querySelector(".dk-arr-b .n")?.textContent === "1"`, 40);
-    rows.push(["and its Undo puts it back", !!back, back ? "the slot says 1 again" : "the slot did not come back to 1"]);
+    const listed = !!mine && await until(`!!document.querySelector('#rail [data-read="${mine.id}"], #rail [href="/d/${mine.id}"]')`, 40);
+    const hd = await p.ev(`(() => ({ bar: !document.querySelector("#queue-bar").hidden, slot: !!document.querySelector(".dk-head .dk-arr") }))()`);
+    rows.push(["a desk has no arrivals bar or slot; its rail lists what it sent", listed && !hd.bar && !hd.slot,
+      hd.bar ? "the queue bar lay over the desk's head" : hd.slot ? "the head still has an arrivals slot" : !listed ? "the rail's Documents did not list the panel's document" : "no bar, no slot, and the rail lists it"]);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     await p.pointerAway();
   } finally {
@@ -2849,9 +2869,9 @@ async function keysSheetRows(cdp, base) {
   const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
   try {
     await p.goto(`${base}/desk/${desk}#cap=${cap}`);
-    const named = await until(`document.querySelector(".dk-keys-b .acc")?.textContent === "Work"`);
+    const named = await until(`document.querySelector(".dk-keys-b .acc")?.textContent === "as Work"`);
     rows.push(["the desk's head names the account its Claude runs as", !!acc && named,
-      !acc ? "the account was refused" : named ? "Work, beside the key" : `the button says "${await p.ev(`document.querySelector(".dk-keys-b")?.textContent || ""`)}"`]);
+      !acc ? "the account was refused" : named ? "as Work, beside the key" : `the button says "${await p.ev(`document.querySelector(".dk-keys-b")?.textContent || ""`)}"`]);
     await p.clickOn(".dk-keys-b");
     const opened = await until(`!!document.querySelector(".dk-keys-sheet .dk-acc-rows input")`);
     const at = opened ? await p.ev(`({ on: document.activeElement?.matches(".dk-acc-rows input:checked") ? document.activeElement.value : "", open: document.querySelectorAll(".dk-keys-sheet .dk-add[open]").length, renew: document.querySelectorAll(".dk-keys-sheet .dk-acc-rows [data-a=acc-renew]").length })`) : null;
@@ -3681,8 +3701,8 @@ async function motionRows(p, url, arrive) {
 
   await p.goto(url);
   await p.pointerAway();
-  // From nothing waiting, so the first arrival is what makes the bar appear
-  // and the oldest \`n\` opens; the sections before this one leave a queue.
+  // From nothing waiting, so the first arrival is what makes the bar appear;
+  // the sections before this one leave a queue.
   await p.ev(`fetch("/api/queue/clear", { method: "POST" })`);
   await until(`document.querySelector("#queue-bar").hidden`);
   const first = await arrive();
@@ -3712,16 +3732,17 @@ async function motionRows(p, url, arrive) {
   rows.push(["nothing runs long", running.length > 0 && long.length === 0,
     !running.length ? "nothing is animating at all, which the rows above say is wrong" : long.length ? `${long.map(a => `${a.name} ${a.n === Infinity ? "forever" : a.ms + " ms"}`).join(", ")}` : `${running.length} animations running, the longest ${Math.max(...running.map(a => a.ms))} ms`]);
 
-  // \`n\` opens the oldest: its row is drawn closing, briefly, then gone.
+  // \`n\` opens the newest, the second: its row is drawn closing, briefly,
+  // then gone.
   // \`void\`: the harness awaits a promise an expression returns, and this one
   // is meant to be read after the key, not before it.
   await p.ev(`void (window.__left = new Promise(r => { const t = setTimeout(() => r(null), 2000); new MutationObserver((_, o) => { const li = document.querySelector("#queue li.leaving"); if (li) { clearTimeout(t); o.disconnect(); r({ id: li.querySelector("a").dataset.id, anim: li.getAnimations().some(a => a.animationName === "leave") }); } }).observe(document.querySelector("#queue"), { childList: true, subtree: true, attributes: true }); }))`);
   await p.press("n");
   const left = await p.ev(`window.__left`);
   await sleep(400);
-  const after = await p.ev(`({ leaving: document.querySelectorAll("#queue li.leaving").length, there: !!document.querySelector('#queue a[data-id="${first.id}"]') })`);
-  rows.push(["a read closes its row where it was", !!left && left.id === first.id && left.anim && !after.leaving && !after.there,
-    !left ? "the row was gone with nothing drawn" : left.id !== first.id ? "a different row was drawn closing" : !left.anim ? "the row was marked but not moving" : after.leaving || after.there ? "the row is still there 400 ms later" : "drawn closing, and gone 400 ms later"]);
+  const after = await p.ev(`({ leaving: document.querySelectorAll("#queue li.leaving").length, there: !!document.querySelector('#queue a[data-id="${second.id}"]') })`);
+  rows.push(["a read closes its row where it was", !!left && left.id === second.id && left.anim && !after.leaving && !after.there,
+    !left ? "the row was gone with nothing drawn" : left.id !== second.id ? "a different row was drawn closing" : !left.anim ? "the row was marked but not moving" : after.leaving || after.there ? "the row is still there 400 ms later" : "drawn closing, and gone 400 ms later"]);
 
   // The \`#\` beside a heading says it copied, itself, and raises no toast.
   // Back on the plan: \`n\` opened the arrival, which is one heading long.

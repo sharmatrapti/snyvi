@@ -411,6 +411,94 @@
   const onPeer = ev => { const j = parse(ev); j && peerUse().then(m => m.event(peerCtx, j), () => {}); };
   /** Home shows a little of all of these; each one reads it again, soon. */
   const HOME_EVENTS = ["panes", "ctx", "desks", "desknotes", "doc", "read", "update", "notes", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing"];
+  /** A document in, as the stream tells it (`doc_event`): a save in place,
+   *  a draft the hook saved, or an arrival. Out of `connect`, which was long
+   *  enough before drafts had a branch of their own. */
+  async function docEvent(j) {
+    const d = j.doc;
+    // A project that was put away and has just been written to is not put
+    // away any more: the sidebar never holds back something waiting to be
+    // read. Taking it out of the set is enough -- the refresh below draws it.
+    if (d && away.delete(String(d.project_id))) saveAway();
+    // A save in place carries its project's row and rows: they go in and
+    // the sidebar is drawn once (`patchTree`), where a save used to
+    // refetch the tree and the project. An arrival still fetches.
+    // An overwrite of a document already here is not an arrival: refresh it where
+    // it is if it is on screen, never navigate to it, and never toast — a file
+    // being watched changes on every save.
+    if (j.existing) {
+      if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
+      else state.cache.delete(d.id);
+      if (patchTree(j)) { renderTree(); markActive(); } else await refreshTree(d.project_id);
+      if (!(desk && desk.docSaved && desk.docSaved(d))) deskDocs(); // the rail patches its own row on a save
+      return;
+    }
+    // A draft the hook saved as Claude wrote it (1.33): a row in its
+    // project and on its desk's rail, and nothing announced -- no wash, no
+    // place on the queue, no word from snyvi, no desktop notification. The
+    // agent's send of it is the arrival (`promoted`). One thing moves: a
+    // draft of a file that was waiting holds the mark now, so it takes
+    // that file's row.
+    if (j.quiet) {
+      const older = d.source_path ? state.queue.filter(q => q.id !== d.id && q.project_id === d.project_id && q.source_path === d.source_path).map(q => q.id) : [];
+      if (older.length) { state.queue = [d].concat(state.queue.filter(q => !older.includes(q.id))); unmarkRows(new Set(older)); }
+      if (j.waiting != null) state.waiting = j.waiting;
+      if (j.supersedes && state.doc && state.doc.id === j.supersedes) renderHistory();
+      state.cache.delete(d.id);
+      if (patchTree(j)) { renderTree(); markActive(); } else await refreshTree(d.project_id);
+      deskDocs();
+      return;
+    }
+    // An arrival joins the queue and the page stays where it is. The one
+    // place it opens by itself is the inbox with nothing waiting: the empty
+    // state exists to be filled, and a reader there has nothing to lose.
+    // An inbox with a queue on it is the queue, and the arrival is a row.
+    const opens = state.view === "inbox" && !state.waiting;
+    // The document on screen has just been sent again. The page stays where
+    // it is -- a reader mid-paragraph did not ask to be moved -- and the
+    // arrival is offered instead of taken.
+    const superseded = !!(j.supersedes && state.doc && state.doc.id === j.supersedes);
+    // A newer version of a file already waiting takes that row's place:
+    // the daemon marked the older ones read when this one landed, and
+    // counts one. By file and not by `supersedes`, which names only the
+    // version just before -- a page that missed an event kept the rest.
+    const older = d.source_path ? state.queue.filter(q => q.id !== d.id && q.project_id === d.project_id && q.source_path === d.source_path).map(q => q.id) : [];
+    if (older.length) dropFromQueue(older, state.waiting - older.length);
+    // Newest first: the arrival is the top row, whatever this page holds
+    // below it, and the held list keeps its length.
+    if (!queueIds.has(d.id)) { state.queue.unshift(d); state.queue.length = Math.min(state.queue.length, QUEUE_HELD); }
+    state.waiting = j.waiting != null ? j.waiting : state.waiting + 1;
+    arrivals++;
+    if (!opens) wash([d.id]);
+    holdQueue();   // a burst's events carry counts ahead of the rows this page holds
+    state.cache.delete(d.id);
+    renderTree(); markActive();
+    await refreshTree(d.project_id);
+    deskDocs();
+    // First in the library, wherever the reader is -- on a desk, most
+    // often -- and not just first into an empty inbox: a reader with a
+    // year of documents is not told this one is their first.
+    if (state.tree.reduce((n, p) => n + p.docs, 0) <= 1) snyviSays("first-doc");
+    else if (state.waiting > 1) snyviSays("two-waiting");
+    else if (j.supersedes) snyviSays("version");
+    if (opens) {
+      await showDoc(d.id, true);
+      // Nobody pressed anything: this one came in on its own, so it keeps
+      // the corner rather than pointing at whatever was last touched.
+      toast(d.title, { sub: `${d.project} · just now`, kind: "news", go: () => showDoc(d.id, true) });
+    }
+    else if (superseded) {
+      // The rail picks it up either way, so the offer is free to fade: a
+      // reader who misses the button finds the new version at the top of
+      // Versions, and `]` steps to it.
+      renderHistory();
+      toast("A newer version arrived", { sub: d.title, kind: "news", go: () => showDoc(d.id, true),
+        action: { label: "Read it", run: () => showDoc(d.id, true) } });
+    }
+    else if (state.view === "inbox") showInbox(false);
+  
+  }
+
   function connect() {
     const es = new EventSource("/api/events" + (inWindow ? `?window=${encodeURIComponent(windowMark)}` : ""));
     stream = es;
@@ -444,74 +532,7 @@
       const j = parse(ev); if (!j) return;
       if (Array.isArray(j.notes)) { state.notes = withOwn(j.notes); renderNote(); }
     });
-    es.addEventListener("doc", async ev => {
-      const j = parse(ev); if (!j) return;
-      const d = j.doc;
-      // A project that was put away and has just been written to is not put
-      // away any more: the sidebar never holds back something waiting to be
-      // read. Taking it out of the set is enough -- the refresh below draws it.
-      if (d && away.delete(String(d.project_id))) saveAway();
-      // A save in place carries its project's row and rows: they go in and
-      // the sidebar is drawn once (`patchTree`), where a save used to
-      // refetch the tree and the project. An arrival still fetches.
-      // An overwrite of a document already here is not an arrival: refresh it where
-      // it is if it is on screen, never navigate to it, and never toast — a file
-      // being watched changes on every save.
-      if (j.existing) {
-        if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
-        else state.cache.delete(d.id);
-        if (patchTree(j)) { renderTree(); markActive(); } else await refreshTree(d.project_id);
-        if (!(desk && desk.docSaved && desk.docSaved(d))) deskDocs(); // the rail patches its own row on a save
-        return;
-      }
-      // An arrival joins the queue and the page stays where it is. The one
-      // place it opens by itself is the inbox with nothing waiting: the empty
-      // state exists to be filled, and a reader there has nothing to lose.
-      // An inbox with a queue on it is the queue, and the arrival is a row.
-      const opens = state.view === "inbox" && !state.waiting;
-      // The document on screen has just been sent again. The page stays where
-      // it is -- a reader mid-paragraph did not ask to be moved -- and the
-      // arrival is offered instead of taken.
-      const superseded = !!(j.supersedes && state.doc && state.doc.id === j.supersedes);
-      // A newer version of a file already waiting takes that row's place:
-      // the daemon marked the older ones read when this one landed, and
-      // counts one. By file and not by `supersedes`, which names only the
-      // version just before -- a page that missed an event kept the rest.
-      const older = d.source_path ? state.queue.filter(q => q.id !== d.id && q.project_id === d.project_id && q.source_path === d.source_path).map(q => q.id) : [];
-      if (older.length) dropFromQueue(older, state.waiting - older.length);
-      // Held in order only while everything waiting is held: past that the
-      // arrival is the newest, and belongs after rows this page never had.
-      if (!queueIds.has(d.id) && state.queue.length === state.waiting) state.queue.push(d);
-      state.waiting = j.waiting != null ? j.waiting : state.waiting + 1;
-      arrivals++;
-      if (!opens) wash([d.id]);
-      holdQueue();   // a burst's events carry counts ahead of the rows this page holds
-      state.cache.delete(d.id);
-      renderTree(); markActive();
-      await refreshTree(d.project_id);
-      deskDocs();
-      // First in the library, wherever the reader is -- on a desk, most
-      // often -- and not just first into an empty inbox: a reader with a
-      // year of documents is not told this one is their first.
-      if (state.tree.reduce((n, p) => n + p.docs, 0) <= 1) snyviSays("first-doc");
-      else if (state.waiting > 1) snyviSays("two-waiting");
-      else if (j.supersedes) snyviSays("version");
-      if (opens) {
-        await showDoc(d.id, true);
-        // Nobody pressed anything: this one came in on its own, so it keeps
-        // the corner rather than pointing at whatever was last touched.
-        toast(d.title, { sub: `${d.project} · just now`, kind: "news", go: () => showDoc(d.id, true) });
-      }
-      else if (superseded) {
-        // The rail picks it up either way, so the offer is free to fade: a
-        // reader who misses the button finds the new version at the top of
-        // Versions, and `]` steps to it.
-        renderHistory();
-        toast("A newer version arrived", { sub: d.title, kind: "news", go: () => showDoc(d.id, true),
-          action: { label: "Read it", run: () => showDoc(d.id, true) } });
-      }
-      else if (state.view === "inbox") showInbox(false);
-    });
+    es.addEventListener("doc", ev => { const j = parse(ev); if (j) docEvent(j); });
     // A document was opened somewhere -- this tab, another, the window -- and
     // is off the queue everywhere.
     es.addEventListener("read", ev => {

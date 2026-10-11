@@ -173,6 +173,12 @@ pub struct NewDoc<'a> {
     pub origin: &'a str,
     /// The MCP client's name, "" when it came another way.
     pub sender: &'a str,
+    /// A draft the hook saved: listed, never waiting -- unless the version
+    /// it follows was waiting, whose mark it keeps (`insert`).
+    pub quiet: bool,
+    /// The sender's conversation (`Payload::session`), so the hook's drafts
+    /// can follow a workflow that conversation named (`named_workflow`).
+    pub session: &'a str,
     /// The pane it was sent from, if it was.
     pub desk: Option<&'a Origin>,
     /// The document body as stored. Bytes, not text, so an image or any other
@@ -557,6 +563,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (18, widget::OWNER_1_32[2]),
     (18, widget::OWNER_1_32[3]),
     (18, widget::OWNER_1_32[4]),
+    // 1.33: the conversation a document came from (`NewDoc::session`).
+    (19, "ALTER TABLE docs ADD COLUMN session TEXT NOT NULL DEFAULT ''"),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
@@ -565,19 +573,23 @@ pub const SAVED_PATH_COLUMN: &str = "ALTER TABLE docs ADD COLUMN saved_path TEXT
 /// A desk's list, read through `docs_desk` (desk, on or off the list, when):
 /// the one index a four-column `WHERE` on a desk's documents needs, and
 /// `?1` the desk, `?2` the limit.
-fn desk_docs_sql(off: bool) -> String {
+/// `sent` leaves the hook's drafts out, on both sides: a file's head is its
+/// newest send, not a draft saved after it.
+fn desk_docs_sql(off: bool, sent: bool) -> String {
+    let sent = if sent { "AND d.origin != 'hook'" } else { "" };
     format!(
         "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path,
                 d.saved_path, d.origin, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), p.root
          FROM live_docs d JOIN projects p ON p.id = d.project_id
-         WHERE d.desk_id = ?1 AND d.desk_off {}
+         WHERE d.desk_id = ?1 AND d.desk_off {} {sent}
            AND (d.source_path IS NULL
                 OR d.rowid = (SELECT d2.rowid FROM live_docs d2
                               WHERE d2.desk_id = ?1 AND d2.project_id = d.project_id
-                                AND d2.source_path = d.source_path
+                                AND d2.source_path = d.source_path {}
                               ORDER BY d2.received_at DESC, d2.rowid DESC LIMIT 1))
          ORDER BY {} d.received_at DESC, d.rowid DESC LIMIT ?2",
         if off { "> 0" } else { "= 0" },
+        sent.replace("d.", "d2."),
         if off { "d.desk_off DESC," } else { "" },
     )
 }
@@ -741,11 +753,20 @@ impl Store {
             params![project_id, d.workflow_key],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
+        // A quiet one waits only where the version before it was waiting: a
+        // draft saved over a send nobody has read yet must not unmark it.
+        let waited =
+            "SELECT 1 FROM live_docs WHERE project_id = ?1 AND source_path = ?2 AND unread = 1";
+        let unread = !d.quiet
+            || d.source_path.is_some_and(|sp| {
+                tx.query_row(waited, params![project_id, sp], |_| Ok(()))
+                    .is_ok()
+            });
         tx.execute(
-            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender, desk_id, desk_name, desk_slot, is_head)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, 1, ?13, ?14, ?15, ?16, 1)",
+            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender, desk_id, desk_name, desk_slot, is_head, session)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?17, ?13, ?14, ?15, ?16, 1, ?18)",
             params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, size, now, d.source_path, d.branch, hash, d.origin, d.sender,
-                d.desk.map_or(0, |o| o.id), d.desk.map_or("", |o| o.name.as_str()), d.desk.map_or(0, |o| o.slot)],
+                d.desk.map_or(0, |o| o.id), d.desk.map_or("", |o| o.name.as_str()), d.desk.map_or(0, |o| o.slot), unread, d.session],
         )?;
         tx.execute(FTS_INSERT, params![id, d.title, d.search_body])?;
         // A newer version of a file takes the older one's place on the queue
@@ -1723,9 +1744,30 @@ impl Store {
     /// the removal is looked at, so removing a file's newest version does not
     /// bring an older one up in its place; a new send is a new row, and shows.
     pub fn desk_docs(&self, desk_id: i64, limit: usize, off: bool) -> Result<Vec<DeskDoc>> {
+        self.desk_rows(&desk_docs_sql(off, false), desk_id, limit)
+    }
+
+    /// What this desk's panels sent, without the hook's drafts: what a
+    /// neighbour panel is told of, since a draft is not news.
+    pub fn desk_sent(&self, desk_id: i64, limit: usize) -> Result<Vec<DeskDoc>> {
+        self.desk_rows(&desk_docs_sql(false, true), desk_id, limit)
+    }
+
+    /// The desk's last document as its brief and Home's card name it: the
+    /// newest it sent, else its newest draft. A memory file the hook saved
+    /// was once the next panel's "last document" (audit bf13a1859b).
+    pub fn desk_last(&self, desk_id: i64) -> Option<DeskDoc> {
+        let sent = self
+            .desk_sent(desk_id, 1)
+            .ok()
+            .and_then(|v| v.into_iter().next());
+        sent.or_else(|| self.desk_docs(desk_id, 1, false).ok()?.into_iter().next())
+    }
+
+    fn desk_rows(&self, sql: &str, desk_id: i64, limit: usize) -> Result<Vec<DeskDoc>> {
         let conn = self.conn.lock().unwrap();
         let rows = conn
-            .prepare(&desk_docs_sql(off))?
+            .prepare(sql)?
             .query_map(params![desk_id, limit as i64], |r| {
                 let source_path: Option<String> = r.get(8)?;
                 let local_path = local_path(
@@ -2191,12 +2233,13 @@ impl Store {
 
     /// What panes sent since `since`, every send and oldest first, as
     /// `(desk, id, title, at)`: Home's log and the rhythm of each desk. Over
-    /// `live_docs`, so a version counts as the day's work it was.
+    /// `live_docs`, so a version counts as the day's work it was; the hook's
+    /// drafts are not sends.
     pub fn desks_sent_since(&self, since: i64) -> Result<Vec<(i64, String, String, i64)>> {
         let conn = self.conn.lock().unwrap();
         let mut st = conn.prepare(
             "SELECT desk_id, id, title, received_at FROM live_docs
-             WHERE desk_id != 0 AND received_at >= ?1 ORDER BY received_at, rowid",
+             WHERE desk_id != 0 AND received_at >= ?1 AND origin != 'hook' ORDER BY received_at, rowid",
         )?;
         let rows = st.query_map(params![since], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
@@ -2396,6 +2439,8 @@ pub fn new_id(hash: &str) -> String {
 
 mod keys;
 mod queue;
+mod sends;
+pub use sends::Promotion;
 mod talk;
 pub use keys::Held;
 use talk::local_path;

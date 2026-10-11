@@ -594,7 +594,9 @@ async fn receive_and_tell(app: Arc<App>, payload: Payload) -> Response {
             emit_doc(&app, event);
             let doc = received.doc;
             let url = format!("{}/d/{}", config::base_url(), doc.id);
-            if !received.existing {
+            // A draft the hook saved is listed and nothing more; the send
+            // that takes it over is the one the desktop hears about.
+            if !received.existing && !received.quiet {
                 notify_desktop(&app, &doc);
             }
             // A code file past the cap, or a Markdown document big enough
@@ -628,6 +630,8 @@ async fn receive_and_tell(app: Arc<App>, payload: Payload) -> Response {
                     "app_url": crate::desktop::window_installed().then(|| crate::desktop::app_url(&doc.id)),
                     "doc": doc,
                     "existing": received.existing,
+                    // The hook's draft of these bytes became this send.
+                    "promoted": received.promoted,
                     // So the sender can say where the document went without a
                     // second round trip: a window, or a link to click.
                     "window": app.has_window(),

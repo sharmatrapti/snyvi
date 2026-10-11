@@ -112,7 +112,7 @@ const CSS = `
  *  file is the only one that shows them. */
 const OWN = mod => ({
   "first-doc": ["Your first document. What arrives stays, filed with its project: nothing scrolls away.", "arrives"],
-  "two-waiting": ["Two are waiting now. n opens the oldest and takes it off; one key each, in the order they came.", "waiting"],
+  "two-waiting": ["Two are waiting now. n opens the newest and takes it off; one key each, from the latest back.", "waiting"],
   "second-desk": [`Got another project? Give it a desk too. ${mod} and its name goes between them.`, "desks"],
   "two-desks": ["Two desks. Each keeps its panels, notes and documents just as you left it. An amber row is one that needs you.", "desks"],
   "blocked": ["A panel needs you. Its row stays amber until you answer it, and Desks counts it.", "desks"],

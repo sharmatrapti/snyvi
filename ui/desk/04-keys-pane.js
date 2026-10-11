@@ -82,7 +82,7 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-ctx"></span><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-acc"></span><span class="pn-git"></span><span class="pn-ctx"></span><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Panel ${p.slot}"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<div class="pn-offer" hidden role="status"><span>${OFFER_SAYS}</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" data-tip="Not now" aria-label="Not now">✕</button></div>` +
     `<div class="pn-connect" hidden role="status"></div>` +
@@ -182,21 +182,28 @@ function makeView(p) {
   start.addEventListener("submit", e => { e.preventDefault(); run(v, start.querySelector("input").value); });
   start.querySelector("input").addEventListener("keydown", e => e.stopPropagation());
   start.querySelector(".pn-resume").addEventListener("click", () => run(v, "", false, true));
-  // The offer runs `claude --resume <id>` at the prompt of the shell the pane
-  // came back as, in its folder. Nothing is typed until it is clicked, and a
-  // click that cannot go says why in the strip, which stays (#108).
-  el.querySelector(".pn-offer").addEventListener("click", e => {
-    const b = e.target.closest("[data-offer]");
-    if (!b) return;
-    if (b.dataset.offer === "go") {
-      const why = resumeHere(v, true);
-      if (why) { offerSay(v, why); return; }
-    } else body.focus();
-    v.offered = false; v.offerSpent = true; header(v);
-  });
+  el.querySelector(".pn-offer").addEventListener("click", e => offerClick(v, e));
   new ResizeObserver(() => fit(v)).observe(body);
   header(v);
   return v;
+}
+
+/** The offer runs `claude --resume <id>` at the prompt of the shell the pane
+ *  came back as, in its folder. Nothing is typed until it is clicked, and a
+ *  click that cannot go says why in the strip, which stays (#108). */
+function offerClick(v, e) {
+  const b = e.target.closest("[data-offer]");
+  if (!b || b.disabled) return;
+  if (b.dataset.offer === "go") {
+    // A shell still on its way to its prompt is waited for, not refused:
+    // a click that only said "not at a prompt" was a dead end (audit
+    // 2dbcf2e538).
+    if (v.status.running && !v.mode[1]) return offerWait(v);
+    const why = resumeHere(v, true);
+    if (why) { offerSay(v, why); return; }
+  } else if (b.dataset.offer === "restart") offerRestart(v);
+  else { offerStop(v); v.body.focus(); }
+  v.offered = false; v.offerSpent = true; header(v);
 }
 
 /** A picture dropped on a panel goes in as a pasted one does. Only files are
@@ -313,6 +320,57 @@ function offerSay(v, why) {
   t.classList.add("why");
   clearTimeout(v.offerTimer);
   v.offerTimer = setTimeout(() => { t.textContent = OFFER_SAYS; t.classList.remove("why"); }, 5000);
+}
+
+/** The strip's Resume on a shell that is not at its prompt yet -- its rc
+ *  still loading, an instant prompt not yet live -- waits for it, as long as
+ *  OFFER_WAIT_MS, and then types the resume as a ready shell gets it. Past
+ *  that, something else holds the panel, and the strip offers the one thing
+ *  that still goes: the panel restarted straight into the conversation. */
+const OFFER_WAIT_MS = 8000;
+function offerWait(v) {
+  offerStop(v);
+  const t = v.el.querySelector(".pn-offer > span"), go = v.el.querySelector(".pn-offer [data-offer]");
+  t.textContent = "Waiting for the shell's prompt…";
+  go.disabled = true;
+  const at = Date.now();
+  v.offerWait = setInterval(() => {
+    if (v.mode[1]) {
+      offerStop(v);
+      const why = resumeHere(v, true);
+      if (why) offerSay(v, why); else { v.offered = false; v.offerSpent = true; header(v); }
+    } else if (Date.now() - at > OFFER_WAIT_MS) {
+      offerStop(v);
+      t.textContent = `Something is running in panel ${v.pane.slot}`;
+      t.classList.add("why");
+      go.dataset.offer = "restart";
+      go.textContent = "↻ Restart into the conversation";
+      go.dataset.tip = "Stops what is running here";
+    }
+  }, 200);
+}
+
+/** The strip back as it was: no wait, Resume its button, its own line. */
+function offerStop(v) {
+  clearInterval(v.offerWait);
+  v.offerWait = 0;
+  const t = v.el.querySelector(".pn-offer > span"), go = v.el.querySelector(".pn-offer [data-offer]");
+  if (!t || !go) return;
+  clearTimeout(v.offerTimer);
+  t.textContent = OFFER_SAYS;
+  t.classList.remove("why");
+  go.disabled = false;
+  go.dataset.offer = "go";
+  go.textContent = "↻ Resume conversation";
+  delete go.dataset.tip;
+}
+
+/** Stop the panel and start it as its conversation, as a stopped panel's
+ *  Resume does; the start waits on the stop (`onStop`, 02-socket.js). */
+function offerRestart(v) {
+  offerStop(v);
+  v.onStop = () => run(v, v.status.cmd || v.pane.cmd || "", false, true);
+  ctx.api(`/api/panes/${v.id}/stop`, {}).catch(e => { v.onStop = null; ctx.toast("Could not restart the panel", e); });
 }
 
 /** The accent this window wears, as CSS resolved it, for the prompt the shell
@@ -462,6 +520,10 @@ function header(v) {
   const acc = (ctx.desks.accounts || []).length ? accountOf(v) : null;
   const st = `Panel ${v.pane.slot}${acc ? ` · Claude as ${acc.label}` : ""}`;
   if (sl.dataset.tip !== st) sl.dataset.tip = st;
+  // And in the head itself, beside the command, once the panel is not on
+  // your login or its desk is not: a tip was the only place it was said.
+  const pa = $(".pn-acc"), says = acc && (acc.id || current()?.account) ? acc.label : "";
+  if (pa.textContent !== says) pa.textContent = says;
   const c = $(".pn-cmd");
   // Its title as the rail writes it: Claude Code puts its spinner's frame at
   // the front (◑, ✳), and the state beside it already says it is working.
@@ -486,7 +548,7 @@ function header(v) {
   tipOf(cx, cp == null ? "" : ctxTip(s));
   paintUsage();
   if (s.agent) heardFrom(v);
-  put($(".pn-state"), s.agent === "needs_you" ? "! needs you" : s.blocked ? "! needs you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped");
+  put($(".pn-state"), v.switching ? `↻ as ${v.switching}…` : s.agent === "needs_you" ? "! needs you" : s.blocked ? "! needs you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped");
   // Said once, to a reader who cannot see the dot: a panel that needs the
   // reader, or has finished. Working and running are the quiet states.
   const word = s.agent === "needs_you" || s.blocked ? "needs you" : s.agent === "done" ? "done" : "";
@@ -505,11 +567,16 @@ function header(v) {
   const again = v.start.querySelector(".pn-resume");
   again.hidden = !talked(v);
   if (talked(v)) again.dataset.tipSub = `${resumeWord(v)}, the one this panel last had`;
-  // The status keeps saying `offer` until the pane's next start; a strip the
+  // The status keeps saying `offer` for the whole life of the shell it came
+  // back as, so the strip cannot wait on it to go: Claude opened in the panel
+  // by any road -- typed by hand, the rail's ↻, the strip itself -- has spent
+  // the offer, and so has a start that was not the offer's. A strip the
   // reader answered stays answered in this window.
-  if (s.offer && !v.offerSpent) v.offered = true;
+  if (s.agent_in || (s.running && !s.offer)) { if (v.offered) v.offerSpent = true; v.offered = false; }
+  else if (s.offer && !v.offerSpent) v.offered = true;
   const off = v.el.querySelector(".pn-offer");
   if (off) off.hidden = !(v.offered && talked(v) && s.running);
+  if (off && off.hidden && v.offerWait) offerStop(v);
   cursor(v);
 }
 

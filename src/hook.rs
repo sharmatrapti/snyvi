@@ -302,7 +302,7 @@ pub fn run(paths: &Paths) -> Result<()> {
     }
     let payload = Payload {
         path: Some(file.to_string()),
-        cwd: event.cwd.get().map(str::to_string),
+        cwd: anchor(project_dir(), event.cwd.get()),
         session: event.session_id.get().map(crate::session::workflow_key),
         origin: Some("hook".into()),
         sender: Some("claude-code".into()),
@@ -315,6 +315,23 @@ pub fn run(paths: &Paths) -> Result<()> {
     // stored and finishes rendering after the hook has gone.
     let _ = client::send_quick(paths, &payload, AUTO_SEND_WITHIN);
     Ok(())
+}
+
+/// The folder a send is filed by: the project the session started in, which
+/// Claude Code gives every hook as `CLAUDE_PROJECT_DIR` and which stays put
+/// when Claude runs `cd`. The event's `cwd` moves with it, and a draft filed
+/// by it landed in a subfolder's project while the agent's own send of the
+/// same file landed in the session's: two rows for one document, 48 times
+/// in a month (audit bf13a1859b). `snyvi mcp` files by the same variable.
+fn anchor(project_dir: Option<String>, cwd: Option<&str>) -> Option<String> {
+    project_dir
+        .filter(|d| !d.trim().is_empty())
+        .or_else(|| cwd.map(str::to_string))
+}
+
+/// `CLAUDE_PROJECT_DIR`, as Claude Code sets it for hooks and MCP servers.
+pub fn project_dir() -> Option<String> {
+    std::env::var("CLAUDE_PROJECT_DIR").ok()
 }
 
 /// How long a Markdown write's send waits for the daemon's answer. Claude's
@@ -466,7 +483,7 @@ fn send_plan(paths: &Paths, event: &Event, in_pane: bool) {
         },
         path: file,
         lang: Some("md".into()),
-        cwd: event.cwd.get().map(str::to_string),
+        cwd: anchor(project_dir(), event.cwd.get()),
         session: event.session_id.get().map(crate::session::workflow_key),
         origin: Some("plan".into()),
         sender: Some("claude-code".into()),
@@ -539,6 +556,11 @@ fn auto_send() -> bool {
 }
 
 /// Extensions to send, comma separated. Default: Markdown only.
+///
+/// Never what an agent keeps for itself: Claude's memory and plans under
+/// `.claude`, gstack's, Codex's. A quarter of what the hook sent in a month
+/// was memory files (audit bf13a1859b), each one a notification and, once,
+/// the brief's "last document" for the next panel.
 fn wanted(path: &Path) -> bool {
     let exts = std::env::var("SNYVI_HOOK_EXT").unwrap_or_else(|_| "md,markdown".into());
     let ext = path
@@ -548,7 +570,7 @@ fn wanted(path: &Path) -> bool {
     let skip = path.components().any(|c| {
         matches!(
             c.as_os_str().to_str(),
-            Some(".git" | "node_modules" | "target" | ".snyvi")
+            Some(".git" | "node_modules" | "target" | ".snyvi" | ".claude" | ".gstack" | ".codex")
         )
     });
     !skip && exts.split(',').any(|e| e.trim().eq_ignore_ascii_case(&ext))
@@ -1004,12 +1026,29 @@ mod tests {
     }
 
     #[test]
+    fn a_send_is_filed_by_the_sessions_project_not_where_claude_cd_to() {
+        assert_eq!(
+            anchor(Some("/p".into()), Some("/p/docs/reel")).as_deref(),
+            Some("/p")
+        );
+        assert_eq!(anchor(None, Some("/p/docs")).as_deref(), Some("/p/docs"));
+        assert_eq!(anchor(Some(" ".into()), Some("/q")).as_deref(), Some("/q"));
+        assert_eq!(anchor(None, None), None);
+    }
+
+    #[test]
     fn extension_filter() {
         assert!(wanted(Path::new("/p/PLAN.md")));
         assert!(wanted(Path::new("/p/notes.MD")));
         assert!(!wanted(Path::new("/p/main.rs")));
         assert!(!wanted(Path::new("/p/node_modules/x/README.md")));
         assert!(!wanted(Path::new("/p/.git/x.md")));
+        assert!(!wanted(Path::new(
+            "/home/u/.claude/projects/-home-u-p/memory/plan.md"
+        )));
+        assert!(!wanted(Path::new("/home/u/.claude/plans/x.md")));
+        assert!(!wanted(Path::new("/home/u/.gstack/projects/p/plan.md")));
+        assert!(!wanted(Path::new("/home/u/.codex/AGENTS.md")));
     }
 
     #[test]

@@ -88,6 +88,10 @@ function receive(f) {
     v.status = f.s; header(v); resume(v);
     // A switch of account waits on the stop it asked for (`runAs`).
     if (v.onStop && !f.s.running) { const k = v.onStop; v.onStop = null; k(); }
+    // A switch asked for mid-answer goes when the turn is over (`switchSoon`):
+    // not at a question, whose answer a restart would lose;
+    // a panel that stopped instead has nothing left to switch.
+    if (v.whenDone && f.s.agent !== "working" && f.s.agent !== "needs_you") { const k = v.whenDone; v.whenDone = null; if (f.s.running) k(); }
     if (mark(f.s) !== was) rail();
     else { named(v); if (v.id === focused) meta(); }
   }
