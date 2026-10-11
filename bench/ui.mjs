@@ -196,14 +196,15 @@ async function main() {
     // own content, through the API. What the queue rows send while reading.
     let arrivals = 0;
     // `o` sends a named file (`name`, `body`), again if it was sent before,
-    // under a `workflow` of its own.
+    // under a `workflow` of its own, and as the hook or an agent (`origin`,
+    // `title`) would.
     const arrive = async (o = {}) => {
       const n = ++arrivals, path = join(tmp, o.name || `arrival-${n}.md`);
       writeFileSync(path, o.body || `# Arrival ${n}\n\nA document that came in while something else was being read.\n`);
       const r = await fetch(`${base}/api/docs`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ path, cwd: tmp, ...(o.workflow ? { workflow: o.workflow } : {}) }),
+        body: JSON.stringify({ path, cwd: tmp, ...(o.workflow ? { workflow: o.workflow } : {}), ...(o.origin ? { origin: o.origin, title: o.title } : {}) }),
       });
       if (!r.ok) throw new Error(`send: ${r.status} ${await r.text()}`);
       return (await r.json()).doc;
@@ -267,6 +268,7 @@ async function main() {
     await section("the panes' edges", () => widthRows(p, url));
     await section("a diagram, filled", () => diagramRows(p, diagramUrl));
     await section("arrivals, while reading", () => queueRows(p, url, arrive));
+    await section("a draft, then the send", () => draftRows(p, url, arrive));
     await section("a delete, and the way back", () => deleteRows(p, arrive));
     await section("nothing lost when snyvi says no", () => lossRows(p, base, token, arrive, browsed));
     await section("by keyboard, and back", () => reachRows(p, base, token, arrive));
@@ -1009,6 +1011,39 @@ async function diagramRows(p, url) {
   return rows;
 }
 
+/** 1.33: what the hook saves as Claude writes is a draft -- a row in its
+ *  project, and nothing announced: no bar, no count, no row under Waiting,
+ *  no wash. The agent's send of the same bytes takes the draft over, and
+ *  that is the arrival: one row, washed once, with the agent's title. */
+async function draftRows(p, url, arrive) {
+  const rows = [];
+  const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  await p.goto(url);
+  await p.ev(`fetch("/api/queue/clear", { method: "POST" }).then(r => r.status)`);
+  await p.reload();
+  await p.pointerAway();
+  const body = "# Draft heading\n\nSaved as Claude wrote it, not sent yet.\n";
+  const draft = await arrive({ name: "draft.md", body, origin: "hook" });
+  const listed = await until(`!!document.querySelector('#tree a[data-id="${draft.id}"]')`, 30);
+  await sleep(300);
+  const hushed = await p.ev(`({ bar: !document.querySelector("#queue-bar").hidden, queued: !!document.querySelector('#queue a[data-id="${draft.id}"]'),
+    washed: document.querySelectorAll(".wash").length, marked: !!document.querySelector('#tree a.new[data-id="${draft.id}"]') })`);
+  const counted = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.length)`);
+  rows.push(["a draft is listed and says nothing", listed && !hushed.bar && !hushed.queued && !hushed.washed && !hushed.marked && counted === 0,
+    !listed ? "the draft is not in the tree" : hushed.bar ? "the bar came up" : hushed.queued ? "it is under Waiting" : hushed.washed ? "something washed" : hushed.marked ? "the tree marks it new" : counted ? `the daemon counts ${counted} waiting`
+      : "in the tree, unmarked; no bar, no Waiting row, no wash, nothing counted"]);
+
+  const sent = await arrive({ name: "draft.md", body, origin: "mcp", title: "The draft, sent" });
+  const came = await until(`!!document.querySelector('#queue a[data-id="${sent.id}"]')`, 30);
+  const washes = await p.ev(`(() => { const li = document.querySelector('#queue li.t-doc.wash:has(> a[data-id="${sent.id}"])'); return li ? li.getAnimations().filter(x => x.animationName === "land").length : -1; })()`);
+  const title = await p.ev(`document.querySelector('#queue a[data-id="${sent.id}"] .title')?.textContent || ""`);
+  rows.push(["the send takes the draft over, and arrives", sent.id === draft.id && came && washes === 1 && title === "The draft, sent",
+    sent.id !== draft.id ? "a second row, not the draft" : !came ? "nothing under Waiting" : washes !== 1 ? `${washes < 0 ? "no" : washes} wash on the row` : title !== "The draft, sent" ? `the row says "${title}"`
+      : "one row, under Waiting, washed once, with the agent's title"]);
+  await p.ev(`fetch("/api/queue/clear", { method: "POST" }).then(r => r.status)`);
+  return rows;
+}
+
 /** 0.14: an arrival joins a queue and the page stays where it is; `n` reads
  *  down the line; Back returns to the place; the count survives a reload. */
 async function queueRows(p, url, arrive) {
@@ -1067,7 +1102,7 @@ async function queueRows(p, url, arrive) {
   const served = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.map(d => d.title))`);
   const inOrder = many.side.join("|") === served.slice(0, 6).join("|");
   rows.push(["twelve at once", twelve && many.side.length === 6 && /6 more/.test(many.more || "") && inOrder,
-    !twelve ? `the bar reads "${many.bar ? many.bar.slice(0, 20) : "nothing"}"` : many.side.length !== 6 ? `${many.side.length} rows in the sidebar` : !/6 more/.test(many.more || "") ? `"${many.more}" under them` : !inOrder ? `the sidebar's order is not the daemon's` : "bar reads 1/12; six rows and \"6 more\" in the sidebar, in arrival order"]);
+    !twelve ? `the bar reads "${many.bar ? many.bar.slice(0, 20) : "nothing"}"` : many.side.length !== 6 ? `${many.side.length} rows in the sidebar` : !/6 more/.test(many.more || "") ? `"${many.more}" under them` : !inOrder ? `the sidebar's order is not the daemon's` : "bar reads 1/12; six rows and \"6 more\" in the sidebar, newest first"]);
 
   await p.reload();
   const kept = await read();
@@ -3666,8 +3701,8 @@ async function motionRows(p, url, arrive) {
 
   await p.goto(url);
   await p.pointerAway();
-  // From nothing waiting, so the first arrival is what makes the bar appear
-  // and the oldest \`n\` opens; the sections before this one leave a queue.
+  // From nothing waiting, so the first arrival is what makes the bar appear;
+  // the sections before this one leave a queue.
   await p.ev(`fetch("/api/queue/clear", { method: "POST" })`);
   await until(`document.querySelector("#queue-bar").hidden`);
   const first = await arrive();
@@ -3697,16 +3732,17 @@ async function motionRows(p, url, arrive) {
   rows.push(["nothing runs long", running.length > 0 && long.length === 0,
     !running.length ? "nothing is animating at all, which the rows above say is wrong" : long.length ? `${long.map(a => `${a.name} ${a.n === Infinity ? "forever" : a.ms + " ms"}`).join(", ")}` : `${running.length} animations running, the longest ${Math.max(...running.map(a => a.ms))} ms`]);
 
-  // \`n\` opens the oldest: its row is drawn closing, briefly, then gone.
+  // \`n\` opens the newest, the second: its row is drawn closing, briefly,
+  // then gone.
   // \`void\`: the harness awaits a promise an expression returns, and this one
   // is meant to be read after the key, not before it.
   await p.ev(`void (window.__left = new Promise(r => { const t = setTimeout(() => r(null), 2000); new MutationObserver((_, o) => { const li = document.querySelector("#queue li.leaving"); if (li) { clearTimeout(t); o.disconnect(); r({ id: li.querySelector("a").dataset.id, anim: li.getAnimations().some(a => a.animationName === "leave") }); } }).observe(document.querySelector("#queue"), { childList: true, subtree: true, attributes: true }); }))`);
   await p.press("n");
   const left = await p.ev(`window.__left`);
   await sleep(400);
-  const after = await p.ev(`({ leaving: document.querySelectorAll("#queue li.leaving").length, there: !!document.querySelector('#queue a[data-id="${first.id}"]') })`);
-  rows.push(["a read closes its row where it was", !!left && left.id === first.id && left.anim && !after.leaving && !after.there,
-    !left ? "the row was gone with nothing drawn" : left.id !== first.id ? "a different row was drawn closing" : !left.anim ? "the row was marked but not moving" : after.leaving || after.there ? "the row is still there 400 ms later" : "drawn closing, and gone 400 ms later"]);
+  const after = await p.ev(`({ leaving: document.querySelectorAll("#queue li.leaving").length, there: !!document.querySelector('#queue a[data-id="${second.id}"]') })`);
+  rows.push(["a read closes its row where it was", !!left && left.id === second.id && left.anim && !after.leaving && !after.there,
+    !left ? "the row was gone with nothing drawn" : left.id !== second.id ? "a different row was drawn closing" : !left.anim ? "the row was marked but not moving" : after.leaving || after.there ? "the row is still there 400 ms later" : "drawn closing, and gone 400 ms later"]);
 
   // The \`#\` beside a heading says it copied, itself, and raises no toast.
   // Back on the plan: \`n\` opened the arrival, which is one heading long.

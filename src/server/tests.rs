@@ -852,6 +852,8 @@ async fn a_video_beside_a_document_streams_by_range_and_nothing_else_does() {
                 branch: None,
                 origin: "cli",
                 sender: "",
+                quiet: false,
+                session: "",
                 desk: None,
                 source: b"![take](take.mp4)",
                 staged: None,
@@ -1205,6 +1207,8 @@ async fn a_friends_document_is_kept_on_a_desk_then_saved_into_its_folder() {
                         branch: None,
                         origin,
                         sender: "Trapti",
+                        quiet: false,
+                        session: "",
                         desk: None,
                         source: b"# Seeds\n\nbeans",
                         staged: None,
@@ -1301,6 +1305,8 @@ async fn a_friends_document_in_a_folder_goes_back_to_their_row() {
                         branch: None,
                         origin,
                         sender: "Trapti",
+                        quiet: false,
+                        session: "",
                         desk: None,
                         source: b"# Seeds",
                         staged: None,
@@ -1709,6 +1715,8 @@ async fn a_friends_row_and_their_name_are_one_name() {
                     branch: None,
                     origin: "peer",
                     sender: "trapti",
+                    quiet: false,
+                    session: "",
                     desk: None,
                     source: b"# Seeds",
                     staged: None,
@@ -1796,6 +1804,40 @@ fn the_account_name_a_friend_sees_starts_with_a_capital() {
     assert_eq!(capitalized("éva"), "Éva");
     assert_eq!(capitalized("McKay"), "McKay");
     assert_eq!(capitalized(""), "");
+}
+
+/// 1.33: the `doc` event says when an arrival is a draft the hook saved --
+/// listed by the page, never announced -- and when it is that draft, taken
+/// over by the agent's send, which is announced.
+#[tokio::test]
+async fn the_doc_event_says_a_draft_is_quiet() {
+    let tmp = crate::store::tempdir::Dir::new("snyvi-doc-quiet");
+    let paths = Paths {
+        data_dir: tmp.path.join("data"),
+        config_dir: tmp.path.join("config"),
+        docs_dir: tmp.path.join("data").join("docs"),
+        db_path: tmp.path.join("data").join("snyvi.db"),
+        token_path: tmp.path.join("config").join("token"),
+    };
+    let token = crate::config::load_or_create_token(&paths).unwrap();
+    let window = crate::config::load_or_create_window_secret(&paths).unwrap();
+    let store = Store::open(&paths).unwrap();
+    let app = new_app(&paths, store, token, window, None, None);
+    let payload = |origin: &str| crate::receive::Payload {
+        content: Some("# Draft\n\nbody".into()),
+        cwd: Some(tmp.path.to_string_lossy().to_string()),
+        origin: Some(origin.into()),
+        ..Default::default()
+    };
+    let draft = crate::receive::receive(&app.store, &app.renderer, payload("hook")).unwrap();
+    let ev = super::doc_event(&app, &draft);
+    assert_eq!(
+        (ev["quiet"].as_bool(), ev["promoted"].as_bool()),
+        (Some(true), Some(false))
+    );
+    let sent = crate::receive::receive(&app.store, &app.renderer, payload("mcp")).unwrap();
+    let ev = super::doc_event(&app, &sent);
+    assert_eq!(ev["quiet"].as_bool(), Some(false));
 }
 
 #[cfg(unix)]

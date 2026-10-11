@@ -280,7 +280,7 @@
     if (push) { swapIn(); main.scrollTo({ top: 0, behavior: "instant" }); }
     afterRender();
     if (items?.length) removedLine(push);
-    // The inbox lists every waiting row, and the page opened with the oldest
+    // The inbox lists every waiting row, and the page opened with the newest
     // few: the rest come after the page is on screen, not before the sidebar is.
     if (items && state.waiting > state.queue.length) {
       try {

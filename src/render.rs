@@ -332,6 +332,7 @@ impl Renderer {
         ext.multiline_block_quotes = true;
         ext.alerts = true;
         ext.header_ids = Some(String::new());
+        ext.front_matter_delimiter = Some("---".into()); // kept out of the page (`frontmatter`)
         options.render.github_pre_lang = true;
         options.render.full_info_string = false;
 
@@ -1080,21 +1081,17 @@ fn looks_like_diff(content: &str) -> bool {
             && head.iter().any(|l| l.starts_with("+++ ")))
 }
 
-/// Title: explicit, else first Markdown H1, else file name, else "Untitled".
+/// Title: explicit, else Markdown's frontmatter `title:`, its first H1 after
+/// the frontmatter, its `name:`, else file name, else "Untitled".
 pub fn title_for(explicit: Option<&str>, kind: Kind, path: Option<&str>, content: &str) -> String {
     if let Some(t) = explicit.map(str::trim).filter(|t| !t.is_empty()) {
         return t.to_string();
     }
-    if kind == Kind::Markdown {
-        for line in content.lines().take(40) {
-            let l = line.trim();
-            if let Some(h) = l.strip_prefix("# ") {
-                let h = h.trim().trim_end_matches('#').trim();
-                if !h.is_empty() {
-                    return h.to_string();
-                }
-            }
-        }
+    if let Some(t) = (kind == Kind::Markdown)
+        .then(|| crate::frontmatter::title(content))
+        .flatten()
+    {
+        return t;
     }
     if let Some(p) = path {
         if let Some(name) = Path::new(p).file_name() {
@@ -1104,10 +1101,12 @@ pub fn title_for(explicit: Option<&str>, kind: Kind, path: Option<&str>, content
     "Untitled".to_string()
 }
 
-/// If the first non-blank line is an H1 equal to `title`, return the content without it.
+/// If the first non-blank line after any frontmatter is an H1, whatever its
+/// words, return the content without it; the frontmatter stays, for comrak.
 pub fn strip_leading_h1(content: &str, _title: &str) -> Option<String> {
-    let mut lines = content.split_inclusive('\n');
-    let mut prefix_len = 0usize;
+    let start = crate::frontmatter::Front::of(content).body;
+    let mut lines = content[start..].split_inclusive('\n');
+    let mut prefix_len = start;
     for line in lines.by_ref() {
         if line.trim().is_empty() {
             prefix_len += line.len();
@@ -1125,7 +1124,7 @@ pub fn strip_leading_h1(content: &str, _title: &str) -> Option<String> {
         // The viewer prints the title above the body, so a leading H1 is a second
         // copy of it whether or not the words match.
         let rest_start = prefix_len + line.len();
-        return Some(content[rest_start..].to_string());
+        return Some(format!("{}{}", &content[..start], &content[rest_start..]));
     }
     None
 }

@@ -11,6 +11,7 @@ mod client;
 mod config;
 mod desk;
 mod desktop;
+mod frontmatter;
 mod git;
 mod hook;
 mod mcp;

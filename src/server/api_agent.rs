@@ -497,8 +497,8 @@ pub(crate) async fn pane_brief(
             n
         })
         .collect();
-    let docs = app.store.desk_docs(desk.id, 1, false).unwrap_or_default();
-    let last = docs.first().map(|d| crate::brief::LastDoc {
+    let last = app.store.desk_last(desk.id);
+    let last = last.as_ref().map(|d| crate::brief::LastDoc {
         id: &d.id,
         title: &d.title,
         at: d.received_at,
@@ -696,7 +696,7 @@ pub(crate) async fn pane_changes(
         .unwrap_or_default();
     let docs = app
         .store
-        .desk_docs(desk.id, crate::brief::DOCS_LOOKED_AT, false)
+        .desk_sent(desk.id, crate::brief::DOCS_LOOKED_AT)
         .unwrap_or_default();
     let context = crate::brief::changes(&crate::brief::Changes {
         slot: placed.pane.slot,

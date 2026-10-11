@@ -799,7 +799,9 @@ pub(crate) fn emit_doc(app: &App, mut ev: serde_json::Value) {
 /// open to patch its sidebar with them -- a page that misses them refetches.
 pub(crate) fn doc_event(app: &App, received: &receive::Received) -> serde_json::Value {
     let doc = &received.doc;
-    let mut ev = json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app) });
+    // `quiet`: a draft the hook saved, which the page lists and does not
+    // announce; `promoted`: that draft, now sent, which it does.
+    let mut ev = json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app), "quiet": received.quiet, "promoted": received.promoted });
     if app.pages.load(Ordering::Relaxed) > 0 {
         ev["project"] = json!(app.store.project_row(doc.project_id).ok().flatten());
         ev["rows"] = json!(project_rows(

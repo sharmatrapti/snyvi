@@ -18,7 +18,7 @@
     versions: [],               // ids of every snapshot of the open document, newest first
 
     folder: boot.folder || null,   // where "Open in file manager" would open, if anywhere
-    queue: boot.queue || [],    // the oldest of what arrived and has not been opened, in order
+    queue: boot.queue || [],    // what arrived and has not been opened, newest first
     waiting: boot.waiting != null ? boot.waiting : (boot.queue || []).length,   // how many in all
     cache: new Map(),           // id -> {doc, html, previous}
     split: (() => { try { return localStorage.getItem("snyvi.split") === "1"; } catch { return false; } })(),

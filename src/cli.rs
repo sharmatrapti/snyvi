@@ -483,6 +483,14 @@ fn send(
         .unwrap_or("")
         .to_string();
     println!("{url}");
+    // Where it went, beside the link and never in place of it: stdout stays
+    // the URL alone, which scripts read.
+    let said = |k: &str| resp.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    if said("existing") {
+        eprintln!("already in snyvi, unchanged");
+    } else if said("window") {
+        eprintln!("waiting in snyvi");
+    }
     if open {
         client::open_where_the_reader_is(&url);
     }

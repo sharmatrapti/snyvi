@@ -188,9 +188,15 @@ const TOOLS: &[(&str, Tool)] = &[
 pub fn run(paths: Paths) -> anyhow::Result<()> {
     let mut s = Session {
         paths,
-        cwd: std::env::current_dir()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string()),
+        // The session's project, as the hook files by (`hook::project_dir`),
+        // so a draft and the agent's own send of it are one document.
+        cwd: crate::hook::project_dir()
+            .filter(|d| !d.trim().is_empty())
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            }),
         key: session_key(),
         pane: std::env::var("SNYVI_SESSION")
             .ok()
@@ -877,14 +883,36 @@ struct Sent {
     /// Whether the daemon has a native window reading, which is where the
     /// document now is -- and so whether a link is worth giving at all.
     window: bool,
+    /// Nothing arrived: the same bytes were sent before, and nothing was
+    /// marked. A draft the hook had saved is not this -- the send takes it
+    /// over and it arrives (`promoted` in the answer, `existing` false).
+    existing: bool,
+    /// Sent from a desk's panel, where the place to look is the top of that
+    /// desk's Documents: the bar is not shown on a desk.
+    from_pane: bool,
 }
 
 impl Sent {
+    /// What the agent tells the user. Only what is true of what they will
+    /// see: an unchanged resend is not "waiting", and the newest arrival is
+    /// at the top of a list, not "first among what is waiting" -- which the
+    /// queue, oldest first then, never made it (audit bf13a1859b).
     fn say(&self) -> String {
-        if self.window {
+        if self.existing {
             format!(
-                "Waiting in snyvi: \"{}\". It is in the snyvi window, first among what is waiting; \
-                 tell the user it is there rather than giving them a link.",
+                "Already in snyvi, unchanged since it was last sent: \"{}\". Nothing new arrived; \
+                 do not tell the user it is waiting.",
+                self.title
+            )
+        } else if self.window {
+            let place = if self.from_pane {
+                "at the top of this desk's Documents"
+            } else {
+                "at the top of Waiting in the sidebar"
+            };
+            format!(
+                "Waiting in snyvi: \"{}\", {place}. Tell the user it is there rather than giving \
+                 them a link.",
                 self.title
             )
         } else if let Some(app) = &self.app_url {
@@ -957,6 +985,11 @@ fn call_send(
             .unwrap_or("document")
             .to_string(),
         window: resp.get("window").and_then(Value::as_bool).unwrap_or(false),
+        existing: resp
+            .get("existing")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        from_pane: pane.is_some(),
     })
 }
 
@@ -1113,6 +1146,39 @@ mod tests {
         // sitting in front of (audit e467fa057a).
         assert!(instructions(true).contains("hand_over only what blocks you"));
         assert!(instructions(true).contains("try a change goes in your reply"));
+    }
+
+    /// What the agent is told to say matches what the user will see: the
+    /// desk's Documents from a panel, Waiting from anywhere else, a link
+    /// with no window, and nothing "waiting" when nothing arrived.
+    #[test]
+    fn the_reply_says_where_the_document_really_is() {
+        let sent = |window, existing, from_pane| Sent {
+            id: "abc".into(),
+            url: "http://127.0.0.1:7777/d/abc".into(),
+            app_url: None,
+            title: "Plan".into(),
+            window,
+            existing,
+            from_pane,
+        };
+        let pane = sent(true, false, true).say();
+        assert!(pane.contains("top of this desk's Documents"), "{pane}");
+        let side = sent(true, false, false).say();
+        assert!(side.contains("top of Waiting in the sidebar"), "{side}");
+        let link = sent(false, false, false).say();
+        assert!(link.contains("http://127.0.0.1:7777/d/abc"), "{link}");
+        let mut app = sent(false, false, true);
+        app.app_url = Some("snyvi://d/abc".into());
+        assert!(app.say().contains("snyvi://d/abc"));
+        for again in [sent(true, true, true), sent(false, true, false)] {
+            let said = again.say();
+            assert!(said.starts_with("Already in snyvi, unchanged"), "{said}");
+            assert!(!said.contains("http"), "{said}");
+        }
+        for s in [pane, side] {
+            assert!(!s.contains("first among"), "{s}");
+        }
     }
 
     /// Four prompts; the two that use a desk's tools only in a panel, and an

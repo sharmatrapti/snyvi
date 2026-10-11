@@ -1245,18 +1245,25 @@ to its end. The place is kept in this browser, for the last 200 documents.
 A document that arrives while you are reading never takes the page
 away. It joins a queue: a row at the top of the sidebar under
 "Waiting", a mark on its row in the tree, and a bar above the document
-that counts -- "3 waiting" and the title of the oldest, with snyvi's own
+that counts -- "3 waiting" and the title of the newest, with snyvi's own
 face at the front of it, holding what came: wide-eyed for a moment when
 one more arrives, glad when one is read, and smiling in between. `n`
-opens the oldest and takes it off, so the next `n` is the one after; a reader
-drains the queue with one key, in the order things came. Opening a
+opens the newest and takes it off, so the next `n` is the one before it; a
+reader drains the queue with one key, from the latest back. Opening a
 document any other way -- the sidebar, the inbox, an agent's link --
 takes it off the same way, since read is read wherever you got to it.
 The queue lives in the daemon, so it is the same in every tab and the
 window, and it survives a restart.
 
-The inbox lists what is waiting first, oldest first, then everything
-else. "Mark all read" empties the queue without opening anything, for
+What Claude saves as it writes (the hook installed by
+`snyvi init-claude --auto`) is a draft: a row in its project and on its
+desk's Documents, and nothing more -- no notification, no place under
+Waiting. When the agent sends it, the draft becomes the arrival, with
+the agent's title. Claude's own files -- memory and plans under
+`.claude`, and `.gstack` and `.codex` -- are never sent.
+
+The inbox lists what is waiting first, then everything else, both
+newest first. "Mark all read" empties the queue without opening anything, for
 the day an agent sent thirty; it answers "Marked 30 read · Undo" where
 the bar was, and ⌘/ctrl Z puts them back. Twelve arrivals in two seconds are twelve
 rows and one bar that says twelve.

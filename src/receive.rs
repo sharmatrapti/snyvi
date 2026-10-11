@@ -78,6 +78,13 @@ pub struct Received {
     /// names a document that is still in the library and is no longer the one
     /// its lists show. A reader with that id open is reading a version.
     pub supersedes: Option<String>,
+    /// A draft the hook saved: listed on its desk and in its project, and
+    /// nothing more -- no notification, no place on the queue, no wash. Only
+    /// a send someone meant asks for the reader (`quiet`).
+    pub quiet: bool,
+    /// The hook's draft of these same bytes, taken over by this send: an
+    /// arrival, though no row was inserted (`Store::promote`).
+    pub promoted: bool,
 }
 
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -109,6 +116,18 @@ pub fn search_text(text: &str) -> &str {
 /// `snyvi watch` on every save. They coalesce with each other.
 fn automatic(origin: &str) -> bool {
     matches!(origin, "hook" | "watch")
+}
+
+/// Saved by the hook as Claude wrote it, not sent: a draft, until the agent
+/// sends it (audit bf13a1859b, decision R3). `snyvi watch` is automatic too,
+/// but the reader started it for the file, and it stays loud.
+fn quiet(origin: &str) -> bool {
+    origin == "hook"
+}
+
+/// A send someone meant, which takes over the hook's draft of the same bytes.
+fn explicit(origin: &str) -> bool {
+    matches!(origin, "mcp" | "cli" | "plan")
 }
 
 /// What arrived, read: `bytes` is what gets stored; `text` is the decoded
@@ -359,21 +378,21 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         Some(sp) => store.latest_for_path(&root, sp)?,
         None => None,
     };
-    if let Some(existing) = &latest_same_path {
-        if existing.content_hash == hash {
-            return Ok(Received {
-                doc: existing.clone(),
-                needs_full_highlight: false,
-                existing: true,
-                supersedes: None,
-            });
-        }
+    if let Some(same) = latest_same_path.as_ref().filter(|d| d.content_hash == hash) {
+        return unchanged(store, &p, origin, from.as_ref(), &proj_name, same);
     }
 
     let (kind, lang) = classify(renderer, &b, p.lang.as_deref());
     let title = render::title_for(p.title.as_deref(), kind, b.path.as_deref(), &b.text);
 
-    let (wf_name, wf_title) = workflow(&p, origin, from.as_ref(), &proj_name, &title);
+    // A draft with no workflow of its own joins the one its conversation
+    // named, when the agent has sent under a name here (decision R10).
+    let named = match (quiet(origin), &p.workflow, &p.session) {
+        (true, None, Some(s)) => store.named_workflow(&root, s.trim())?,
+        _ => None,
+    };
+    let (wf_name, wf_title) =
+        named.unwrap_or_else(|| workflow(&p, origin, from.as_ref(), &proj_name, &title));
 
     // A hook firing on every edit would otherwise fill a workflow with near-identical
     // snapshots; within a short window, overwrite the last one instead.
@@ -423,6 +442,8 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         branch: branch.as_deref(),
         origin,
         sender: p.sender.as_deref().unwrap_or(""),
+        quiet: quiet(origin),
+        session: p.session.as_deref().unwrap_or("").trim(),
         desk: from.as_ref(),
         source: &b.bytes,
         staged: b.staged.as_ref(),
@@ -437,6 +458,8 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
             needs_full_highlight,
             existing: true,
             supersedes: None,
+            quiet: quiet(origin),
+            promoted: false,
         });
     }
     // What this one is a version of, before it becomes the newest itself.
@@ -447,6 +470,77 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         needs_full_highlight,
         existing: false,
         supersedes,
+        quiet: quiet(origin),
+        promoted: false,
+    })
+}
+
+/// The same bytes as the newest snapshot of the file: that document, rather
+/// than a duplicate -- or, when an explicit send meets the hook's draft of
+/// them, the draft taken over (`promote`).
+fn unchanged(
+    store: &Store,
+    p: &Payload,
+    origin: &str,
+    from: Option<&crate::desk::Origin>,
+    project: &str,
+    same: &Doc,
+) -> Result<Received> {
+    if explicit(origin) && quiet(&same.origin) {
+        return promote(store, p, origin, from, project, same);
+    }
+    Ok(Received {
+        doc: same.clone(),
+        needs_full_highlight: false,
+        existing: true,
+        supersedes: None,
+        quiet: quiet(origin),
+        promoted: false,
+    })
+}
+
+/// The agent's send of bytes the hook already saved: the draft becomes the
+/// send, with the agent's title when it gave one and its workflow, and
+/// arrives. Nothing is rendered: the page is the same bytes', and its H1 was
+/// taken off whatever the title (`render::strip_leading_h1`).
+fn promote(
+    store: &Store,
+    p: &Payload,
+    origin: &str,
+    from: Option<&crate::desk::Origin>,
+    project: &str,
+    draft: &Doc,
+) -> Result<Received> {
+    let title = p
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or(&draft.title);
+    // Named by this send, or a plan's home: that. Otherwise the draft's own,
+    // which may be the one the conversation named (`named_workflow`) and
+    // is never worse than the session's key a nameless send would give.
+    let named = p.workflow.as_deref().is_some_and(|w| !w.trim().is_empty());
+    let (wf_name, wf_title) = if named || origin == "plan" {
+        workflow(p, origin, from, project, title)
+    } else {
+        (draft.workflow.clone(), draft.workflow_title.clone())
+    };
+    let by = crate::store::Promotion {
+        origin,
+        sender: p.sender.as_deref().unwrap_or(""),
+        session: p.session.as_deref().unwrap_or("").trim(),
+        title,
+        workflow_key: &wf_name.to_lowercase(),
+        workflow_title: &wf_title,
+    };
+    Ok(Received {
+        doc: store.promote(&draft.id, &by)?,
+        needs_full_highlight: false,
+        existing: false,
+        supersedes: None,
+        quiet: false,
+        promoted: true,
     })
 }
 
@@ -533,7 +627,7 @@ mod tests {
         };
 
         let first = receive(&s, &r, mk("hook")).unwrap();
-        let again = receive(&s, &r, mk("mcp")).unwrap();
+        let again = receive(&s, &r, mk("hook")).unwrap();
         assert!(again.existing);
         assert_eq!(
             again.doc.id, first.doc.id,
@@ -585,6 +679,81 @@ mod tests {
         assert_eq!(hooked.doc.id, watched.doc.id);
         assert_eq!(s.source(&watched.doc.id).unwrap(), "# Notes\n\nv6");
         assert_eq!(s.count().unwrap(), 3);
+    }
+
+    /// The hook's draft is listed and does not wait; the agent's send of the
+    /// same bytes takes it over -- one row, waiting now, with the agent's
+    /// title and workflow -- and later drafts follow that workflow.
+    #[test]
+    fn a_draft_is_quiet_until_the_agent_sends_it() {
+        let (s, r, d) = setup();
+        let file = d.path.join("PLAN.md");
+        std::fs::write(&file, "# From the H1\n\nv1").unwrap();
+        let cwd = d.path.to_string_lossy().to_string();
+        let mk = |origin: &str, title: Option<&str>, workflow: Option<&str>| Payload {
+            path: Some(file.to_string_lossy().to_string()),
+            cwd: Some(cwd.clone()),
+            session: Some("claude 1234abcd".into()),
+            origin: Some(origin.into()),
+            title: title.map(str::to_string),
+            workflow: workflow.map(str::to_string),
+            ..Default::default()
+        };
+        let draft = receive(&s, &r, mk("hook", None, None)).unwrap();
+        assert!(draft.quiet && !draft.existing && !draft.promoted);
+        assert_eq!(s.waiting().unwrap(), 0, "a draft does not wait");
+        assert_eq!(draft.doc.workflow, "claude 1234abcd");
+
+        let sent = receive(&s, &r, mk("mcp", Some("The plan"), Some("Send paths"))).unwrap();
+        assert!(sent.promoted && !sent.existing && !sent.quiet);
+        assert_eq!(sent.doc.id, draft.doc.id, "one row");
+        assert_eq!(sent.doc.title, "The plan");
+        assert_eq!(sent.doc.origin, "mcp");
+        assert_eq!(sent.doc.workflow, "send paths");
+        assert_eq!(s.waiting().unwrap(), 1);
+        assert_eq!(s.count().unwrap(), 1);
+        // Sent again, unchanged: nothing arrives.
+        let again = receive(&s, &r, mk("mcp", Some("The plan"), None)).unwrap();
+        assert!(again.existing && !again.promoted);
+        // A draft that followed the named workflow, sent with no name: it
+        // stays in the named one.
+        let other = d.path.join("NOTES.md");
+        std::fs::write(&other, "# Notes").unwrap();
+        let note = |origin: &str| Payload {
+            path: Some(other.to_string_lossy().to_string()),
+            ..mk(origin, None, None)
+        };
+        assert_eq!(
+            receive(&s, &r, note("hook")).unwrap().doc.workflow,
+            "send paths"
+        );
+        let noted = receive(&s, &r, note("mcp")).unwrap();
+        assert!(noted.promoted);
+        assert_eq!(noted.doc.workflow, "send paths");
+
+        // The next draft joins the workflow the conversation named, and,
+        // since the send it follows is still unread, keeps it waiting.
+        std::fs::write(&file, "# From the H1\n\nv2").unwrap();
+        let next = receive(&s, &r, mk("hook", None, None)).unwrap();
+        assert!(next.quiet && !next.existing);
+        assert_eq!(next.supersedes.as_deref(), Some(draft.doc.id.as_str()));
+        assert_eq!(next.doc.workflow, "send paths");
+        assert_eq!(s.waiting().unwrap(), 2, "the mark moved to the new version");
+        assert!(s.queue(5).unwrap().iter().any(|q| q.id == next.doc.id));
+
+        // Read, then drafted again: the draft does not wait.
+        s.mark_read(&next.doc.id).unwrap();
+        std::fs::write(&file, "# From the H1\n\nv3").unwrap();
+        let read_then = receive(&s, &r, mk("hook", None, Some("other"))).unwrap();
+        assert!(!read_then.existing);
+        assert_eq!(s.waiting().unwrap(), 1, "only the notes wait");
+
+        // Different bytes from the agent: a new version, loud.
+        std::fs::write(&file, "# From the H1\n\nv4").unwrap();
+        let v4 = receive(&s, &r, mk("mcp", None, None)).unwrap();
+        assert!(!v4.quiet && !v4.promoted && !v4.existing);
+        assert_eq!(v4.supersedes.as_deref(), Some(read_then.doc.id.as_str()));
+        assert_eq!(s.waiting().unwrap(), 2);
     }
 
     #[test]

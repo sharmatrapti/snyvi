@@ -55,7 +55,7 @@ pub(crate) async fn home(
         "threads": threads,
         "queue": app.store.queue(5).unwrap_or_default(),
         // Arrived: the newest unread, so Home is still one read.
-        "arrived": app.store.newest_unread(ARRIVED).unwrap_or_default(),
+        "arrived": app.store.queue(ARRIVED).unwrap_or_default(),
         "waiting": waiting(&app),
         "update": update_json(&app),
         "agents": app.online(),
@@ -107,7 +107,7 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                     // Its dot breathes only while the agent is at it.
                     "stage_busy": n.stage == "working" && app.panes.status(&n.stage_pane).agent == "working" }))
                 .collect();
-            let last_doc = app.store.desk_docs(d.id, 1, false).unwrap_or_default().into_iter().next();
+            let last_doc = app.store.desk_last(d.id);
             let git = app.git.read(std::path::Path::new(&d.root), now);
             let ticks: Vec<&crate::desk::Done> = done.iter().filter(|t| t.desk_id == d.id).collect();
             let docs: Vec<&(i64, String, String, i64)> = sent.iter().filter(|x| x.0 == d.id).collect();
