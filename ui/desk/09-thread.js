@@ -118,6 +118,8 @@ function threadLine(d, pane, esc) {
 
 /** What the turn's buttons say, by its kind. */
 const ANSWERS = { try: ["Looks good", "Needs changes…"], merge: ["Merged"], key: ["Added"] };
+/** Where a link goes, in the card's by-line, so Open ↗ needs no tip to say. */
+const hostOf = u => { try { return new URL(u).host.replace(/^www\./, ""); } catch { return ""; } };
 
 /** A turn's card, or its group's (#110): questions asked together are one
  *  card, each still a turn of its own, answered and put away on its own. */
@@ -184,9 +186,12 @@ function turnRow(d, w, esc) {
       ? `<button type="button" class="tn-opt quiet" data-a="tn-change" data-w="${w.id}">${esc(o)}</button>`
       : `<button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}">${esc(o)}</button>`).join("");
   const link = /^https?:\/\//.test(w.link || "") ? `<button type="button" class="tn-opt quiet" data-a="tn-link" data-u="${esc(w.link)}" data-tip="${esc(w.link)}">Open ↗</button>` : "";
+  // A key is added on this desk's keys sheet: the card opens it (#114),
+  // rather than leave the reader to find it with the card in the way.
+  const add = w.kind === "key" ? `<button type="button" class="tn-opt rec" data-a="tn-key" data-tip="Add key…" data-tip-sub="This desk's keys: a panel started after has it">Add key…</button>` : "";
   return `<li class="dk-turn" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
-    `<p class="tn-by">${esc(w.kind === "decide" ? "decide" : w.kind)} · ${esc(from)}${w.link && !link ? ` · ${esc(w.link)}` : ""}</p>` +
-    `<div class="tn-acts">${buttons}${link}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
+    `<p class="tn-by">${esc(w.kind === "decide" ? "decide" : w.kind)} · ${esc(from)}${w.link ? ` · ${esc(link ? hostOf(w.link) : w.link)}` : ""}</p>` +
+    `<div class="tn-acts">${add}${buttons}${link}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
     otherIn(w) + `</li>` + errLine(`w${w.id}`, esc);
 }
 
@@ -332,8 +337,8 @@ async function getFiled(id, again) {
   // An answer that is not here any more, or was taken up by the panel, has
   // nothing left to send.
   for (const k of sendable.keys()) if (!filed.turns.some(w => w.id === k)) sendable.delete(k);
-  const d = current();
-  if (d) { arrived(d); rail(); }
+  // The corner sees what is new as it draws (onYou).
+  if (current()) rail();
 }
 
 function forgetFiled() {
@@ -472,11 +477,22 @@ async function runNewPanel(d, w) {
   await answer(d, w, `Ran in a new panel, ${p.pane.slot ? `panel ${p.pane.slot}` : "its own"}; its output is there, not here`);
 }
 
+/** Add key… on a key turn: this desk's keys sheet, with its Add a key form
+ *  already unfolded, which puts the cursor in the name. */
+function addKeyOpen(d) {
+  if (keysOpen !== d.id) keysSheet(d);
+  const more = ctx.docEl.querySelector(".dk-keys-sheet .dk-key-more");
+  if (more) more.open = true;
+}
+
 /** The section's clicks; true when one of them was this file's. */
 async function filedAct(a, b, d) {
+  if (ewAct(a)) return true;
   if (!a.startsWith("th-") && !a.startsWith("tn-") && !a.startsWith("sg-") && !a.startsWith("oy-") && a !== "fd-back") return false;
   if (a === "oy-open") { oyToggle(); return true; }
   if (a === "oy-older") { oy.older = !oy.older; rail(); return true; }
+  if (a === "oy-pin") { oyPin(d); return true; }
+  if (a === "tn-key") { addKeyOpen(d); return true; }
   const t = filed.threads.find(x => x.id === +b.dataset.t);
   const w = filed.turns.find(x => x.id === +b.dataset.w);
   const s = filed.suggestions.find(x => x.id === +b.dataset.s);

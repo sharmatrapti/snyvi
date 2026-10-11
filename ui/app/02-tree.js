@@ -140,8 +140,13 @@
   const docIco = () => icon("doc", 14);
   /** A friend, as the first letter of their name in a small circle, where a
    *  row's icon stands: their documents and their own row (audit 7c0fc42885:
-   *  4 of a friend's 5 sat in the reader's project looking like their own). */
-  const whoIco = (name, tip) => `<span class="r-who"${tip ? ` data-tip="${esc(tip)}"` : ""} aria-hidden="true">${esc((name || "?").trim().charAt(0).toUpperCase() || "?")}</span>`;
+   *  4 of a friend's 5 sat in the reader's project looking like their own).
+   *  In a colour of their own (#123), the same wherever they show -- the
+   *  sidebar, Waiting, Home, a desk's note, the document's head, where the
+   *  daemon picks it the same way (assets.rs `friend_hue`) -- so a friend's
+   *  reads as theirs at a glance; it was grey, and read as a page glyph. */
+  const hueOf = s => [...s].reduce((h, c) => (h * 31 + c.codePointAt(0)) % 360, 7);
+  const whoIco = (name, tip) => `<span class="r-who" style="--h:${hueOf(name || "")}"${tip ? ` data-tip="${esc(tip)}"` : ""} aria-hidden="true">${esc((name || "?").trim().charAt(0).toUpperCase() || "?")}</span>`;
   /** Rows on their way: two bars where the rows will be (docs/DESIGN.md
    *  §7.4), never a bare "…". They wait --sk-wait, so a fast answer shows none. */
   const skRows = `<li class="t-wait"><span class="sk-bar" style="width:62%"></span></li><li class="t-wait"><span class="sk-bar" style="width:44%"></span></li>`;

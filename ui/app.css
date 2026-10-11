@@ -119,8 +119,10 @@
      popovers, cards, dialogs, toasts · counts and pills. */
   --r-xs: 4px; --r-sm: 6px; --r-md: 10px; --r-pill: 999px;
   /* Layers, named. A local 0-5 inside one component is allowed. Toasts sit
-     above dialogs, so an answer is never hidden by the dialog that asked. */
-  --z-sticky: 10; --z-rail: 20; --z-dialog: 30; --z-pop: 40; --z-tip: 50; --z-toast: 60; --z-over: 70;
+     above dialogs, so an answer is never hidden by the dialog that asked.
+     Tips sit above toasts: a tip from a button in the On you corner, which
+     is at the toast's level, was drawn under the card it explains (#114). */
+  --z-sticky: 10; --z-rail: 20; --z-dialog: 30; --z-pop: 40; --z-toast: 60; --z-tip: 65; --z-over: 70;
   /* Motion: instant for what happens a hundred times a day, quick by
      default, move for what travels; the spring is the mascot's alone.
      Exits take the in-curve and about a fifth less time. */
@@ -886,11 +888,11 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* A friend where a row's icon stands: the first letter of their name in a
    circle the icon's size, so the column stays one column (02-tree.js
    `whoIco`). */
-.r-who { flex: none; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--rule); color: var(--fg-2); font-size: var(--fs-micro); font-weight: 650; line-height: 1; }
+/* Not the accent, which is "where you are" and "unread" (audit 67d008cb6f),
+   and no longer grey either (#123): the friend's own colour, from their name
+   (`whoIco`), at one lightness so every friend's reads on every theme. */
+.r-who { flex: none; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: oklch(54% .12 var(--h, 250)); color: #fff; font-size: var(--fs-micro); font-weight: 650; line-height: 1; }
 .t-doc .r-who { width: 14px; height: 14px; letter-spacing: -.04em; }
-/* Grey like any read row: the accent is "where you are" and "unread", and a
-   friend is neither (audit 67d008cb6f). It lights as a page glyph does. */
-:is(.t-proj > summary.new, .t-doc a.new, .t-doc a.active) > .r-who { background: var(--accent-bg); color: var(--accent); }
 /* How many subfolder projects a project holds, after its chevron, as a
    section's count is; they hang under it, one step in (03-queue.js `nest`). */
 .t-subs { flex: none; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; color: var(--fg-3); }

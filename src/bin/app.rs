@@ -83,9 +83,11 @@ const WINDOW_MARK: &str = concat!("window=", env!("CARGO_PKG_VERSION"));
 /// answers a `data-tauri-drag-region` attribute with the first two commands)
 /// and draws the three buttons a title bar had (the next five: leaving full
 /// screen too, which the desktop will not maximise out of). The eighth is for
-/// `FRAME_CHECK` below, and the last is this window's own command,
-/// `allow_foreground`, declared to the ACL in build.rs.
-const PAGE_WINDOW_COMMANDS: [&str; 9] = [
+/// `FRAME_CHECK` below; the ninth lets a desk nudge the taskbar when a turn
+/// is put on the reader while the window is behind another (#116); and the
+/// last is this window's own command, `allow_foreground`, declared to the ACL
+/// in build.rs.
+const PAGE_WINDOW_COMMANDS: [&str; 10] = [
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-minimize",
@@ -94,6 +96,7 @@ const PAGE_WINDOW_COMMANDS: [&str; 9] = [
     "core:window:allow-is-maximized",
     "core:window:allow-set-fullscreen",
     "core:window:allow-set-decorations",
+    "core:window:allow-request-user-attention",
     "allow-allow-foreground",
 ];
 

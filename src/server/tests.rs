@@ -1404,6 +1404,24 @@ fn a_saved_friends_document_gets_a_plain_name() {
     assert_eq!(file_name(&d), "garden-plan.md");
     d.source_path = Some(".bashrc".into());
     assert_eq!(file_name(&d), "garden-plan.md", "never a dotfile");
+    // Its head wears the friend's initial in their colour, the page's own
+    // (#123), and a player stored the old way is a button as it is served
+    // (#117, #120).
+    let old =
+        "<audio controls preload=\"metadata\" src=\"/files/x/a.mp3\" style=\"width:100%\"></audio>";
+    let html = super::assets::doc_html(&d, old, 0, &super::assets::Talk::default());
+    let h = super::assets::friend_hue("Trapti");
+    assert!(
+        html.contains(&format!("<span class=\"r-who\" style=\"--h:{h};")),
+        "{html}"
+    );
+    assert!(html.contains(">T</span>from Trapti"), "{html}");
+    assert!(html.contains("data-w=\"play\""), "{html}");
+    assert!(!html.contains("preload=\"metadata\""), "{html}");
+    // What the page's `hueOf` gives for the same names, run in node: the
+    // two colour a friend the same.
+    assert_eq!(h, 305);
+    assert_eq!(super::assets::friend_hue("Ana María 🌿"), 222);
 }
 
 /// A page sent to a friend carries its own pictures: one beside it goes in

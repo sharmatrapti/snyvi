@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = CSS + THREAD_CSS + ONYOU_CSS;
+  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS;
   document.head.append(s);
 }
 
@@ -440,7 +440,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* A friend's open line says whose it is, on a line of its own under the
    text, lined up with it. */
 .dk-by { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 8px 4px 28px; margin-top: -2px; font-size: 10.5px; color: var(--fg-3); font-family: var(--mono); }
-.dk-by > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-by > span:not(.r-who) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-by > .r-who, .dk-sug > .r-who { width: 14px; height: 14px; font-family: var(--sans); }
+.dk-sug > .r-who { align-self: center; margin-right: 6px; }
 .dk-by button { font: inherit; color: var(--fg-3); border-radius: 3px; }
 .dk-sha { padding: 0 3px; background: var(--rule); }
 .dk-sha[data-said] { color: var(--ok); }

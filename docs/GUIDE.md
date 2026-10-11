@@ -492,8 +492,11 @@ each -- Markdown with Mermaid for a plan, one self-contained HTML file for a
 mockup or a chart, an image or a recording, a PDF. `send_aside` is the small
 one, and [Asides](#asides) below says what it is for. Offered only to a
 Claude running in a desk's panel: `read_desk_notes` reads that desk's
-notes, `tick_desk_note` ticks one done (with the commit, the document and a
-link to where the work can be seen), `suggest_desk_note` offers a line you
+notes, `mark_desk_note` says how far a line has got, `tick_desk_note` ticks
+one done (with the commit, the document and a link to where the work can be
+seen) -- both take several lines at once, and `send_document` marks the
+lines a plan is for as planned, so a batch of notes is a few calls and not a
+few per note -- `suggest_desk_note` offers a line you
 can keep or not, `leave_off` says in a sentence where the work stands,
 `name_panel` names the panel it runs in, and six more file the work itself
 ([Threads and Your turn](#threads-and-your-turn) below): `start_thread` and

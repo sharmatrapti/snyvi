@@ -27,6 +27,7 @@ const ICO = {
   again: '<path d="M3 8a5 5 0 1 0 1.5-3.5M3 2.5v3h3"/>',
   plus: '<path d="M8 3.5v9M3.5 8h9"/>',
   done: '<path d="M2.5 5l1.5 1.5L7 3.5M2.5 11l1.5 1.5L7 9.5M9.5 5h4M9.5 11h4"/>',
+  pin: '<path d="M6 2.5h4l-.6 3.8 2.1 2.2h-7l2.1-2.2zM8 8.5v5"/>',
   pic: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.75" cy="6.25" r="1.1"/><path d="M2.5 11.5l3.5-3.5 2.5 2.5 2-2 3 3"/>',
 };
 const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k]}</svg>`;
@@ -545,6 +546,7 @@ function noteRow(x, esc) {
   // is a question and these are its two answers.
   if (x.suggested_by) {
     return `<li class="dk-note dk-sug"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span>` +
+      (x.sent_by ? ctx.who(x.sent_by, `From ${x.sent_by}`) : "") +
       `<span class="nm" data-tip="${esc(x.text)}" data-tip-sub="${x.sent_by ? `from ${esc(x.sent_by)}, a friend` : `suggested by ${esc(x.suggested_by)}`} · Keep puts it on your list" data-tip-overflow>${esc(x.text)}</span>` +
       `<span class="dk-sug-tools"><button type="button" class="dk-keep" data-a="note-keep" data-n="${x.id}" aria-label="Keep ${esc(x.text)} on the list">Keep</button>` +
       `<button type="button" data-a="note-x" data-n="${x.id}" data-tip="Not this one" data-tip-sub="nothing is deleted" aria-label="Do not keep ${esc(x.text)}">${ico("x")}</button></span></li>` + errLine(`n${x.id}`, esc);
@@ -577,7 +579,8 @@ function noteRow(x, esc) {
     `<span class="dk-marks">${marks}</span></span>` +
     // A friend's open line says whose it is, on a line of its own; ticked,
     // its "Tell Trapti ✓" is one of the marks above.
-    (!x.done && x.sent_by ? `<span class="dk-by"><span>from ${esc(x.sent_by)}</span></span>` : "") +
+    // Their initial, in their colour, as everywhere a friend shows (#123).
+    (!x.done && x.sent_by ? `<span class="dk-by">${ctx.who(x.sent_by)}<span>from ${esc(x.sent_by)}</span></span>` : "") +
     (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
     `</li>` + errLine(`n${x.id}`, esc);
 }
