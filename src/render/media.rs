@@ -96,9 +96,18 @@ pub fn player(kind: &str, src: &str, title: &str) -> String {
 }
 
 /// The file a player plays, by name, for a player with no title: the last
-/// part of `src` (attribute-escaped), its `%20`s read, escaped again.
+/// part of `src` (attribute-escaped), its `%20`s read, escaped again. Only
+/// what an attribute's escaping writes is read back: html_escape's decoder
+/// knows all 2,125 named entities, and its table put the binary over its
+/// budget for a file name.
 fn file_label(src: &str) -> String {
-    let src = html_escape::decode_html_entities(src);
+    let src = src
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&");
     let path = src.split(['?', '#']).next().unwrap_or("");
     let name = path.rsplit('/').next().unwrap_or(path);
     let bytes = name.as_bytes();
