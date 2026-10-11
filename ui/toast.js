@@ -5,8 +5,10 @@
  * that takes where the reader acted at the moment they act and hands it
  * here, and `hush()`, which asks this. */
 
+/* The corner's toasts sit above a desk's On you pill and its card
+ * (ui/desk/10-onyou.js sets --oy-h while they show), never on them. */
 const CSS = `
-#toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; z-index: var(--z-toast);
+#toasts { position: fixed; right: 20px; bottom: calc(20px + var(--oy-h, 0px)); display: flex; flex-direction: column; z-index: var(--z-toast);
   align-items: flex-end; pointer-events: none; }
 #toasts[data-side="right"], #toasts[data-side="below"] { align-items: flex-start; }
 .toast { pointer-events: auto; position: relative;

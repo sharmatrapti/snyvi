@@ -49,47 +49,24 @@
     if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
     else delete root.dataset.note;
     if (n) noteUse().then(m => {
-      noteMod ||= m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, showDesk: capability && showDesk, toast, keyHint, closeSay, undoClock,
+      noteMod ||= m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, showDesk: capability && showDesk, toast, keyHint, undoClock,
         holdUndo: offer, dropUndo: unoffer, peek: mascotPeek });
       noteMod.render();
     }, () => {});
   }
   renderNote();
 
-  // ---------- snyvi answers ----------
-  /** The note above is what an agent said, and its byline says who. This is
-   *  snyvi itself, and the rule that keeps it from being a gimmick is that it
-   *  only ever answers: nothing opens on its own, ever. A reader who comes
-   *  over to the face and rests there gets one short line back. */
-  const brandEl = $(".brand"), sayEl = $("#bm-say");
-  /** What it says, and when, is look.js's (`openSay`), fetched once the
-   *  page is idle: the lines, their weights, and the face each wears. */
-  let sayIn = 0, sayOut = 0;
-  function closeSay() {
-    sayEl.classList.remove("on");
-    brandEl.classList.remove("said");
-    delete root.dataset.say;
-    clearTimeout(sayOut);
-    sayOut = setTimeout(() => { if (!sayEl.classList.contains("on")) sayEl.hidden = true; }, 340);
-  }
-  brandEl.addEventListener("pointerenter", e => {
-    // A finger is not a reader leaning over. Nor is crossing the brand on the
-    // way to Search, so it waits for a moment's rest before it says anything.
-    if (e.pointerType === "touch") return;
-    clearTimeout(sayIn);
-    // While it speaks, its line is the label: the "Home" tip gives way.
-    sayIn = setTimeout(() => useLook().then(l => { if (brandEl.matches(":hover")) { brandEl.classList.add("said"); tipMod?.gone(brandEl); l.openSay({ root, sayEl, state, quiet }); } }, () => {}), 260);
-  });
-  brandEl.addEventListener("pointerleave", () => { clearTimeout(sayIn); closeSay(); });
-  // Following the brand through to the inbox takes the bubble with it.
-  brandEl.addEventListener("click", () => { clearTimeout(sayIn); closeSay(); });
+  // ---------- the mark ----------
+  /** The mark is the way Home, and hovering it says so: the "Home" tip, as
+   *  any control's. It used to answer with a line drawn by lot in place of
+   *  its own name, which hid the tip, and put "3 waiting" and "not
+   *  connected" in a draw beside "hi" (audit 67d008cb6f). Its faces stay:
+   *  the hop, the heart, sleep while the page cannot hear the daemon. */
   /** A desk's last open note ticked (desk.js): the milestone of docs/DESIGN.md
    *  §2.3, and a desk may carry no face, so it is the mark's -- glad, one
-   *  hop, for as long as a face's moment lasts. The hover line answers "all
-   *  done" for the next hour, and Home says the count. Rare by nature: it
-   *  is the end of a list, not of a line. */
+   *  hop, for as long as a face's moment lasts, and Home says the count.
+   *  Rare by nature: it is the end of a list, not of a line. */
   function markDone() {
-    state.doneAt = Date.now();
     if (quiet()) return;
     const mark = $(".brand-mark");
     root.dataset.done = "1";

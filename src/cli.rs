@@ -230,15 +230,26 @@ enum WidgetCmd {
         #[arg(long)]
         global: bool,
     },
-    /// Write a starter widget file in snyvi's widgets folder: a widget.json and a script that prints its body. It does not run until you Allow it in the window.
+    /// Write a starter widget file in snyvi's widgets folder: a widget.json and a script that prints its body. Inside a snyvi panel it is that desk's own; otherwise shared. It does not run until you Allow it in the window.
     New {
         name: String,
-        /// On the left, everywhere, run in its own folder (the default is a desk's, run in the desk's folder).
+        /// That desk's own, by its id, from anywhere.
+        #[arg(long, conflicts_with_all = ["global", "shared"])]
+        desk: Option<i64>,
+        /// Shared: on the desks you tick on /sidebars, even inside a panel.
+        #[arg(long, conflicts_with = "global")]
+        shared: bool,
+        /// On the left, everywhere, run in its own folder.
         #[arg(long)]
         global: bool,
     },
-    /// Run a widget file once, here, as snyvi would, and print what it would draw -- or why it refuses.
-    Check { name: String },
+    /// Run a widget file once, here, as snyvi would, and print what it would draw -- or why it refuses. A desk's own is found by --desk, or the panel's desk.
+    Check {
+        name: String,
+        /// The desk whose own widget it is.
+        #[arg(long)]
+        desk: Option<i64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -590,6 +601,7 @@ fn prune(paths: &config::Paths, days: u32, dry_run: bool) -> Result<()> {
             "{} desk {id}  {name}",
             if dry_run { "would delete" } else { "deleted" }
         );
+        prune_widgets(paths, *id, dry_run);
     }
     if !desks.is_empty() {
         println!(
@@ -603,6 +615,31 @@ fn prune(paths: &config::Paths, days: u32, dry_run: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// A pruned desk's own widgets, out of the runner's sight: moved, not
+/// deleted, to `widgets/.pruned/<desk>-<time>/`, where they can be moved
+/// back by hand.
+fn prune_widgets(paths: &config::Paths, desk: i64, dry_run: bool) {
+    use crate::widget::files;
+    let from = files::owned_dir(&paths.config_dir, desk);
+    if !from.is_dir() {
+        return;
+    }
+    let to = files::pruned_dir(&paths.config_dir).join(format!("{desk}-{}", crate::store::now()));
+    if dry_run {
+        println!("would move desk {desk}'s widgets to {}", to.display());
+        return;
+    }
+    match std::fs::create_dir_all(files::pruned_dir(&paths.config_dir))
+        .and_then(|_| std::fs::rename(&from, &to))
+    {
+        Ok(()) => println!("moved desk {desk}'s widgets to {}", to.display()),
+        Err(e) => eprintln!(
+            "snyvi: desk {desk}'s widgets stay in {}: {e}",
+            from.display()
+        ),
+    }
 }
 
 fn status(paths: &config::Paths) -> Result<()> {
@@ -686,8 +723,23 @@ fn restart_self(exe: &std::path::Path) -> Result<()> {
 /// back when it refuses; a starter written; one run checked.
 fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
     let (name, body, desk, global) = match cmd {
-        WidgetCmd::New { name, global } => return widget_new(paths, &name, global),
-        WidgetCmd::Check { name } => return widget_check(paths, &name),
+        WidgetCmd::New {
+            name,
+            desk,
+            shared,
+            global,
+        } => {
+            let owner = if global || shared {
+                0
+            } else {
+                desk.or_else(|| panel_desk(paths)).unwrap_or(0)
+            };
+            return widget_new(paths, &name, owner, global);
+        }
+        WidgetCmd::Check { name, desk } => {
+            let owner = desk.or_else(|| panel_desk(paths)).unwrap_or(0);
+            return widget_check(paths, &name, owner);
+        }
         WidgetCmd::Set {
             name,
             text,
@@ -732,16 +784,34 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
     Ok(())
 }
 
-/// `snyvi widget new`: a starter folder, never over one that is there.
-fn widget_new(paths: &config::Paths, name: &str, global: bool) -> Result<()> {
+/// The desk of the snyvi panel this runs in, read from the database (read
+/// only: it is the daemon's), or None outside one.
+fn panel_desk(paths: &config::Paths) -> Option<i64> {
+    let pane = std::env::var("SNYVI_SESSION")
+        .ok()
+        .filter(|p| crate::pane::valid_id(p))?;
+    rusqlite::Connection::open_with_flags(
+        &paths.db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .ok()?
+    .query_row("SELECT desk_id FROM panes WHERE id = ?1", [pane], |r| {
+        r.get(0)
+    })
+    .ok()
+}
+
+/// `snyvi widget new`: a starter folder, never over one that is there: a
+/// desk's own (`owner`), or shared or global (0).
+fn widget_new(paths: &config::Paths, name: &str, owner: i64, global: bool) -> Result<()> {
     use crate::widget::files;
     if !crate::widget::name_ok(name) {
         anyhow::bail!("a widget's name is lowercase letters, digits and dashes, at most 32");
     }
-    let dir = files::dir(&paths.config_dir).join(name);
-    if dir.exists() {
-        anyhow::bail!("{} is there already", dir.display());
+    if let Some(why) = files::taken(&paths.config_dir, owner, name) {
+        anyhow::bail!("{why}");
     }
+    let dir = files::folder_of(&paths.config_dir, owner, name);
     let (json, script, body) = files::starter(
         name,
         if global {
@@ -759,6 +829,9 @@ fn widget_new(paths: &config::Paths, name: &str, global: bool) -> Result<()> {
         std::fs::set_permissions(dir.join(script), std::fs::Permissions::from_mode(0o755))?;
     }
     println!("{}", dir.display());
+    if owner != 0 {
+        println!("It is desk {owner}'s own: it runs on that desk alone.");
+    }
     println!("Edit {script}, try it with `snyvi widget check {name}`, then Allow it in the window: it waits in its seat, and on /sidebars.");
     Ok(())
 }
@@ -767,9 +840,12 @@ fn widget_new(paths: &config::Paths, name: &str, global: bool) -> Result<()> {
 /// run, with what it would be given; then the body it would draw, or why
 /// it would not. Run here and now, in this shell's environment -- so a
 /// command that works here and not in snyvi is a PATH to look at.
-fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
+fn widget_check(paths: &config::Paths, name: &str, desk: i64) -> Result<()> {
     use crate::widget::{self, files};
-    let folder = files::dir(&paths.config_dir).join(name);
+    // The desk's own when it has one by the name, the shared one if not.
+    let owned = files::folder_of(&paths.config_dir, desk, name);
+    let owner = if desk != 0 && owned.is_dir() { desk } else { 0 };
+    let folder = files::folder_of(&paths.config_dir, owner, name);
     let spec =
         files::read(&folder, name).map_err(|why| anyhow::anyhow!("{}: {why}", folder.display()))?;
     let hash = files::hash(&folder).map_err(|why| anyhow::anyhow!(why))?;
@@ -869,7 +945,7 @@ fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )
     .ok()
-    .and_then(|c| widget::prefs(&c, name).ok())
+    .and_then(|c| widget::prefs(&c, owner, name).ok())
     .is_some_and(|p| p.trusted_hash == hash);
     eprintln!(
         "{}",

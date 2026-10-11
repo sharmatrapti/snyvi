@@ -679,6 +679,55 @@ pub(crate) async fn pane_note(
 /// How long an answered hand-over stays on the rail after its answer.
 const ANSWERED_SHOWN: i64 = 24 * 3600;
 
+/// How often one thread's branch is looked for in main.
+const MERGE_LOOK: Duration = Duration::from_secs(300);
+
+/// A thread whose PR was merged on GitHub, or from another checkout, was
+/// never told: the mod sees only what its own panel's gh does, so its notes
+/// fell back to "planned" with the work out (audit 7c0fc42885: #107, #108,
+/// #110). Before the rail reads its threads, git is asked -- each thread at
+/// most every MERGE_LOOK, off the store's lock and the runtime -- and a merge
+/// it finds ships the thread without ticking its notes (`thread::landed`).
+async fn merges_unseen(app: &Arc<App>, desk: i64) {
+    static LOOKED: std::sync::Mutex<Vec<(i64, std::time::Instant)>> =
+        std::sync::Mutex::new(Vec::new());
+    let Ok(open) = app.store.clocked(|c, _| thread::unmerged(c, desk)) else {
+        return;
+    };
+    let due: Vec<_> = {
+        let mut looked = LOOKED.lock().unwrap_or_else(|e| e.into_inner());
+        looked.retain(|(_, at)| at.elapsed() < MERGE_LOOK);
+        let due: Vec<_> = open
+            .into_iter()
+            .filter(|(id, ..)| !looked.iter().any(|(l, _)| l == id))
+            .collect();
+        looked.extend(due.iter().map(|(id, ..)| (*id, std::time::Instant::now())));
+        due
+    };
+    if due.is_empty() {
+        return;
+    }
+    let found = tokio::task::spawn_blocking(move || {
+        due.into_iter()
+            .filter_map(|(id, at, b)| {
+                crate::git::merge_of(std::path::Path::new(&at), &b).map(|(m, t)| (id, m, t))
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    let mut moved = false;
+    for (id, m, t) in found {
+        moved |= app
+            .store
+            .clocked(|c, _| thread::landed(c, desk, id, &m, t))
+            .unwrap_or(false);
+    }
+    if moved {
+        threads_moved(app, desk);
+    }
+}
+
 /// A desk's threads, its turns and its waiting suggestions: the rail's three
 /// sections in one read.
 pub(crate) async fn desk_threads(
@@ -690,6 +739,7 @@ pub(crate) async fn desk_threads(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
+    merges_unseen(&app, id).await;
     let r = app.store.clocked(|c, now| {
         Ok((
             thread::for_desk(c, id)?,

@@ -1,12 +1,21 @@
 use super::*;
 
-fn db() -> Connection {
+/// A database as 1.31 left it, before a widget had an owner.
+fn db_1_31() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     for c in PREFS_COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
     }
     conn.execute_batch(TITLE_COLUMN_1_31).unwrap();
+    conn
+}
+
+fn db() -> Connection {
+    let conn = db_1_31();
+    for c in OWNER_1_32 {
+        conn.execute_batch(c).unwrap();
+    }
     conn
 }
 
@@ -26,12 +35,14 @@ const PUSH: Writer<'static> = Writer {
     writer: "panel 2",
     pane: "p2",
     title: "",
+    owner: 0,
 };
 const FILE: Writer<'static> = Writer {
     source: Source::File,
     writer: "every 2 min",
     pane: "",
     title: "Git",
+    owner: 0,
 };
 
 #[test]
@@ -61,19 +72,22 @@ fn normalize_keeps_the_readers_order_and_mends_the_rest() {
     // section they follow by default (widgets after folders, desks after
     // inbox).
     assert_eq!(l.left, ids(&["folders", "widgets", "inbox", "desks"]));
-    // Your turn is first whatever was sent.
+    // Your turn left the rail in 1.32: a stored `turn` is dropped wherever
+    // it was; notes stays before docs as the reader had it, and the missing
+    // ones come back after the section they follow by default.
     assert_eq!(
         l.right,
-        ids(&["turn", "notes", "widgets", "panels", "points", "docs"])
+        ids(&["panels", "points", "notes", "widgets", "docs"])
     );
-    // Your turn can't be hidden, a bare `widgets` names no side.
+    // A hidden `turn` goes with it; a bare `widgets` names no side.
     assert_eq!(l.hidden, ids(&["folders", "left:widgets"]));
 }
 
 #[test]
 fn a_section_from_a_later_version_lands_in_its_place() {
     // A layout saved before `points` existed, naming `rest`, which went in
-    // 1.30 (#109): the one arrives in its place, the other is dropped.
+    // 1.30 (#109), and `turn`, which left the rail in 1.32: the one arrives
+    // in its place, the others are dropped.
     let l = Layout {
         left: ids(&LEFT),
         right: ids(&["turn", "docs", "panels", "rest", "notes", "widgets"]),
@@ -82,7 +96,7 @@ fn a_section_from_a_later_version_lands_in_its_place() {
     .normalize();
     assert_eq!(
         l.right,
-        ids(&["turn", "docs", "panels", "points", "notes", "widgets"])
+        ids(&["docs", "panels", "points", "notes", "widgets"])
     );
 }
 
@@ -296,19 +310,19 @@ fn a_panes_seats_dim_when_it_ends() {
 #[test]
 fn prefs_change_only_what_is_given() {
     let c = db();
-    assert_eq!(prefs(&c, "git").unwrap().settings, "{}");
+    assert_eq!(prefs(&c, 0, "git").unwrap().settings, "{}");
     let first = Change {
         hidden: Some(true),
         trusted_hash: Some("abc"),
         ..Change::default()
     };
-    set_prefs(&c, "git", &first, 1).unwrap();
+    set_prefs(&c, 0, "git", &first, 1).unwrap();
     let then = Change {
         settings: Some(r#"{"base":"dev"}"#),
         rerun_edits: Some(true),
         ..Change::default()
     };
-    let p = set_prefs(&c, "git", &then, 2).unwrap();
+    let p = set_prefs(&c, 0, "git", &then, 2).unwrap();
     assert!(p.hidden && p.rerun_edits);
     assert_eq!(
         (p.trusted_hash.as_str(), p.settings.as_str()),
@@ -322,14 +336,14 @@ fn prefs_change_only_what_is_given() {
 #[test]
 fn a_widget_lives_on_the_desks_and_for_the_time_the_reader_chose() {
     let c = db();
-    let p = prefs(&c, "ci").unwrap();
+    let p = prefs(&c, 0, "ci").unwrap();
     assert!(p.on_desk(1) && p.on_desk(2), "no desks is every desk");
     let ch = Change {
         desks: Some(&[2]),
         until: Some(100),
         ..Change::default()
     };
-    let p = set_prefs(&c, "ci", &ch, 1).unwrap();
+    let p = set_prefs(&c, 0, "ci", &ch, 1).unwrap();
     assert!(!p.on_desk(1) && p.on_desk(2));
     assert!(!p.ended(99, |_| true) && p.ended(100, |_| true));
     // What its runs printed on a desk it left goes; the desk it is on keeps it.
@@ -343,7 +357,7 @@ fn a_widget_lives_on_the_desks_and_for_the_time_the_reader_chose() {
         until_pane: Some("p1"),
         ..Change::default()
     };
-    let p = set_prefs(&c, "ci", &ch, 2).unwrap();
+    let p = set_prefs(&c, 0, "ci", &ch, 2).unwrap();
     assert!(!p.ended(5, |x| x == "p1") && p.ended(5, |_| false));
 }
 
@@ -360,7 +374,7 @@ fn a_stopped_widget_runs_again_on_try_again() {
     )
     .unwrap();
     fail(&c, 4, "ci", "exit 2", &FILE, 1).unwrap();
-    assert_eq!(unstop(&c, "ci", None).unwrap(), vec![3]);
+    assert_eq!(unstop(&c, 0, "ci", None).unwrap(), vec![3]);
     assert_eq!(seat_of(&c, 3, "ci").unwrap().unwrap().error, "");
     assert_eq!(seat_of(&c, 4, "ci").unwrap().unwrap().error, "exit 2");
 }
@@ -384,4 +398,197 @@ fn a_box_waits_for_yes_and_ends_with_its_time() {
     assert!(ask_grandfather(&c, 1, "tests", 3).unwrap());
     assert_eq!(ask_of(&c, 1, "tests").unwrap().unwrap().answer, "yes");
     assert!(!ask_grandfather(&c, 1, "nothing", 3).unwrap());
+}
+
+const OWN: Writer<'static> = Writer {
+    source: Source::File,
+    writer: "every 2 min",
+    pane: "",
+    title: "Arena",
+    owner: 7,
+};
+
+#[test]
+fn a_desks_own_widget_is_on_its_desk_alone() {
+    let c = db();
+    // Two desks may each own a widget of one name; each has its own say.
+    let off = Change {
+        hidden: Some(true),
+        ..Change::default()
+    };
+    set_prefs(&c, 7, "arena", &off, 1).unwrap();
+    let p = prefs(&c, 8, "arena").unwrap();
+    assert!(!p.hidden && p.owner == 8);
+    let p = prefs(&c, 7, "arena").unwrap();
+    assert!(p.hidden);
+    // Its desks are not its own to widen: none is still its desk alone.
+    assert!(p.on_desk(7) && !p.on_desk(8));
+    // Its seat says whose it is, and is hidden by its owner's say only.
+    put(&c, 7, "arena", &body("2 runs"), "", &OWN, 1).unwrap();
+    let s = seat_of(&c, 7, "arena").unwrap().unwrap();
+    assert!(s.owner == 7 && s.hidden);
+    assert_eq!(desks_of(&c, 7, "arena").unwrap(), vec![7]);
+    assert!(desks_of(&c, 0, "arena").unwrap().is_empty());
+    // Try again on it touches no other desk's seat of the name.
+    fail(
+        &c,
+        7,
+        "arena",
+        &format!("{STOPPED}after 3 failures, exit 1"),
+        &OWN,
+        2,
+    )
+    .unwrap();
+    assert!(unstop(&c, 0, "arena", None).unwrap().is_empty());
+    assert_eq!(unstop(&c, 7, "arena", None).unwrap(), vec![7]);
+}
+
+#[test]
+fn sharing_keeps_the_readers_say_and_runs_nowhere_new() {
+    let c = db();
+    let allowed = Change {
+        trusted_hash: Some("h1"),
+        settings: Some(r#"{"x":1}"#),
+        until: Some(500),
+        ..Change::default()
+    };
+    set_prefs(&c, 7, "arena", &allowed, 1).unwrap();
+    put(&c, 7, "arena", &body("ok"), "", &OWN, 1).unwrap();
+    // Shared: on the desk it came from, and no other, until ticked.
+    assert_eq!(rehome(&c, "arena", 7, 0, 2).unwrap(), vec![7]);
+    let p = prefs(&c, 0, "arena").unwrap();
+    assert_eq!(
+        (
+            p.trusted_hash.as_str(),
+            p.settings.as_str(),
+            p.until,
+            p.desks.clone()
+        ),
+        ("h1", r#"{"x":1}"#, 500, vec![7])
+    );
+    assert!(p.on_desk(7) && !p.on_desk(8));
+    assert_eq!(
+        prefs(&c, 7, "arena").unwrap().trusted_hash,
+        "",
+        "the old row is gone"
+    );
+    assert_eq!(seat_of(&c, 7, "arena").unwrap().unwrap().owner, 0);
+    // Kept to desk 8: its seats on other desks go, its say goes with it.
+    put(&c, 8, "arena", &body("ok"), "", &FILE, 3).unwrap();
+    let mut was = rehome(&c, "arena", 0, 8, 4).unwrap();
+    was.sort_unstable();
+    assert_eq!(was, vec![7, 8]);
+    assert!(seat_of(&c, 7, "arena").unwrap().is_none());
+    assert_eq!(seat_of(&c, 8, "arena").unwrap().unwrap().owner, 8);
+    let p = prefs(&c, 8, "arena").unwrap();
+    assert!(p.trusted_hash == "h1" && p.desks.is_empty() && p.on_desk(8) && !p.on_desk(7));
+}
+
+#[test]
+fn a_widget_on_one_desk_is_marked_to_be_that_desks() {
+    let c = db_1_31();
+    for (name, desks) in [("arena", "7"), ("git", ""), ("ci", "3,4"), ("odd", "x")] {
+        c.execute(
+            "INSERT INTO widget_prefs (name, trusted_hash, desks, updated_at) VALUES (?1, 'h', ?2, 1)",
+            params![name, desks],
+        )
+        .unwrap();
+    }
+    for s in OWNER_1_32 {
+        c.execute_batch(s).unwrap();
+    }
+    // What it printed as a shared widget, on its one desk.
+    put(
+        &c,
+        7,
+        "arena",
+        &body("ok"),
+        "",
+        &Writer { owner: 0, ..OWN },
+        1,
+    )
+    .unwrap();
+    assert_eq!(to_adopt(&c).unwrap(), vec![("arena".to_string(), 7)]);
+    for name in ["git", "ci", "odd"] {
+        assert_eq!(
+            prefs(&c, 0, name).unwrap().trusted_hash,
+            "h",
+            "{name} stays shared"
+        );
+    }
+    // Moved: its desk's own, allowed as it was.
+    adopted(&c, "arena", 7).unwrap();
+    assert!(to_adopt(&c).unwrap().is_empty());
+    let p = prefs(&c, 7, "arena").unwrap();
+    assert!(p.trusted_hash == "h" && p.desks.is_empty());
+    assert_eq!(seat_of(&c, 7, "arena").unwrap().unwrap().owner, 7);
+    // Or it could not move, and is shared as before, on its one desk.
+    c.execute("UPDATE widget_prefs SET owner = -3 WHERE name = 'git'", [])
+        .unwrap();
+    stays_shared(&c, "git", 3).unwrap();
+    assert_eq!(prefs(&c, 0, "git").unwrap().trusted_hash, "h");
+}
+
+#[test]
+fn only_an_agents_widget_says_it_is_one() {
+    let c = db();
+    put(&c, 7, "deploy", &body("3/5"), "", &PUSH, 1).unwrap();
+    put(&c, 7, "arena", &body("ok"), "", &OWN, 1).unwrap();
+    put(&c, 7, "git", &body("main"), "", &FILE, 1).unwrap();
+    let script = Writer {
+        pane: "",
+        writer: "a script",
+        ..PUSH
+    };
+    put(&c, 7, "backup", &body("done"), "", &script, 1).unwrap();
+    let agent = |n: &str| seat_of(&c, 7, n).unwrap().unwrap().agent;
+    assert!(agent("deploy") && agent("arena"));
+    assert!(
+        !agent("git") && !agent("backup"),
+        "a shared file and a script's box are the reader's"
+    );
+    // Its panel closed, a box it asked for is still an agent's.
+    ask_grandfather(&c, 7, "deploy", 2).unwrap();
+    pane_ended(&c, "p2", "panel 2 closed").unwrap();
+    assert!(agent("deploy"));
+}
+
+#[test]
+fn a_removed_box_keeps_its_body_for_undo() {
+    let c = db();
+    put(
+        &c,
+        7,
+        "deploy",
+        &body(r#"{"body":"**3/5**","tone":"warn","count":"3/5","lines":2}"#),
+        "",
+        &PUSH,
+        1,
+    )
+    .unwrap();
+    ask_grandfather(&c, 7, "deploy", 1).unwrap();
+    assert!(remove_box(&c, 7, "deploy", 5).unwrap());
+    assert!(seat_of(&c, 7, "deploy").unwrap().is_none());
+    let a = ask_of(&c, 7, "deploy").unwrap().unwrap();
+    assert_eq!((a.answer.as_str(), a.pane.as_str()), ("removed", "p2"));
+    let b = body(&a.body);
+    assert_eq!(
+        (b.md.as_str(), b.tone, b.count.as_str(), b.lines),
+        ("**3/5**", Tone::Warn, "3/5", 2)
+    );
+    // Undo: allowed again, with what it showed.
+    let back = restore_box(&c, 7, "deploy", 6).unwrap().unwrap();
+    assert_eq!(back.body, a.body);
+    assert_eq!(ask_of(&c, 7, "deploy").unwrap().unwrap().answer, "yes");
+    assert!(restore_box(&c, 7, "deploy", 7).unwrap().is_none(), "once");
+    // A script's box is not an agent's to remove; nor is nothing.
+    let script = Writer {
+        pane: "",
+        writer: "a script",
+        ..PUSH
+    };
+    put(&c, 7, "backup", &body("done"), "", &script, 1).unwrap();
+    assert!(!remove_box(&c, 7, "backup", 8).unwrap());
+    assert!(seat_of(&c, 7, "backup").unwrap().is_some());
+    assert!(!remove_box(&c, 7, "nothing", 8).unwrap());
 }

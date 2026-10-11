@@ -31,12 +31,21 @@ function filedNow(d) {
   return filedAt === d.id ? filed : { threads: [], turns: [], suggestions: [] };
 }
 
-/** Your turn and Suggested, above the panels. A thread is on its panel's row
- *  (`threadChip`); one no panel is moving is on no list (#109). */
-function filedSecs(d) {
-  const f = filedNow(d);
-  return turnSec(d, f) + sugSec(f, d);
-}
+/** Your turn and Suggested are not on the rail any more: they rise in the
+ *  corner and wait behind its pill (10-onyou.js), where nothing they do
+ *  moves the page. A thread is on its panel's row (`threadChip`); one no
+ *  panel is moving is on no list (#109). */
+
+/** A turn this desk shows. Claude's own question dialog is on screen in its
+ *  panel already, and answered there nine times in ten: Home lists it, the
+ *  band above the prompt leaves it out, and so does this. */
+const shown = w => w.via !== "dialog";
+/** How long a turn waits before it goes quiet: no rising, no sound, no
+ *  accent, folded under "older". */
+const OLDER_S = 30 * 60;
+/** A waiting turn still worth saying: its panel open (or none named), and
+ *  asked within the half hour. */
+const fresh = (d, w) => !w.answered_at && (!w.pane || !!slotOf(d, w.pane)) && Date.now() / 1000 - w.created_at < OLDER_S;
 
 /** Which panel a pane is, as the reader counts them. */
 const slotOf = (d, pane) => d.panes.find(p => p.id === pane)?.slot;
@@ -110,28 +119,26 @@ function threadLine(d, pane, esc) {
 /** What the turn's buttons say, by its kind. */
 const ANSWERS = { try: ["Looks good", "Needs changes…"], merge: ["Merged"], key: ["Added"] };
 
-function turnSec(d, f) {
-  const { esc } = ctx;
-  const waiting = f.turns.filter(w => !w.answered_at);
-  const said = f.turns.filter(w => w.answered_at && sendable.has(w.id));
-  const gone = filedGone && filedGone.k === "w" ? filedGone : null;
-  if (!waiting.length && !said.length && !gone) return "";
-  // Questions asked together are one card (#110), where its first one would
-  // be: each still a turn of its own, answered and put away on its own.
+/** A turn's card, or its group's (#110): questions asked together are one
+ *  card, each still a turn of its own, answered and put away on its own. */
+function turnCard(d, f, w, esc) {
+  if (!w.ask_group) return w.answered_at ? saidRow(d, w, esc) : turnRow(d, w, esc);
+  return groupCard(d, w.ask_group, f.turns.filter(x => x.ask_group === w.ask_group && (!x.answered_at || sendable.has(x.id))), esc);
+}
+
+/** The fresh turns, or the older ones, as the tray lists them: in the order
+ *  they were asked, so an answer keeps its card's place and nothing moves
+ *  under the hand. An answer still to be sent stays with the fresh. */
+function turnRows(d, f, esc, older) {
   const drawn = new Set();
-  const card = w => {
-    if (!w.ask_group) return w.answered_at ? saidRow(d, w, esc) : turnRow(d, w, esc);
-    if (drawn.has(w.ask_group)) return "";
-    drawn.add(w.ask_group);
-    return groupCard(d, w.ask_group, f.turns.filter(x => x.ask_group === w.ask_group && (!x.answered_at || sendable.has(x.id))), esc);
-  };
-  const rows = waiting.map(card).join("") + said.map(card).join("") +
-    (gone ? goneRow("w", gone.id, gone.text, esc) : "");
-  // Fixed: it never folds, so what only the reader can do is never out of sight.
-  return sec("turn", "rail.turns", "Your turn", {
-    cls: "dk-filed dk-turns", fixed: true, count: waiting.length || "", tone: "accent",
-    tip: "Your turn", sub: "What only you can do. Your answer goes with your next message to the panel that asked",
-  }, `<ul class="dk-turn-list">${rows}</ul>`);
+  return f.turns.filter(w => shown(w) && (w.answered_at ? !older && sendable.has(w.id) : fresh(d, w) !== older))
+    .sort((a, b) => a.id - b.id)
+    .map(w => {
+      if (!w.ask_group) return turnCard(d, f, w, esc);
+      if (drawn.has(w.ask_group)) return "";
+      drawn.add(w.ask_group);
+      return turnCard(d, f, w, esc);
+    }).join("");
 }
 
 /** A decide's options, the recommended one marked, and Other…. */
@@ -240,7 +247,9 @@ function lastsBody(s) {
   return { until: 0, until_pane: "" };
 }
 
-function sugSec(f, d) {
+/** Suggested, under Your turn in the tray: panels, desks and widgets an
+ *  agent thinks the work wants. Nothing opens or runs until a click. */
+function sugRows(f, d) {
   const { esc } = ctx;
   const gone = filedGone && filedGone.k === "s" ? filedGone : null;
   if (!f.suggestions.length && !gone) return "";
@@ -259,9 +268,11 @@ function sugSec(f, d) {
       `<button type="button" class="sg-chip" data-a="sg-for" data-s="${s.id}" data-v="${k}" aria-pressed="${pick === k}">${l}${k === "panel" ? ` ${n} is open` : ""}</button>`).join("") + `</p>`;
   };
   const widgetBits = s => {
+    // A card from before 1.32 may say every desk, or global; an agent's
+    // widget is its desk's own since.
     const x = s.detail || {}, at = x.where === "global" ? "on the left, on every page, run in its own folder"
       : x.where === "every" ? "on every desk, each run in its desk's folder"
-      : `on this desk only, run in <span class="mono">${esc(tilde(d.root || ""))}</span>`;
+      : `this desk's own, run in <span class="mono">${esc(tilde(d.root || ""))}</span>`;
     const lines = x.script ? x.script.split("\n").length : 0, open = sgScript.has(s.id), tried = sgTry.get(s.id);
     return `<p class="tn-by">${at} · every ${every(x.every || 60)} while in view</p>` +
       `<code class="sg-cmd" data-tip="Runs this on a timer while the widget is in view" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` +
@@ -282,10 +293,7 @@ function sugSec(f, d) {
     (s.kind === "widget" ? `<button type="button" class="tn-opt" data-a="sg-try" data-s="${s.id}" data-tip="Run it once, here" data-tip-sub="As it would run, and nothing kept"${sgTry.get(s.id)?.busy ? " disabled" : ""}>Try once</button>` : "") +
     `<button type="button" class="tn-x" data-a="sg-x" data-s="${s.id}" data-tip="${s.kind === "box" ? "Not now" : "Not this one"}" data-tip-sub="${s.kind === "box" ? "the panel is told, and later pushes refused" : "nothing is deleted"}" aria-label="Not this one">${ico("x")}</button></div></li>` + errLine(`s${s.id}`, esc)).join("") +
     (gone ? goneRow("s", gone.id, gone.text, esc) : "");
-  return sec("suggested", "rail.suggested", "Suggested", {
-    cls: "dk-filed", fixed: true, count: f.suggestions.length || "",
-    tip: "Suggested", sub: "Panels, desks and widgets an agent thinks the work wants. Nothing opens or runs until you click",
-  }, `<ul class="dk-turn-list">${rows}</ul>`);
+  return `<h3 class="oy-h" data-tip="Suggested" data-tip-sub="Panels, desks and widgets an agent thinks the work wants. Nothing opens or runs until you click">Suggested</h3><ul class="dk-turn-list" data-part="desk.suggested">${rows}</ul>`;
 }
 
 /** Try once: the proposed widget run here, as it would run, and what it
@@ -324,12 +332,14 @@ async function getFiled(id, again) {
   // An answer that is not here any more, or was taken up by the panel, has
   // nothing left to send.
   for (const k of sendable.keys()) if (!filed.turns.some(w => w.id === k)) sendable.delete(k);
-  if (current()) rail();
+  const d = current();
+  if (d) { arrived(d); rail(); }
 }
 
 function forgetFiled() {
   filed = { threads: [], turns: [], suggestions: [] }; filedAt = null; filedGet = null;
   filedGone = null; clearTimeout(filedTimer); thField = null; thDraft = ""; sendable.clear();
+  forgetOnYou();
 }
 
 /** A ✕ here: the row goes at once and holds its Undo for as long as a
@@ -464,7 +474,9 @@ async function runNewPanel(d, w) {
 
 /** The section's clicks; true when one of them was this file's. */
 async function filedAct(a, b, d) {
-  if (!a.startsWith("th-") && !a.startsWith("tn-") && !a.startsWith("sg-") && a !== "fd-back") return false;
+  if (!a.startsWith("th-") && !a.startsWith("tn-") && !a.startsWith("sg-") && !a.startsWith("oy-") && a !== "fd-back") return false;
+  if (a === "oy-open") { oyToggle(); return true; }
+  if (a === "oy-older") { oy.older = !oy.older; rail(); return true; }
   const t = filed.threads.find(x => x.id === +b.dataset.t);
   const w = filed.turns.find(x => x.id === +b.dataset.w);
   const s = filed.suggestions.find(x => x.id === +b.dataset.s);
@@ -536,10 +548,11 @@ async function openSuggested(d, s) {
   if (nv) { await run(nv, s.cmd); nv.body.focus(); }
 }
 
-/** After a redraw: the open field back, with what was typed and the keys
- *  kept from the panel, as the note field does. */
-function threadFocus() {
-  const inp = ctx.tocEl.querySelector(".th-in");
+/** After a redraw of `root` -- the rail, or the corner's tray: the open
+ *  field back, with what was typed and the keys kept from the panel, as the
+ *  note field does. */
+function threadFocus(root = ctx.tocEl) {
+  const inp = root.querySelector(".th-in");
   if (!inp || !thField) return;
   inp.value = thDraft;
   inp.addEventListener("input", () => { thDraft = inp.value; });

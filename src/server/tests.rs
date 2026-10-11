@@ -1574,7 +1574,13 @@ async fn a_layout_is_kept_normalized_and_reaches_the_next_page() {
     let kept: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(kept["left"][0], "folders");
     assert_eq!(kept["left"].as_array().unwrap().len(), 4);
-    assert_eq!(kept["right"][0], "turn");
+    // Your turn is the desk corner's since 1.32, not a section: dropped.
+    assert_eq!(kept["right"][0], "panels");
+    assert!(!kept["right"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|x| x == "turn"));
     assert_eq!(kept["hidden"], serde_json::json!(["folders"]));
 
     let req = axum::http::Request::builder()

@@ -84,6 +84,9 @@ let noteField = null, noteDraft = "", noteCaret = 0, noteErr = "";
  *  lands out of sight. */
 const NOTES_SHOWN = 6;
 let notesAll = false;
+/** The done half is one row at the list's foot, "3 done", until clicked
+ *  (audit 7c0fc42885: it was half the list, struck through). */
+let notesDone = false;
 const notesKept = new Set();
 /** True only while the rail's HTML is being replaced. An element losing the
  *  focus that way is not a reader clicking away from it, and must not be read

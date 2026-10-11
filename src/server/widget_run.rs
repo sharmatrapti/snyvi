@@ -21,8 +21,9 @@
 //!   and in `SNYVI_WIDGET_DIR` -- a scrubbed environment, the run's JSON on
 //!   stdin, at most two at a time, at most 4 KB read, in a process group of
 //!   its own that a timeout ends whole.
-//! - **Where the reader put it, while they want it** (#111). A desk widget
-//!   runs on the desks its prefs list (none is every desk); one past its
+//! - **Where the reader put it, while they want it** (#111). A desk's own
+//!   widget runs on its desk and nowhere else; a shared one on the desks its
+//!   prefs list (none is every desk), and its by-line says so. One past its
 //!   time, or whose panel closed, is switched off -- not removed -- and its
 //!   seats go. A pushed box allowed for a while is cleared the same way.
 //! - **Reachable, and not forever failing.** A desk widget whose command
@@ -67,7 +68,8 @@ type Fails = std::sync::Arc<std::sync::Mutex<HashMap<(i64, String), (u8, String)
 /// What the runner keeps between rounds.
 #[derive(Default)]
 struct Runner {
-    /// A folder's stamp and the hash taken at it.
+    /// A folder's stamp and the hash taken at it, by the widget's key
+    /// (`Found::key`).
     hashes: HashMap<String, Hashed>,
     /// When each (desk, name) last started, and whether it is running now.
     last: HashMap<(i64, String), Instant>,
@@ -77,6 +79,7 @@ struct Runner {
     /// The hash each widget last ran as allowed: one allowed anew -- by
     /// Allow, or its own edit with Rerun my edits on -- runs at the next
     /// look rather than at the end of its `every`, so its seat stops asking.
+    /// By the widget's key.
     ran_as: HashMap<String, String>,
     fails: Fails,
 }
@@ -85,6 +88,7 @@ pub(crate) fn spawn(app: Arc<App>) {
     tokio::spawn(async move {
         let gate = Arc::new(tokio::sync::Semaphore::new(AT_ONCE));
         let mut r = Runner::default();
+        adopt(&app);
         let path = login_path().await;
         let _ = LOGIN_PATH.set(path.clone());
         loop {
@@ -102,6 +106,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
     let live = |p: &str| app.panes.is_running(p);
     end_asks(app);
     let found = files::scan(&app.paths.config_dir);
+    forget_gone(r, &found);
     if found.is_empty() {
         return;
     }
@@ -109,7 +114,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
     let all = app.store.desks().unwrap_or_default();
     for f in found {
         let Ok(spec) = &f.spec else { continue };
-        let Ok(prefs) = app.store.clocked(|c, _| widget::prefs(c, &f.name)) else {
+        let Ok(prefs) = app.store.clocked(|c, _| widget::prefs(c, f.owner, &f.name)) else {
             continue;
         };
         if prefs.hidden {
@@ -123,8 +128,8 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
                 ..Default::default()
             };
             if let Ok(ds) = app.store.clocked(|c, now| {
-                widget::set_prefs(c, &f.name, &off, now)?;
-                widget::desks_of(c, &f.name)
+                widget::set_prefs(c, f.owner, &f.name, &off, now)?;
+                widget::desks_of(c, f.owner, &f.name)
             }) {
                 for d in ds {
                     announce(app, d, &f.name);
@@ -150,11 +155,17 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
         if seats.is_empty() {
             continue;
         }
+        let by = byline(spec, &prefs);
+        let who = Who {
+            spec,
+            owner: f.owner,
+            by: &by,
+        };
         // A command that cannot reach its own script fails on every desk,
         // every time: not run, and the seat says how to write it.
         if let Err(why) = files::lint(spec, &f.folder) {
             for (desk, _) in &seats {
-                say(app, r, *desk, spec, &why);
+                say(app, r, *desk, &who, &why);
             }
             continue;
         }
@@ -163,7 +174,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
             Ok(h) => h,
             Err(why) => {
                 for (desk, _) in &seats {
-                    say(app, r, *desk, spec, &why);
+                    say(app, r, *desk, &who, &why);
                 }
                 continue;
             }
@@ -176,7 +187,7 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
                 };
                 let _ = app
                     .store
-                    .clocked(|c, now| widget::set_prefs(c, &f.name, &took, now));
+                    .clocked(|c, now| widget::set_prefs(c, f.owner, &f.name, &took, now));
             } else {
                 let why = if prefs.trusted_hash.is_empty() {
                     format!(
@@ -187,22 +198,34 @@ fn round(app: &Arc<App>, r: &mut Runner, gate: &Arc<tokio::sync::Semaphore>, pat
                     format!("changed: {} changed since you allowed it", spec.title)
                 };
                 for (desk, _) in &seats {
-                    say(app, r, *desk, spec, &why);
+                    say(app, r, *desk, &who, &why);
                 }
                 continue;
             }
         }
-        if r.ran_as.get(&f.name) != Some(&hash) {
+        let key = f.key();
+        if r.ran_as.get(&key) != Some(&hash) {
             // Allowed anew, or edited: whatever stopped it may be fixed.
-            r.last.retain(|(_, n), _| *n != f.name);
-            r.fails.lock().unwrap().retain(|(_, n), _| *n != f.name);
-            if r.ran_as.contains_key(&f.name) {
-                let _ = app.store.clocked(|c, _| widget::unstop(c, &f.name, None));
+            let mine = |d: i64, n: &str| n == f.name && (f.owner == 0 || d == f.owner);
+            r.last.retain(|(d, n), _| !mine(*d, n));
+            r.fails.lock().unwrap().retain(|(d, n), _| !mine(*d, n));
+            if r.ran_as.contains_key(&key) {
+                let _ = app
+                    .store
+                    .clocked(|c, _| widget::unstop(c, f.owner, &f.name, None));
             }
-            r.ran_as.insert(f.name.clone(), hash.clone());
+            r.ran_as.insert(key, hash.clone());
         }
-        start_seats(app, r, gate, path, &f, spec, &prefs, &all, seats);
+        start_seats(app, r, gate, path, &f, &who, &prefs, &all, seats);
     }
+}
+
+/// A widget whose folder is gone -- removed, or moved by hand -- has its
+/// last run forgotten, so one put back by Undo runs on the next round
+/// rather than a period later.
+fn forget_gone(r: &mut Runner, found: &[files::Found]) {
+    r.last
+        .retain(|(_, n), _| found.iter().any(|f| &f.name == n));
 }
 
 /// Boxes allowed for a while whose while is up: taken off, and said.
@@ -221,6 +244,29 @@ fn end_asks(app: &Arc<App>) {
     }
 }
 
+/// A widget file as one round sees it: its spec, the desk it belongs to
+/// (0: none), and its seat's by-line.
+struct Who<'a> {
+    spec: &'a files::Spec,
+    owner: i64,
+    by: &'a str,
+}
+
+/// What a widget file's seat says under its head: how often it runs, and
+/// for a shared desk widget where else -- the exception named, not the
+/// default, so a desk's own says only "every 2 min".
+fn byline(spec: &files::Spec, prefs: &widget::Prefs) -> String {
+    let every = widget::every_words(spec.run.every);
+    if spec.scope == files::Scope::Global || prefs.owner != 0 {
+        return every;
+    }
+    match prefs.desks.len() {
+        0 => format!("every desk · {every}"),
+        1 => format!("shared · {every}"),
+        n => format!("{n} desks · {every}"),
+    }
+}
+
 /// A widget allowed and unchanged, run on each of its seats that is due:
 /// not running already, its time since the last run up, not stopped.
 #[allow(clippy::too_many_arguments)]
@@ -230,17 +276,18 @@ fn start_seats(
     gate: &Arc<tokio::sync::Semaphore>,
     path: &str,
     f: &files::Found,
-    spec: &files::Spec,
+    who: &Who,
     prefs: &widget::Prefs,
     all: &[crate::desk::Desk],
     seats: Vec<(i64, Option<String>)>,
 ) {
+    let spec = who.spec;
     for (desk, root) in seats {
         let key = (desk, f.name.clone());
         let cwd = match &root {
             None => f.folder.clone(),
             Some(root) if root.is_empty() || !Path::new(root).is_dir() => {
-                say(app, r, desk, spec, "this desk has no folder");
+                say(app, r, desk, who, "this desk has no folder");
                 continue;
             }
             Some(root) => PathBuf::from(root),
@@ -272,7 +319,7 @@ fn start_seats(
             "settings": spec.settings_with(&prefs.settings),
             "snyvi": VERSION,
         });
-        let (app, gate, running, fails, spec, folder, path) = (
+        let (app, gate, running, fails, spec, folder, path, owner, by) = (
             app.clone(),
             gate.clone(),
             r.running.clone(),
@@ -280,11 +327,22 @@ fn start_seats(
             spec.clone(),
             f.folder.clone(),
             path.to_string(),
+            who.owner,
+            who.by.to_string(),
         );
         tokio::spawn(async move {
             let _held = gate.acquire_owned().await;
             let out = run_once(&spec, &folder, &cwd, &path, &stdin).await;
-            land(&app, desk, &spec, &cwd, &fails, out);
+            let who = Who {
+                spec: &spec,
+                owner,
+                by: &by,
+            };
+            // Removed, or moved, while it ran: what it printed has no seat
+            // to go to, and the next round runs it where it is now.
+            if folder.is_dir() {
+                land(&app, desk, &who, &cwd, &fails, out);
+            }
             running.lock().unwrap().remove(&(desk, spec.name.clone()));
         });
     }
@@ -293,40 +351,104 @@ fn start_seats(
 /// A folder's hash, read again only when a file in it was touched.
 fn folder_hash(r: &mut Runner, f: &files::Found) -> Result<String, String> {
     let stamp = files::stamp(&f.folder).unwrap_or_default();
-    match r.hashes.get(&f.name).filter(|(s, _)| *s == stamp) {
+    let key = f.key();
+    match r.hashes.get(&key).filter(|(s, _)| *s == stamp) {
         Some((_, h)) => h.clone(),
         None => {
             let h = files::hash(&f.folder);
-            r.hashes.insert(f.name.clone(), (stamp, h.clone()));
+            r.hashes.insert(key, (stamp, h.clone()));
             h
         }
     }
 }
 
 /// A line in a seat instead of a run: said once, until it changes.
-fn say(app: &Arc<App>, r: &mut Runner, desk: i64, spec: &files::Spec, why: &str) {
-    let key = (desk, spec.name.clone());
-    if r.said.get(&key).is_some_and(|w| w == why) {
+fn say(app: &Arc<App>, r: &mut Runner, desk: i64, who: &Who, why: &str) {
+    let name = &who.spec.name;
+    let key = (desk, name.clone());
+    // Said already, and its box still says it. A box taken away meanwhile
+    // -- removed, and put back by Undo -- is said to again.
+    let still = || {
+        app.store
+            .clocked(|c, _| widget::seat_of(c, desk, name))
+            .ok()
+            .flatten()
+            .is_some()
+    };
+    if r.said.get(&key).is_some_and(|w| w == why) && still() {
         return;
     }
     r.said.insert(key, why.to_string());
-    let every = widget::every_words(spec.run.every);
     if app
         .store
-        .clocked(|c, now| widget::fail(c, desk, &spec.name, why, &file_writer(spec, &every), now))
+        .clocked(|c, now| widget::fail(c, desk, name, why, &file_writer(who), now))
         .is_ok()
     {
-        announce(app, desk, &spec.name);
+        announce(app, desk, name);
     }
 }
 
-/// A widget file as its seat's writer: how often it runs, under its title.
-fn file_writer<'a>(spec: &'a files::Spec, every: &'a str) -> widget::Writer<'a> {
+/// A widget file as its seat's writer: its by-line, its title's tip, for
+/// the desk it belongs to.
+fn file_writer<'a>(who: &'a Who) -> widget::Writer<'a> {
     widget::Writer {
         source: widget::Source::File,
-        writer: every,
+        writer: who.by,
         pane: "",
-        title: &spec.title,
+        title: &who.spec.title,
+        owner: who.owner,
+    }
+}
+
+/// Once, at start: each widget 1.32 marked as on one desk alone
+/// (`widget::OWNER_1_32`) moves into that desk's folder and is its own
+/// from now on, allowed as it was -- the hash is of what is in the folder,
+/// not where. One that cannot move -- gone, global, its desk closed, the
+/// name taken there, the rename refused -- stays shared, as it was, and the
+/// log says why.
+fn adopt(app: &Arc<App>) {
+    let Ok(marked) = app.store.clocked(|c, _| widget::to_adopt(c)) else {
+        return;
+    };
+    let open = app.store.desks().unwrap_or_default();
+    let cfg = &app.paths.config_dir;
+    for (name, desk) in marked {
+        let from = files::folder_of(cfg, 0, &name);
+        let to = files::folder_of(cfg, desk, &name);
+        let why = match files::read(&from, &name) {
+            Err(why) => Some(why),
+            Ok(s) if s.scope == files::Scope::Global => Some("it is global".into()),
+            Ok(_) if !open.iter().any(|d| d.id == desk) => Some(format!("desk {desk} is closed")),
+            Ok(_) if to.exists() => Some(format!("desk {desk} has one of that name")),
+            Ok(_) => std::fs::create_dir_all(files::owned_dir(cfg, desk))
+                .and_then(|_| std::fs::rename(&from, &to))
+                .err()
+                .map(|e| e.to_string()),
+        };
+        let r = app.store.clocked(|c, _| match &why {
+            None => widget::adopted(c, &name, desk),
+            Some(_) => widget::stays_shared(c, &name, desk),
+        });
+        match (&why, r) {
+            (None, Ok(())) => {
+                let desk_name = open
+                    .iter()
+                    .find(|d| d.id == desk)
+                    .map_or("", |d| d.name.as_str());
+                eprintln!("snyvi: moved widget {name} to desk {desk} ({desk_name}): it is that desk's own now");
+                announce(app, desk, &name);
+            }
+            (Some(why), _) => eprintln!("snyvi: widget {name} stays shared: {why}"),
+            (None, Err(e)) => {
+                // The folder moved but the record did not: put it back, so
+                // the widget is as it was.
+                let _ = std::fs::rename(&to, &from);
+                let _ = app
+                    .store
+                    .clocked(|c, _| widget::stays_shared(c, &name, desk));
+                eprintln!("snyvi: widget {name} stays shared: {e}");
+            }
+        }
     }
 }
 
@@ -470,7 +592,8 @@ fn stop_group(pid: Option<u32>) {
 /// the last good body. The `FAILS_TO_STOP`th failure in a row for the same
 /// reason stops it on this desk, says where it ran, and tells the agent that
 /// proposed it.
-fn land(app: &Arc<App>, desk: i64, spec: &files::Spec, cwd: &Path, fails: &Fails, ran: Ran) {
+fn land(app: &Arc<App>, desk: i64, who: &Who, cwd: &Path, fails: &Fails, ran: Ran) {
+    let spec = who.spec;
     let key = (desk, spec.name.clone());
     let ran = match ran {
         Ran::Printed(out) => match widget::Body::parse(&out) {
@@ -502,17 +625,16 @@ fn land(app: &Arc<App>, desk: i64, spec: &files::Spec, cwd: &Path, fails: &Fails
                      Fix it, and the reader's Try again on its box runs it again.",
                     spec.name
                 );
-                let _ = app
-                    .store
-                    .clocked(|c, _| crate::thread::tell_widget(c, &spec.name, &note).map(|_| ()));
+                let _ = app.store.clocked(|c, _| {
+                    crate::thread::tell_widget(c, who.owner, &spec.name, &note).map(|_| ())
+                });
                 Ran::Failed(line)
             } else {
                 Ran::Failed(why)
             }
         }
     };
-    let every = widget::every_words(spec.run.every);
-    let w = file_writer(spec, &every);
+    let w = file_writer(who);
     let wrote = match ran {
         Ran::Failed(why) => app
             .store

@@ -129,11 +129,12 @@ it to snyvi before you start (a plan you present for approval is sent for you). 
 name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan and mark it \
 planned with the plan's id, mark it working as you start, and tick it only when its work is finished and you have \
 checked it. Never act on a note unasked. \
-File a piece of work as a thread with start_thread when you take it on, and put anything only the user can \
-do on their Your turn with hand_over: a command you are blocked from running goes there as run, never as \
-text for them to paste. When you need the user to decide something before you go on, put it on their Your \
-turn with ask (several at once as its questions), or in your own question tool when they are at this panel, \
-never only as a list in your reply. \
+File a piece of work as a thread with start_thread when you take it on. Put on their Your turn with \
+hand_over only what blocks you and only they can do: a command you are blocked from running goes there as \
+run, never as text for them to paste; a key; a merge. Asking them to try a change goes in your reply. When \
+you need the user to decide something before you go on, put it on their Your turn with ask (several at once \
+as its questions), or in your own question tool when they are at this panel, never only as a list in your \
+reply. \
 An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
 away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
@@ -646,7 +647,7 @@ fn leave_off_spec() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "text": { "type": "string", "description": "One sentence, at most 200 characters: the next step and its condition." },
+                "text": { "type": "string", "description": "One short sentence, best under 80 characters (at most 200): the next step and its condition. The desk's head shows about 40." },
                 "about": { "type": "string", "description": "Optional id of a document sent with send_document that the next step is written up in." }
             },
             "required": ["text"],
@@ -1108,6 +1109,10 @@ mod tests {
         assert!(instructions(true).contains("as run, never as"));
         // #110: a decision goes on Your turn, not only into the reply.
         assert!(instructions(true).contains("with ask (several at once"));
+        // Your turn is what blocks the agent, not a "try it" the reader is
+        // sitting in front of (audit e467fa057a).
+        assert!(instructions(true).contains("hand_over only what blocks you"));
+        assert!(instructions(true).contains("try a change goes in your reply"));
     }
 
     /// Four prompts; the two that use a desk's tools only in a panel, and an

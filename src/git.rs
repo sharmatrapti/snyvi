@@ -229,6 +229,53 @@ pub fn print(root: &Path) -> Option<Print> {
     (repo.is_some() || remote.is_some()).then_some(Print { repo, remote })
 }
 
+/// The merge that brought `branch` into the main line, and its time: the
+/// thread whose PR was merged on GitHub, or from another checkout, where no
+/// panel's mod saw it (audit 7c0fc42885). A merge commit counts only when the
+/// branch's tip is one of its later parents, the side that was merged in, so
+/// a branch made and never committed to -- its tip a commit main already had
+/// -- is not taken for merged. A squash leaves no such commit and is missed,
+/// which leaves the thread where it was. Blocking, through `run`; the branch
+/// is `thread::branch_ok`'s, so it is never an option to git.
+pub fn merge_of(root: &Path, branch: &str) -> Option<(String, i64)> {
+    let main = ["origin/main", "main", "origin/master", "master"]
+        .into_iter()
+        .find(|m| run(root, &["rev-parse", "--verify", "-q", m]).is_some())?;
+    // The local branch and the pushed one: either may be the tip that went
+    // in, when one was moved after the merge or never caught up.
+    [branch.to_string(), format!("origin/{branch}")]
+        .iter()
+        .find_map(|b| {
+            let tip = run(
+                root,
+                &["rev-parse", "--verify", "-q", &format!("{b}^{{commit}}")],
+            )?;
+            let tip = tip.trim();
+            let out = run(
+                root,
+                &[
+                    "log",
+                    "--merges",
+                    "-n500",
+                    "--format=%H %ct %P",
+                    &format!("{tip}..{main}"),
+                ],
+            )?;
+            merge_line(&out, tip)
+        })
+}
+
+/// The oldest line of `git log --merges --format="%H %ct %P"` with `tip`
+/// among its later parents: the merge that took the branch in, rather than
+/// one that merged main back into it after.
+fn merge_line(out: &str, tip: &str) -> Option<(String, i64)> {
+    out.lines().rev().find_map(|l| {
+        let mut f = l.split_whitespace();
+        let (sha, at) = (f.next()?, f.next()?.parse().ok()?);
+        f.skip(1).any(|p| p == tip).then(|| (sha.to_string(), at))
+    })
+}
+
 /// `git rev-list --max-parents=0 HEAD`, one hash a line, as one print: sorted,
 /// so the order git walks them in does not matter.
 fn roots_print(out: &str) -> Option<String> {
@@ -546,6 +593,50 @@ mod tests {
             print(&b).and_then(|p| p.remote),
             Some(remote_print("https://github.com/o/r"))
         );
+    }
+
+    #[test]
+    fn a_merged_branch_is_found_and_a_new_one_is_not() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-git-merge");
+        let r = &dir.path;
+        let git = |args: &[&str]| {
+            let mut a = vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ];
+            a.extend_from_slice(args);
+            run(r, &a).is_some()
+        };
+        if !git(&["init", "-q", "-b", "main"]) {
+            return; // no git here
+        }
+        assert!(git(&["commit", "-q", "--allow-empty", "-m", "one"]));
+        assert!(git(&["branch", "fresh"]));
+        assert!(git(&["checkout", "-q", "-b", "work"]));
+        assert!(git(&["commit", "-q", "--allow-empty", "-m", "the work"]));
+        assert!(git(&["checkout", "-q", "main"]));
+        assert_eq!(merge_of(r, "work"), None, "not merged yet");
+        assert!(git(&["merge", "-q", "--no-ff", "-m", "Merge work", "work"]));
+        let merged = merge_of(r, "work").expect("the merge is found");
+        assert_eq!(
+            Some(merged.0.trim()),
+            run(r, &["rev-parse", "HEAD"]).as_deref().map(str::trim)
+        );
+        // Made and never committed to: its tip is main's own first parent.
+        assert_eq!(merge_of(r, "fresh"), None);
+        assert_eq!(merge_of(r, "gone"), None);
+    }
+
+    #[test]
+    fn the_merge_is_the_one_that_took_the_tip_in() {
+        let log = "m3 30 m2 x\nm2 20 a1 tip\nm1 10 tip b1\n";
+        assert_eq!(merge_line(log, "tip"), Some(("m2".into(), 20)));
+        assert_eq!(merge_line("m1 10 tip b1\n", "tip"), None);
+        assert_eq!(merge_line("", "tip"), None);
     }
 
     #[test]

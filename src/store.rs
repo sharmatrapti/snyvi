@@ -65,6 +65,12 @@ pub struct TreeDoc {
     /// Its size in bytes, so the page can decide what a hover is allowed to
     /// fetch ahead of a click without asking.
     pub size: i64,
+    /// The friend who sent it, when one did: the row wears their initial,
+    /// filed into a folder of the reader's or under their own row (audit
+    /// 7c0fc42885: 4 of 5 of a friend's sat in the reader's project
+    /// looking like the reader's own).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub friend: String,
 }
 
 /// A document as the desk's rail lists it: what a pane on this desk sent,
@@ -544,6 +550,13 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (16, thread::SUGGEST_COLUMNS_1_30[1]),
     (16, thread::SUGGEST_COLUMNS_1_30[2]),
     (17, widget::TITLE_COLUMN_1_31), // 1.31: a widget file's own title (#112)
+    // 1.32: a widget file belongs to a desk, or is shared; prefs by owner
+    // and name, and a seat says whose it is (`widget::OWNER_1_32`).
+    (18, widget::OWNER_1_32[0]),
+    (18, widget::OWNER_1_32[1]),
+    (18, widget::OWNER_1_32[2]),
+    (18, widget::OWNER_1_32[3]),
+    (18, widget::OWNER_1_32[4]),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
@@ -1172,87 +1185,6 @@ impl Store {
         )? > 0)
     }
 
-    /// What arrived and has not been opened, oldest first: the order things
-    /// came in is the order to read them in. Every insert joins it and every
-    /// open leaves it, so it is the unread set with an order and nothing more.
-    pub fn queue(&self, limit: usize) -> Result<Vec<Doc>> {
-        let conn = self.conn.lock().unwrap();
-        let rows = conn
-            .prepare(&format!(
-                "SELECT {DOC_COLS} {HEAD_FROM} WHERE d.unread = 1 ORDER BY d.received_at, d.rowid LIMIT ?1"
-            ))?
-            .query_map(params![limit as i64], row_to_doc)?
-            .collect::<std::result::Result<_, _>>()?;
-        Ok(rows)
-    }
-
-    /// The newest documents still unread, newest first: Home's Arrived,
-    /// which reads what came last, where the queue reads oldest first.
-    pub fn newest_unread(&self, limit: usize) -> Result<Vec<Doc>> {
-        let conn = self.conn.lock().unwrap();
-        let rows = conn
-            .prepare(&format!(
-                "SELECT {DOC_COLS} {HEAD_FROM} WHERE d.unread = 1 ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?1"
-            ))?
-            .query_map(params![limit as i64], row_to_doc)?
-            .collect::<std::result::Result<_, _>>()?;
-        Ok(rows)
-    }
-
-    /// How many are on the queue: what the bar says, however many rows the
-    /// page was sent.
-    pub fn waiting(&self) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
-        Ok(
-            conn.query_row("SELECT COUNT(*) FROM head_docs WHERE unread = 1", [], |r| {
-                r.get(0)
-            })?,
-        )
-    }
-
-    /// A document was opened. True when this is what took it off the queue.
-    pub fn mark_read(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        Ok(conn.execute(
-            "UPDATE docs SET unread = 0 WHERE id = ?1 AND unread = 1",
-            params![id],
-        )? > 0)
-    }
-
-    /// Everything waiting, marked read without being opened. Returns what
-    /// left the queue, so every open tab can take the same rows off.
-    pub fn mark_all_read(&self) -> Result<Vec<String>> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction()?;
-        let ids: Vec<String> = tx
-            .prepare("SELECT id FROM head_docs WHERE unread = 1")?
-            .query_map([], |r| r.get(0))?
-            .collect::<std::result::Result<_, _>>()?;
-        tx.execute("UPDATE docs SET unread = 0 WHERE unread = 1", [])?;
-        tx.commit()?;
-        Ok(ids)
-    }
-
-    /// Mark all read, taken back: the ids it returned go back on the queue,
-    /// except one removed since, which has no row to wait in. Returns the
-    /// ones that went back.
-    pub fn mark_unread(&self, ids: &[String]) -> Result<Vec<String>> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction()?;
-        let mut back = Vec::new();
-        for id in ids {
-            if tx.execute(
-                "UPDATE docs SET unread = 1 WHERE id = ?1 AND unread = 0 AND deleted_at = 0",
-                params![id],
-            )? > 0
-            {
-                back.push(id.clone());
-            }
-        }
-        tx.commit()?;
-        Ok(back)
-    }
-
     /// Name a project yourself. The directory it was derived from is its identity and
     /// does not move, so sends keep landing here; `renamed` stops the derived name
     /// from reclaiming the label on the next one.
@@ -1609,7 +1541,8 @@ impl Store {
             })?
             .collect::<std::result::Result<_, _>>()?;
         let mut doc_stmt = conn.prepare(
-            "SELECT id, title, kind, received_at, pinned, unread, size FROM head_docs
+            "SELECT id, title, kind, received_at, pinned, unread, size,
+                    CASE WHEN origin = 'peer' THEN sender ELSE '' END FROM head_docs
              WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC LIMIT ?2",
         )?;
         for w in &mut wfs {
@@ -1647,7 +1580,8 @@ impl Store {
         };
         w.docs = conn
             .prepare(
-                "SELECT id, title, kind, received_at, pinned, unread, size FROM head_docs
+                "SELECT id, title, kind, received_at, pinned, unread, size,
+                    CASE WHEN origin = 'peer' THEN sender ELSE '' END FROM head_docs
                  WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC",
             )?
             .query_map(params![workflow_id], row_to_tree_doc)?
@@ -2351,7 +2285,7 @@ pub struct Census {
     pub desks: i64,
 }
 
-/// A tree row, which is the six columns of a document the sidebar draws and
+/// A tree row, which is the columns of a document the sidebar draws and
 /// none of the rest. Shared by the two queries that return them.
 fn row_to_tree_doc(r: &rusqlite::Row) -> rusqlite::Result<TreeDoc> {
     Ok(TreeDoc {
@@ -2362,6 +2296,7 @@ fn row_to_tree_doc(r: &rusqlite::Row) -> rusqlite::Result<TreeDoc> {
         pinned: r.get::<_, i64>(4)? != 0,
         unread: r.get::<_, i64>(5)? != 0,
         size: r.get(6)?,
+        friend: r.get(7)?,
     })
 }
 
@@ -2460,6 +2395,7 @@ pub fn new_id(hash: &str) -> String {
 }
 
 mod keys;
+mod queue;
 mod talk;
 pub use keys::Held;
 use talk::local_path;

@@ -52,11 +52,13 @@ pub(crate) async fn list_widgets(State(app): S) -> Response {
         let layout = widget::layout(c)?;
         let mut files = Vec::new();
         for f in &found {
-            let p = widget::prefs(c, &f.name)?;
+            let p = widget::prefs(c, f.owner, &f.name)?;
             let hash = widget::files::hash(&f.folder);
+            let owner_desk = desks.iter().find(|d| d.id == f.owner).map(|d| d.name.clone());
             files.push(match &f.spec {
                 Ok(s) => json!({
-                    "name": f.name, "title": s.title, "scope": s.scope, "command": s.run.command,
+                    "name": f.name, "owner": f.owner, "owner_desk": owner_desk,
+                    "title": s.title, "scope": s.scope, "command": s.run.command,
                     "every": s.run.every, "folder": f.folder, "lines": s.lines,
                     "allowed": !p.trusted_hash.is_empty() && hash.as_deref().ok() == Some(p.trusted_hash.as_str()),
                     "changed": !p.trusted_hash.is_empty() && hash.as_deref().ok() != Some(p.trusted_hash.as_str()),
@@ -64,7 +66,7 @@ pub(crate) async fn list_widgets(State(app): S) -> Response {
                     "fields": s.settings, "settings": s.settings_with(&p.settings),
                     "desks": p.desks, "until": p.until, "until_pane": p.until_pane,
                 }),
-                Err(why) => json!({ "name": f.name, "folder": f.folder, "error": why, "hidden": p.hidden }),
+                Err(why) => json!({ "name": f.name, "owner": f.owner, "owner_desk": owner_desk, "folder": f.folder, "error": why, "hidden": p.hidden }),
             });
         }
         let mut pushed = Vec::new();
@@ -72,7 +74,7 @@ pub(crate) async fn list_widgets(State(app): S) -> Response {
             for s in widget::seats(c, d)? {
                 if s.source == "push" {
                     let desk = desks.iter().find(|x| x.id == d).map(|x| x.name.clone());
-                    pushed.push(json!({ "name": s.name, "desk_id": d, "desk": desk, "writer": s.writer, "updated_at": s.updated_at, "hidden": s.hidden }));
+                    pushed.push(json!({ "name": s.name, "desk_id": d, "desk": desk, "writer": s.writer, "updated_at": s.updated_at, "hidden": s.hidden, "agent": s.agent }));
                 }
             }
         }
@@ -164,6 +166,7 @@ pub(crate) async fn pane_set_widget(
         writer: &writer,
         pane: &id,
         title: "",
+        owner: 0,
     };
     let desk = placed.desk_id;
     if !widget::name_ok(&b.name) {
@@ -183,6 +186,15 @@ pub(crate) async fn pane_set_widget(
             StatusCode::CONFLICT,
             format!(
                 "the user said not now to the box {} on this desk: leave it, or say in your reply why it would help",
+                b.name
+            ),
+        ),
+        // Removed by the reader: the panel that pushed it is told so; a
+        // new panel asks again, with a card.
+        Ok(Some(a)) if a.answer == "removed" && a.pane == id => refused(
+            StatusCode::CONFLICT,
+            format!(
+                "the user removed the box {} from this desk: leave it removed unless they ask for it",
                 b.name
             ),
         ),
@@ -289,6 +301,7 @@ pub(crate) async fn set_widget(State(app): S, headers: HeaderMap, body: Bytes) -
         writer: &writer,
         pane: "",
         title: "",
+        owner: 0,
     };
     push(&app, desk, &b.name, &b.raw(), &w)
 }
@@ -420,15 +433,15 @@ pub(crate) fn pane_widgets_ended(app: &Arc<App>, pane: &str, slot: Option<i64>) 
             widget::clear(c, *d, n, widget::Source::Push)?;
         }
         for f in &found {
-            let p = widget::prefs(c, &f.name)?;
+            let p = widget::prefs(c, f.owner, &f.name)?;
             if p.until_pane == pane && !p.hidden {
                 let off = widget::Change {
                     hidden: Some(true),
                     ..Default::default()
                 };
-                widget::set_prefs(c, &f.name, &off, now)?;
+                widget::set_prefs(c, f.owner, &f.name, &off, now)?;
                 s.extend(
-                    widget::desks_of(c, &f.name)?
+                    widget::desks_of(c, f.owner, &f.name)?
                         .into_iter()
                         .map(|d| (d, f.name.clone())),
                 );
@@ -454,6 +467,8 @@ pub(crate) struct AllowBody {
     /// switch alone.
     allow: bool,
     rerun_edits: Option<bool>,
+    /// The desk the widget belongs to; 0 for a shared or global one.
+    owner: i64,
 }
 
 impl Default for AllowBody {
@@ -461,6 +476,7 @@ impl Default for AllowBody {
         AllowBody {
             allow: true,
             rerun_edits: None,
+            owner: 0,
         }
     }
 }
@@ -483,7 +499,7 @@ pub(crate) async fn allow_widget(
         return StatusCode::NOT_FOUND.into_response();
     }
     let b: AllowBody = serde_json::from_slice(&body).unwrap_or_default();
-    let folder = widget::files::dir(&app.paths.config_dir).join(&name);
+    let folder = widget::files::folder_of(&app.paths.config_dir, b.owner, &name);
     let spec = match widget::files::read(&folder, &name) {
         Ok(s) => s,
         Err(why) => return refused(StatusCode::NOT_FOUND, why),
@@ -507,9 +523,9 @@ pub(crate) async fn allow_widget(
         ..Default::default()
     };
     match app.store.clocked(|c, now| {
-        let p = widget::set_prefs(c, &name, &ch, now)?;
+        let p = widget::set_prefs(c, b.owner, &name, &ch, now)?;
         let ds = if b.allow {
-            widget::unstop(c, &name, None)?
+            widget::unstop(c, b.owner, &name, None)?
         } else {
             Vec::new()
         };
@@ -529,6 +545,8 @@ pub(crate) async fn allow_widget(
 #[serde(default)]
 pub(crate) struct RetryBody {
     desk: Option<i64>,
+    /// The desk the widget belongs to; 0 for a shared one.
+    owner: i64,
 }
 
 /// Try again, on a widget file that stopped after failing: it runs at the
@@ -546,7 +564,10 @@ pub(crate) async fn retry_widget(
         return StatusCode::NOT_FOUND.into_response();
     }
     let b: RetryBody = serde_json::from_slice(&body).unwrap_or_default();
-    match app.store.clocked(|c, _| widget::unstop(c, &name, b.desk)) {
+    match app
+        .store
+        .clocked(|c, _| widget::unstop(c, b.owner, &name, b.desk))
+    {
         Ok(ds) => {
             for d in &ds {
                 announce(&app, *d, &name);
@@ -589,7 +610,7 @@ pub(crate) async fn tell_widget(
             "The reader asks you to fix your widget {name}: its box says \"{why}\". \
              Fix it in its folder; the box runs it again once it changes."
         );
-        crate::thread::tell_widget(c, &name, &note).map(Some)
+        crate::thread::tell_widget(c, seat.owner, &name, &note).map(Some)
     });
     match told {
         Ok(None) => refused(StatusCode::CONFLICT, "nothing to tell: it has not failed"),
@@ -613,11 +634,21 @@ pub(crate) struct PrefsBody {
     /// whose life it lasts.
     until: Option<i64>,
     until_pane: Option<String>,
+    /// The desk the widget belongs to; 0 for a shared or global one.
+    owner: i64,
+    /// Share a desk's own widget: it moves out of the desk's folder, and is
+    /// on that desk alone until the reader ticks more.
+    share: bool,
+    /// Make a shared widget this desk's own: it moves into the desk's
+    /// folder, and leaves the other desks.
+    keep_here: Option<i64>,
 }
 
 /// Switch a widget off or on, change its settings, the desks it is on, or
 /// how long it lasts: the reader's, from /sidebars and its box's menu. Its
-/// seats say so to every page. Off the last desk it was on is off.
+/// seats say so to every page. Off the last desk it was on is off. A desk's
+/// own widget is on its desk alone: the desks are not its to change, and
+/// off its desk is off.
 pub(crate) async fn widget_prefs(
     State(app): S,
     headers: HeaderMap,
@@ -633,6 +664,13 @@ pub(crate) async fn widget_prefs(
     let Ok(b) = serde_json::from_slice::<PrefsBody>(&body) else {
         return refused(StatusCode::BAD_REQUEST, "not a widget's settings");
     };
+    if b.share && b.owner != 0 {
+        return rehome_widget(&app, &name, b.owner, 0);
+    }
+    if let (Some(d), 0) = (b.keep_here, b.owner) {
+        return rehome_widget(&app, &name, 0, d);
+    }
+    let owner = b.owner;
     let settings = b.settings.map(|m| serde_json::Value::Object(m).to_string());
     let open: Vec<i64> = app
         .store
@@ -642,10 +680,16 @@ pub(crate) async fn widget_prefs(
         .map(|d| d.id)
         .collect();
     let r = app.store.clocked(|c, now| {
-        let was = widget::prefs(c, &name)?;
-        let before = widget::desks_of(c, &name)?;
+        let was = widget::prefs(c, owner, &name)?;
+        let before = widget::desks_of(c, owner, &name)?;
         let mut hidden = b.hidden;
         let desks: Option<Vec<i64>> = match (b.only_desk, b.not_desk, &b.desks) {
+            _ if owner != 0 => {
+                if b.not_desk == Some(owner) {
+                    hidden = Some(true);
+                }
+                None
+            }
             (Some(d), _, _) => Some(vec![d]),
             (_, Some(d), _) => {
                 let from = if was.desks.is_empty() {
@@ -677,8 +721,12 @@ pub(crate) async fn widget_prefs(
             until_pane,
             ..Default::default()
         };
-        let p = widget::set_prefs(c, &name, &ch, now)?;
-        let off = widget::off_desks(c, &name, &p.desks)?;
+        let p = widget::set_prefs(c, owner, &name, &ch, now)?;
+        let off = if owner == 0 {
+            widget::off_desks(c, &name, &p.desks)?
+        } else {
+            Vec::new()
+        };
         let mut told = before;
         for d in off {
             if !told.contains(&d) {
@@ -698,6 +746,200 @@ pub(crate) async fn widget_prefs(
     }
 }
 
+/// Share a desk's own widget (`to` 0), or make a shared one a desk's own:
+/// its folder moves, and what the reader decided -- allowed, settings, how
+/// long -- goes with it. Shared, it is on the desk it came from and no
+/// other until the reader ticks more, so nothing runs anywhere new; a
+/// desk's own, it leaves every other desk. A global widget is on no desk.
+fn rehome_widget(app: &Arc<App>, name: &str, from: i64, to: i64) -> Response {
+    let cfg = &app.paths.config_dir;
+    let (src, dst) = (
+        widget::files::folder_of(cfg, from, name),
+        widget::files::folder_of(cfg, to, name),
+    );
+    match widget::files::read(&src, name) {
+        Err(why) => return refused(StatusCode::NOT_FOUND, why),
+        Ok(s) if s.scope == widget::files::Scope::Global => {
+            return refused(
+                StatusCode::BAD_REQUEST,
+                "a global widget is on the left, not on a desk",
+            )
+        }
+        Ok(_) => {}
+    }
+    if to != 0
+        && !app
+            .store
+            .desks()
+            .map(|ds| ds.iter().any(|d| d.id == to))
+            .unwrap_or(false)
+    {
+        return refused(StatusCode::NOT_FOUND, format!("there is no desk {to}"));
+    }
+    if let Some(why) = widget::files::taken_moving(cfg, from, to, name) {
+        return refused(StatusCode::CONFLICT, why);
+    }
+    let moved = dst
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|_| std::fs::rename(&src, &dst));
+    if let Err(e) = moved {
+        return refused(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("could not move it: {e}"),
+        );
+    }
+    match app
+        .store
+        .clocked(|c, now| widget::rehome(c, name, from, to, now))
+    {
+        Ok(desks) => {
+            for d in desks.iter().chain((to != 0).then_some(&to)) {
+                announce(app, *d, name);
+            }
+            Json(json!({ "ok": true, "owner": to })).into_response()
+        }
+        Err(e) => {
+            // The record did not change: the folder goes back with it.
+            let _ = std::fs::rename(&dst, &src);
+            err(e)
+        }
+    }
+}
+
+// --- removing an agent's ----------------------------------------------------
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub(crate) struct RemoveBody {
+    /// The desk its box is on.
+    desk: i64,
+    /// The desk a widget file belongs to; 0 for a box a panel pushed.
+    owner: i64,
+    /// Undo's: the id its folder was kept under (`files::remove`).
+    from: String,
+}
+
+/// Remove an agent's widget, from its box's menu or /sidebars: a desk's own
+/// widget file moves to `widgets/.removed/` and the agent that proposed it
+/// is told; a box a panel pushed goes, and that panel's next push of it is
+/// refused. Nothing is deleted, and Undo (`restore_widget`) puts it back.
+/// The window's alone, as Allow is: an agent's token removes nothing. A
+/// shared or global widget file, and a script's box, are the reader's own
+/// and have Turn off.
+pub(crate) async fn remove_widget(
+    State(app): S,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    body: Bytes,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    if !widget::name_ok(&name) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let b: RemoveBody = serde_json::from_slice(&body).unwrap_or_default();
+    if b.owner == 0 {
+        return match app
+            .store
+            .clocked(|c, now| widget::remove_box(c, b.desk, &name, now))
+        {
+            Ok(true) => {
+                announce(&app, b.desk, &name);
+                Json(json!({ "ok": true })).into_response()
+            }
+            Ok(false) => refused(
+                StatusCode::CONFLICT,
+                "only a box an agent pushed can be removed: Turn off takes the rest out of view",
+            ),
+            Err(e) => err(e),
+        };
+    }
+    let cfg = &app.paths.config_dir;
+    let id = match widget::files::remove(cfg, b.owner, &name, crate::store::now()) {
+        Ok(id) => id,
+        Err(why) => return refused(StatusCode::NOT_FOUND, why),
+    };
+    let note = format!(
+        "The reader removed your widget {name} from this desk. Leave it removed: \
+         propose it again only if they ask for it."
+    );
+    let r = app.store.clocked(|c, _| {
+        let desks = widget::desks_of(c, b.owner, &name)?;
+        for d in &desks {
+            widget::clear(c, *d, &name, widget::Source::File)?;
+        }
+        crate::thread::tell_widget(c, b.owner, &name, &note)?;
+        Ok(desks)
+    });
+    match r {
+        Ok(desks) => {
+            for d in desks {
+                announce(&app, d, &name);
+            }
+            Json(json!({ "ok": true, "from": id })).into_response()
+        }
+        Err(e) => {
+            // The record did not change: the folder goes back with it.
+            let _ = widget::files::restore(cfg, &id, b.owner, &name);
+            err(e)
+        }
+    }
+}
+
+/// Undo a removal, within the moment its box offers it: a widget file's
+/// folder back where it was -- allowed as it was, since what the reader
+/// decided about it was kept -- or a box allowed again with what it last
+/// showed.
+pub(crate) async fn restore_widget(
+    State(app): S,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    body: Bytes,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    if !widget::name_ok(&name) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let b: RemoveBody = serde_json::from_slice(&body).unwrap_or_default();
+    if b.owner != 0 {
+        return match widget::files::restore(&app.paths.config_dir, &b.from, b.owner, &name) {
+            Ok(()) => Json(json!({ "ok": true })).into_response(),
+            Err(why) => refused(StatusCode::CONFLICT, why),
+        };
+    }
+    match app
+        .store
+        .clocked(|c, now| widget::restore_box(c, b.desk, &name, now))
+    {
+        Ok(Some(a)) => {
+            let pane = if app.panes.is_running(&a.pane) {
+                a.pane.as_str()
+            } else {
+                ""
+            };
+            let w = widget::Writer {
+                source: widget::Source::Push,
+                writer: &a.writer,
+                pane,
+                title: "",
+                owner: 0,
+            };
+            push(&app, b.desk, &name, &a.body, &w)
+        }
+        Ok(None) => refused(
+            StatusCode::CONFLICT,
+            format!("{name} was not removed from here"),
+        ),
+        Err(e) => err(e),
+    }
+}
+
 // --- an agent proposing one ----------------------------------------------------
 
 /// What `propose_widget` sends: a widget file, whole.
@@ -706,6 +948,9 @@ pub(crate) async fn widget_prefs(
 pub(crate) struct ProposeBody {
     name: String,
     title: String,
+    /// Before 1.32 an agent could ask for every desk or global; its widget
+    /// is its desk's now, and a scope sent is not read.
+    #[allow(dead_code)]
     scope: String,
     command: String,
     every: u64,
@@ -732,7 +977,8 @@ fn proposed_dir(app: &App) -> std::path::PathBuf {
 
 /// An agent proposes a widget: the folder is written where proposals wait,
 /// and the reader gets a card on Your turn -- Add, or Not now. Nothing runs
-/// and nothing is in the widgets folder until Add.
+/// and nothing is in the widgets folder until Add. It is for the agent's
+/// desk alone: sharing it is the reader's (1.32).
 pub(crate) async fn pane_propose_widget(
     State(app): S,
     headers: HeaderMap,
@@ -752,14 +998,8 @@ pub(crate) async fn pane_propose_widget(
             "a widget's name is lowercase letters, digits and dashes, at most 32",
         );
     }
-    if widget::files::dir(&app.paths.config_dir)
-        .join(&b.name)
-        .exists()
-    {
-        return refused(
-            StatusCode::CONFLICT,
-            format!("a widget called {} is already there", b.name),
-        );
+    if let Some(why) = widget::files::taken(&app.paths.config_dir, placed.desk_id, &b.name) {
+        return refused(StatusCode::CONFLICT, why);
     }
     let command = b.command.trim();
     if command.is_empty() || command.contains('\n') {
@@ -775,17 +1015,12 @@ pub(crate) async fn pane_propose_widget(
             "the script is one file of at most 16 KB, named without a folder",
         );
     }
-    // Where it goes: this desk alone, unless the agent asks for every desk
-    // and the card says so; or the left, everywhere.
-    let place = match b.scope.trim() {
-        "global" => "global",
-        "every desk" | "every" | "all" | "all desks" => "every",
-        _ => "here",
-    };
+    // Where it goes: this desk, alone.
+    let place = "here";
     let spec = json!({
         "name": b.name,
         "title": b.title.trim(),
-        "scope": if place == "global" { "global" } else { "desk" },
+        "scope": "desk",
         "run": { "command": command, "every": if b.every == 0 { widget::files::EVERY_DEFAULT } else { b.every }, "timeout": if b.timeout == 0 { widget::files::TIMEOUT_DEFAULT } else { b.timeout } },
         "lines": if b.lines == 0 { widget::LINES_DEFAULT } else { b.lines },
     });
@@ -878,9 +1113,10 @@ pub(crate) struct Lasts {
     pub(crate) until_pane: String,
 }
 
-/// The reader added a proposed widget: its folder moves in with the rest,
-/// allowed as it is, on the desk the card was on unless the card said every
-/// desk, for as long as the reader chose. Refused if a widget took the name
+/// The reader added a proposed widget: its folder moves into the folder of
+/// the desk the card was on, allowed as it is, that desk's own, for as long
+/// as the reader chose. A card from before 1.32 that said every desk, or
+/// global, is shared as it said. Refused if a widget took the name
 /// meanwhile.
 pub(crate) fn install_proposed(
     app: &App,
@@ -892,20 +1128,22 @@ pub(crate) fn install_proposed(
     if !stage.starts_with(proposed_dir(app)) || !stage.is_dir() {
         return Err("the proposal is not there any more".into());
     }
-    let to = widget::files::dir(&app.paths.config_dir).join(name);
-    if to.exists() {
-        return Err(format!("a widget called {name} is already there"));
-    }
     let spec = widget::files::read(&stage, name)?;
     widget::files::lint(&spec, &stage)?;
-    std::fs::rename(&stage, &to).map_err(|e| format!("could not move it in: {e}"))?;
+    let shared = spec.scope == widget::files::Scope::Global
+        || card.detail.get("where").and_then(|w| w.as_str()) != Some("here");
+    let owner = if shared { 0 } else { card.desk_id };
+    let cfg = &app.paths.config_dir;
+    if let Some(why) = widget::files::taken(cfg, owner, name) {
+        return Err(why);
+    }
+    let to = widget::files::folder_of(cfg, owner, name);
+    to.parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|_| std::fs::rename(&stage, &to))
+        .map_err(|e| format!("could not move it in: {e}"))?;
     let hash = widget::files::hash(&to)?;
-    let every = card.detail.get("where").and_then(|w| w.as_str()) != Some("here");
-    let desks: Vec<i64> = if every {
-        Vec::new()
-    } else {
-        vec![card.desk_id]
-    };
+    let desks: Vec<i64> = Vec::new();
     let ch = widget::Change {
         hidden: Some(false),
         trusted_hash: Some(&hash),
@@ -915,7 +1153,7 @@ pub(crate) fn install_proposed(
         ..Default::default()
     };
     app.store
-        .clocked(|c, now| widget::set_prefs(c, name, &ch, now))
+        .clocked(|c, now| widget::set_prefs(c, owner, name, &ch, now))
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
@@ -953,6 +1191,7 @@ pub(crate) fn allow_box(
         writer: &ask.writer,
         pane: &ask.pane,
         title: "",
+        owner: 0,
     };
     let r = push(app, desk, name, &ask.body, &w);
     if r.status().is_success() {

@@ -14,13 +14,15 @@ widget file snyvi runs on a timer.
 | Side | Sections, in today's order |
 |---|---|
 | Left, on every page | Inbox · Desks · Folders · Widgets (the global ones) |
-| Right, on a desk | **Your turn** (fixed) · Panels · Points · Documents · Notes · Widgets (this desk's) |
+| Right, on a desk | Panels · Points · Documents · Notes · Widgets (this desk's) |
 
 - Drag a row on `/sidebars`, or move it with Alt+↑ ↓. Each change is saved
   as you make it, and the sidebars move with it, in every window.
 - A switch turns a section off. Off is not gone: it stays on the list, and
   the same switch brings it back. **Reset to default** brings back today's.
-- Your turn is always first on the right and can't be turned off or folded.
+- Your turn and Suggested aren't on the right since 1.32: they wait in the
+  desk's bottom-right corner, behind its **On you** pill, so an agent's
+  card to allow a box or add a widget is there.
 - Every section folds from its head, and a folded head keeps its count.
   Folds are per browser; the layout is the daemon's.
 
@@ -30,7 +32,17 @@ widget file snyvi runs on a timer.
 |---|---|---|
 | MCP `set_widget` | an agent in a desk's panel, **after your yes** on Your turn | on that desk until cleared, or for as long as you said on the card; dims after `stale_after` (30 min), and says "panel 2 closed" when its panel closes |
 | `snyvi widget set` | scripts, git hooks, cron, CI | until cleared; on a desk with `--desk ID`, global otherwise (or the panel's desk, run inside one) |
-| a widget file | you, or an agent through `propose_widget` (a card, Add) | while it is switched on, on the desks you chose, for as long as you chose; run while it is in view |
+| a widget file | you, or an agent through `propose_widget` (a card, Add) | while it is switched on, on its desk (or the desks you shared it with), for as long as you chose; run while it is in view |
+
+**What an agent may make one for** (1.32): only when you asked, and only for
+a figure that changes by itself and that you'd otherwise go and check (CI
+3/5 green, a deploy running, a dev server up), as a count and one short
+line. Not a to-do of yours (that's `hand_over`, on Your turn), not how to do
+something (the agent's reply), not news (a document), and not what changes
+only when you act.
+
+A box is its name, its count and its body. Who writes it, and how often,
+is the name's tip.
 
 All three send the same thing: **Markdown**, or **one JSON object**:
 
@@ -59,10 +71,28 @@ snyvi widget clear backups
 ## A widget file
 
 ```
-~/.config/snyvi/widgets/git/
-  widget.json
-  run.sh
+~/.config/snyvi/widgets/
+  git/            shared: on the desks you tick, or every desk
+    widget.json
+    run.sh
+  disk-free/      global: on the left
+  @7/             desk 7's own
+    arena/          runs on desk 7 alone
+      widget.json
+      arena-status.sh
 ```
+
+A widget file is one of three kinds:
+
+| Kind | Who makes it | Folder | Runs |
+|---|---|---|---|
+| **A desk's own** | an agent's card you Add, or `snyvi widget new` inside a panel | `widgets/@<desk id>/<name>/` | on that desk alone, in its folder |
+| **Shared** | you (`snyvi widget new --shared`, or **Share with other desks…**) | `widgets/<name>/` | on the desks you tick on `/sidebars`; none ticked is every desk |
+| **Global** | you (`snyvi widget new --global`) | `widgets/<name>/`, `"scope": "global"` | on the left, in its own folder |
+
+The desk is named by its id, so renaming a desk keeps its widgets. A name is
+shared or a desk's own, never both: two desks may each have their own
+`status`, but then no shared widget can be called `status`.
 
 ```json
 {
@@ -90,11 +120,13 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
   "$(git branch --show-current)" "$ahead" "${base:-main}" "$tone" "$dirty"
 ```
 
-- `snyvi widget new git` writes a starter (`--global` for one on the left).
-  `snyvi widget check git` runs it once in your terminal and prints what
-  snyvi would draw, or why it wouldn't.
-- **scope** `desk` runs it in the folder of each desk on a page you can see,
-  on that desk's rail; `global` runs it in its own folder, on the left.
+- `snyvi widget new git` writes a starter: inside a panel it is that desk's
+  own, anywhere else shared (`--desk ID` for a desk's own from anywhere,
+  `--shared` or `--global` to say). `snyvi widget check git` runs it once in
+  your terminal and prints what snyvi would draw, or why it wouldn't.
+- **scope** `desk` runs it in the folder of each desk it is on, on that
+  desk's rail; `global` runs it in its own folder, on the left. A desk's own
+  widget can't be global.
 - **Name the script bare** in `command` (`run.sh`, not `./run.sh` or
   `sh run.sh`). Every run has the widget's own folder first on `PATH` and in
   `SNYVI_WIDGET_DIR`, so `run.sh` is found from any desk's folder, and
@@ -106,7 +138,8 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
   `number`, `choice` (with `choices`) or `boolean`. The run gets them on
   stdin. A widget never draws its own settings.
 - Its box's head is its **title**, and under it how often it runs and when
-  it last did ("every 2 min · now").
+  it last did ("every 2 min · now"). A shared one says where else it runs
+  first: "every desk · every 2 min", "3 desks · every 2 min".
 - A failure (a non-zero exit, a timeout, more than 4 KB, a body snyvi
   refuses) is a line in its seat, over the last good body, and the rest of
   the sidebar draws as ever. The line keeps two lines with **more** to
@@ -125,10 +158,16 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
 - **Only while in view.** A desk widget runs while a page you can see shows
   its desk; a global one while any page can be seen. A widget switched off,
   a run still going, and a desk with no folder don't run.
-- **On the desks you chose.** A desk widget is on every desk until you say
-  otherwise: its box's menu has **Only on this desk** and **Not on this
-  desk**, and `/sidebars` ticks the desks. One added from an agent's card is
-  on that desk only, unless the card said every desk.
+- **On its desk, or the desks you chose.** A desk's own widget runs on its
+  desk and nowhere else. Its box's menu has **Share with other desks…**,
+  which moves it out to `widgets/<name>/`, still on that desk alone, and
+  takes you to `/sidebars` to tick more. A shared one is on every desk until
+  you say otherwise: its box's menu has **Make it this desk's own** and **Not
+  on this desk**, and `/sidebars` ticks the desks. Either move keeps what you
+  allowed, its settings and how long it lasts.
+- **A closed desk's widgets rest with it**, and come back when it is
+  reopened. `snyvi prune` moves a pruned desk's to `widgets/.pruned/`, where
+  nothing runs and nothing is deleted.
 - **For as long as you chose.** Until you turn it off, **for today**, **for a
   week**, or (an agent's) **while its panel is open**. When the time is up it
   is switched off, not removed: `/sidebars` says when it ended, with **Turn
@@ -141,6 +180,34 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
 - Every `every` seconds (5 at least), for `timeout` seconds (30 at most),
   two at a time, 4 KB of output read. A timeout stops the whole process
   group, so nothing it started lives on.
+
+### Removing an agent's widget
+
+**Turn off** keeps a widget on `/sidebars`, ready to switch back on. An
+agent's widget you're done with can be **removed** instead: a desk's own
+widget file, or a box a panel pushed. **Remove** is last in its box's
+menu, and on its row on `/sidebars`.
+
+- **Nothing is deleted.** The folder moves to
+  `widgets/.removed/<desk>-<name>-<time>/`, where nothing runs, and what
+  you decided about it (Allow, settings) is kept. A box keeps the last thing
+  it showed.
+- **Undo** stands where the box was, at its height, for 4 seconds, and puts
+  it back as it was, still allowed. After that, move the folder back by hand.
+- **The agent is told.** The one that proposed the widget hears it on its
+  next prompt. The panel that pushed a box is refused if it pushes that box
+  again. A new panel asks again, with a card.
+- **Only the window removes.** An agent's token can't, and there is no
+  `snyvi widget remove`, because a panel's agent can run the CLI. Your own
+  widgets (shared, global, or pushed from a script) have Turn off.
+
+```mermaid
+flowchart LR
+  A[an agent's box] -->|Remove| B["'Removed · Undo' where it was, 4 s"]
+  B -->|Undo| A
+  B -->|4 s pass| C["widgets/.removed/7-arena-…<br/>nothing runs"]
+  C -->|moved back by hand| A
+```
 
 ### Allow, honestly
 
@@ -167,9 +234,10 @@ goes back to the agent with the fix), then written where proposals wait
 (`widgets/.proposed/`, where nothing runs), and a card on Your turn shows
 **where it runs, how often, the command and the script**. **Try once** runs
 it here, as it would run, and shows what it printed in the card. You pick
-how long it lasts (the agent may suggest one). **Add** moves it in with the
-rest, on this desk only unless the card says every desk, and allows it as it
-is. **Not now** leaves it be.
+how long it lasts (the agent may suggest one). **Add** moves it into this
+desk's own folder, `widgets/@<desk id>/`, and allows it as it is. **Not
+now** leaves it be. An agent can't propose a widget for every desk, or a
+global one: sharing is yours.
 
 `set_widget` asks the same way, once per desk and name: the panel's first
 push is a card, *"A box on this desk: deploy"* with what it would show,
@@ -187,6 +255,22 @@ sequenceDiagram
   A->>D: propose_widget (widget.json, the script)
   D-->>U: Your turn card · errors · this desk · every 1 min · the script · Try once · Add or Not now
   U->>D: Add (the window)
-  D->>D: moves it into widgets/errors/, allows it as it is
+  D->>D: moves it into widgets/@7/errors/, allows it as it is
   D-->>U: Errors appears on the desk's rail at the next run
+```
+
+### From 1.31
+
+1.32 made an agent's widget its desk's own. On the first start of 1.32, a
+widget file that was on exactly one desk moves into that desk's folder,
+allowed as it was; one on every desk, on several, or global stays where it
+is. A widget that can't move (its desk closed, the name taken there) stays
+shared, as it was, and the daemon's log says why.
+
+```mermaid
+flowchart LR
+  A["widgets/arena/ · desks: [7]"] -->|first start of 1.32| B["widgets/@7/arena/ · desk 7's own"]
+  C["widgets/git/ · desks: every"] --> C2[stays shared]
+  B -->|Share with other desks| D["widgets/arena/ · desks: [7]"]
+  D -->|Make it this desk's own| B
 ```

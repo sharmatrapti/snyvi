@@ -304,22 +304,41 @@ async function keepAll(ctx, pid, name) {
  *  to a friend…. A reader who never pairs is never offered it. */
 const booted = (() => { try { return +JSON.parse(document.getElementById("boot").textContent).friends || 0; } catch { return 0; } })();
 const friendsOf = ctx => ctx.state.friends ?? booted;
-/** A widget's box, from its head (#111): a widget file on a desk can be
- *  kept to this desk or taken off it, and any widget turned off -- which
- *  /sidebars turns on again (snyvi never deletes). */
+/** The desk a widget's box belongs to, from its section: its desk when it
+ *  is that desk's own (`data-wsrc` "own"), 0 when shared or global. */
+const ownerOf = sec => sec?.dataset.wsrc === "own" ? +sec.dataset.wdesk : 0;
+/** A widget's box, from its head (#111): a desk's own widget file can be
+ *  shared with other desks (1.32); a shared one on a desk made this desk's
+ *  own or taken off it; and any widget turned off -- which /sidebars turns
+ *  on again (snyvi never deletes). */
 function widgetItems(ctx, sec) {
   if (!sec) return [];
-  const name = sec.dataset.w, desk = +sec.dataset.wdesk, file = sec.dataset.wsrc === "file";
-  const set = (body, what) => async () => {
-    try { await ctx.api(`/api/widgets/${name}/prefs`, body); }
+  const name = sec.dataset.w, desk = +sec.dataset.wdesk, owner = ownerOf(sec), file = sec.dataset.wsrc === "file";
+  const set = (body, what, then) => async () => {
+    try { await ctx.api(`/api/widgets/${name}/prefs`, { owner, ...body }); then?.(); }
     catch (e) { ctx.toast(`Could not ${what}`, { sub: e }); }
   };
   return [
-    file && desk && { label: "Only on this desk", run: set({ only_desk: desk }, "keep it to this desk") },
+    owner && { label: "Share with other desks…", run: set({ share: true }, "share it", () => ctx.showSidebars(true)) },
+    file && desk && { label: "Make it this desk's own", run: set({ keep_here: desk }, "make it this desk's") },
     file && desk && { label: "Not on this desk", run: set({ not_desk: desk }, "take it off this desk") },
     { label: "Turn off", run: set({ hidden: true }, "turn it off") },
     RULE,
   ].filter(Boolean);
+}
+/** An agent's widget on a desk -- its own widget file, or a box a panel
+ *  pushed -- can be removed, last and below a rule: its folder is kept in
+ *  widgets/.removed/ and the box says Undo where it was. The reader's own
+ *  widgets have Turn off alone. */
+function removeItem(ctx, sec) {
+  const name = sec?.dataset.w, desk = +sec?.dataset.wdesk;
+  if (!desk || !ctx.desk?.seatOf?.(desk, name)?.agent) return [];
+  return [RULE, { label: "Remove", danger: true, run: () => removeWidget(ctx, name, desk, ownerOf(sec)) }];
+}
+async function removeWidget(ctx, name, desk, owner) {
+  ctx.desk.widgetGone(desk, name, owner);
+  try { const j = await ctx.api(`/api/widgets/${name}/remove`, { desk, owner }); ctx.desk.widgetKept(name, j.from); }
+  catch (e) { ctx.desk.widgetBack(name); ctx.toast(`Could not remove ${name}`, { sub: e }); }
 }
 function entries(ctx, el, byKey = false) {
   const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
@@ -330,6 +349,7 @@ function entries(ctx, el, byKey = false) {
   if (el.matches(".sec-head")) return { head: el.querySelector(".sec-nm")?.textContent || "Sidebars", items: [
     ...widgetItems(ctx, el.closest("section.wg")),
     { label: "Arrange sidebars…", moves: 1, run: () => ctx.showSidebars(true) },
+    ...removeItem(ctx, el.closest("section.wg")),
   ] };
   // snyvi's own mark: the one setting that is about snyvi itself.
   if (el.matches(".brand-mark")) return { head: "snyvi", items: [
@@ -480,23 +500,28 @@ async function order(ctx, ids, moved, byKey) {
  *  which a tab has not. Its next run, a moment later, fills the seat. */
 export async function allowWidget(ctx, b) {
   b.disabled = true;
-  try { await ctx.api(`/api/widgets/${b.dataset.wallow}/allow`, {}); b.textContent = "Allowed"; }
+  try { await ctx.api(`/api/widgets/${b.dataset.wallow}/allow`, { owner: ownerOf(b.closest("section.wg")) }); b.textContent = "Allowed"; }
   catch { b.disabled = false; ctx.toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" }); }
 }
 /** A seat's own buttons: Try again on one that stopped, Turn off here,
- *  Tell the agent on one that failed (#112). Said in the seat, where the
- *  click was. */
+ *  Tell the agent on one that failed (#112), Undo on one just removed.
+ *  Said in the seat, where the click was. */
 export async function seatAct(ctx, b) {
-  const name = b.dataset.wretry || b.dataset.wnot || b.dataset.wtell, desk = +b.dataset.wd;
+  const name = b.dataset.wretry || b.dataset.wnot || b.dataset.wtell || b.dataset.wundo, desk = +b.dataset.wd, owner = ownerOf(b.closest("section.wg"));
   b.disabled = true;
+  if (b.dataset.wundo) {
+    try { await ctx.api(`/api/widgets/${name}/restore`, { desk, owner: +b.dataset.wown, from: b.dataset.wfrom || "" }); ctx.desk?.widgetBack?.(name, +b.dataset.wown !== 0); }
+    catch (e) { b.disabled = false; ctx.toast(`Could not bring ${name} back`, { sub: e }); }
+    return;
+  }
   try {
     if (b.dataset.wtell) {
       const j = await ctx.api(`/api/widgets/${name}/tell`, { desk });
       b.textContent = j.told ? "Told · on its next prompt" : "No agent proposed it";
       return;
     }
-    if (b.dataset.wretry) await ctx.api(`/api/widgets/${name}/retry`, { desk });
-    else await ctx.api(`/api/widgets/${name}/prefs`, { not_desk: desk });
+    if (b.dataset.wretry) await ctx.api(`/api/widgets/${name}/retry`, { desk, owner });
+    else await ctx.api(`/api/widgets/${name}/prefs`, { not_desk: desk, owner });
     b.textContent = b.dataset.wretry ? "Running…" : "Turned off";
   } catch { b.disabled = false; b.textContent = "Could not · again"; }
 }

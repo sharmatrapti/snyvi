@@ -111,7 +111,13 @@
     if (roots !== deskRoots) { deskRoots = roots; renderTree(); markActive(); } else renderDesks();
     if (desk && (state.view === "desk" || state.deskBehind != null)) desk.update(state.desks);
   }
-  const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.running) ? "●" : "○";
+  /** A desk's mark, one meaning per colour (audit 67d008cb6f): amber while
+   *  a panel needs the reader, green while an agent is working -- as on its
+   *  project's row and in the live pill -- a hollow ring while something
+   *  else runs (a shell, an agent between turns), and nothing when idle.
+   *  Green for any process made one desk green here and grey on its row. */
+  const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.agent === "working") ? "●" : ps.some(p => p.status && p.status.running) ? "◦" : "○";
+  const needYou = n => `${plural(n, "panel")} ${n === 1 ? "needs" : "need"} you`;
   /** The fullest context window among a desk's panels, as their status lines said. */
   const fullest = d => { const ps = d.panes.map(p => p.status && p.status.ctx_pct).filter(x => x != null); return ps.length ? Math.max(...ps) : null; };
   let desksSeen = null;
@@ -129,17 +135,18 @@
     if (blocked) snyviSays("blocked");
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
     const head = secHead("desks", "Desks", {
-      count: blocked ? `!${blocked}` : "", tone: "warn", countTip: blocked ? `${plural(blocked, "panel")} waiting on you` : "",
+      count: blocked ? `${blocked}` : "", tone: "warn", countTip: blocked ? needYou(blocked) : "",
       acts: capability ? `<button type="button" data-newdesk data-tip="New desk" aria-label="New desk">${glyph("plus", 14)}</button>` : "",
     });
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty">Open the snyvi window to run desks</li>`
         : desksOff ? noReach("desks", "li") : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>` : "");
-    // One desk is one project; the second is when snyvi starts to earn its
-    // place, so it is asked for, under the first, until there is one.
-    const more = capability && list.length === 1 ? `<li class="t-more-desk"><button type="button" class="b-empty" data-newdesk>+ New desk</button></li>` : "";
+    // The head's + is the one way to a new desk from the list: a "+ New desk"
+    // row under a lone desk came and went with the second, and moved the
+    // sidebar as it did (audit 67d008cb6f). snyvi's "second-desk" aside
+    // still asks for one.
     const rows = list.map(d => {
       const m = mark3(d.panes), n = d.panes.length, full = fullest(d);
-      const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
+      const say = m === "!" ? needYou(d.panes.filter(p => p.status && p.status.blocked).length) : m === "●" ? "An agent is working" : m === "◦" ? "Running" : "Idle";
       // The row's end says only what is unusual: a panel that needs you, a
       // context window nearly full, three panels or more (two is what most
       // desks have, so a 2 on every row told them apart by nothing). A live
@@ -150,7 +157,7 @@
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" draggable="false" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
         deskSaid && deskSaid.id === d.id ? `<span class="end"><span class="t-said" role="status" data-tip="${esc(deskSaid.text)}" data-tip-sub="${esc(deskSaid.why)}">${esc(deskSaid.text)}</span></span>` :
-        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">! needs you</span>` : m === "●" ? `<span class="dot on"></span>` : ""}<span class="vh">${say}</span>${n > 2 ? `<span class="k">${n}</span>` : ""}</span>`,
+        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : m === "●" ? `<span class="dot on"></span>` : m === "◦" ? `<span class="dot run"></span>` : ""}<span class="vh">${say}</span>${n > 2 ? `<span class="k">${n}</span>` : ""}</span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row
@@ -165,12 +172,12 @@
       const d = list.find(x => String(x.id) === b.dataset.deskof);
       if (!d) continue;
       const next = "b-new has" + deskState(d);
-      if (b.className !== next) b.className = next;
+      if (b.className !== next) { b.className = next; b.dataset.tipSub = deskSay(d); }
     }
-    const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top + more && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
+    const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
     if (!same) {
-      deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + more + `</ul>`;
-      deskNav.$top = top + more; deskNav.$head = head;
+      deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + `</ul>`;
+      deskNav.$top = top; deskNav.$head = head;
       deskNav.querySelectorAll(".t-desk").forEach((li, i) => { li.$r = rows[i][0] + rows[i][2]; li.$e = rows[i][1]; });
       return;
     }
@@ -386,12 +393,15 @@
    *  quietly lost its daemon -- one that stopped, or was replaced by an
    *  upgrade -- shows it, and the reason a reader is not left wondering why
    *  nothing arrives. */
-  /* Why it is hollow used to be a `title` on the mark, which meant hovering
-     snyvi drew a tooltip over the sidebar and an answer in its own line at
-     once, two texts for one gesture. The answer is the line it says. */
+  /* Why it is hollow is said in the mark's tip, under "Home": the one place
+     it is put in words, now that the mark says no lines of its own. An
+     update's line gives way to it while the page is cut off, and the update
+     says itself again on the next read (about.js). */
+  const OFF = "not connected · nothing new arrives until snyvi is back";
   function linked(on) {
-    if (on) delete root.dataset.link;
-    else root.dataset.link = "off";
+    const b = $(".side-head .brand");
+    if (on) { delete root.dataset.link; if (b && b.dataset.tipSub === OFF) delete b.dataset.tipSub; }
+    else { root.dataset.link = "off"; if (b) b.dataset.tipSub = OFF; }
   }
 
   /** An event's body, or null for one that is not JSON. */

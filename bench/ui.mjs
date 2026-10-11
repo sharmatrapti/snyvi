@@ -31,7 +31,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync, copyFileSync, existsSync, unlinkSync, realpathSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, appendFileSync, copyFileSync, existsSync, readdirSync, unlinkSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, basename } from "node:path";
 import { plan, flowchart } from "./fixture.mjs";
@@ -286,8 +286,10 @@ async function main() {
     await section("what a save, and a hover, cost", () => costRows(p, url, base, token, tmp, arrive));
     await section("desks that hold still", () => deskRows(cdp, base, token));
     await section("a desk for each project", () => projectDeskRows(cdp, base, token, tmp));
+    await section("subfolder projects under their parent", () => nestRows(cdp, base, token, tmp));
     await section("nothing lost on a desk when snyvi says no", () => deskLossRows(cdp, base, token));
     await section("a widget's box, failing and long", () => widgetBoxRows(cdp, base, tmp));
+    await section("the keys sheet: Claude as, then keys", () => keysSheetRows(cdp, base));
     await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
@@ -1076,7 +1078,7 @@ async function queueRows(p, url, arrive) {
   // Waiting row folds the list in place and keeps how it was left; Recent is
   // the newest-first list without the waiting half; All is the whole Inbox.
   const head = () => p.ev(`({ n: document.querySelector("#inbox-row .t-wait .n")?.textContent || "", open: getComputedStyle(document.querySelector("#queue")).display !== "none",
-    h: document.querySelector("#inbox-row").offsetHeight, all: document.querySelector("#inbox-row .sec-all .n")?.textContent || "" })`);
+    h: document.querySelector("#inbox-row").offsetHeight, all: document.querySelector("#inbox-row .sec-all")?.textContent.trim() || "" })`);
   const shut0 = await head();
   await p.clickOn("#inbox-row .t-wait");
   await sleep(300);
@@ -2316,6 +2318,33 @@ async function deskRows(cdp, base, token) {
     const there = led && await until(`location.pathname === "/desk/${da}" && document.querySelector(".pn.on .pn-body")?.getAttribute("aria-label") === "Panel 2"`);
     rows.push(["an aside from a panel goes back to that panel", !!there,
       !from ? "the daemon did not say where the aside came from" : !led ? "the card does not lead to the panel" : !there ? `the click landed on ${await p.ev("location.pathname")}, not panel 2 of still-a` : "the click opened still-a with panel 2 focused"]);
+
+    // 1.32: no queue bar on a desk (audit dc5adb4641). The head keeps room to
+    // drag the window by, its slot counts this desk's waiting and no other's,
+    // and Mark these read leaves every other desk's waiting, with an Undo.
+    const TK = { "content-type": "application/json", authorization: `Bearer ${token}` };
+    await post("/api/queue/clear", {}, TK);
+    const mine = (await post("/api/docs", { content: "# Here\n\nFrom panel 2.", title: "Sent here", origin: "mcp", pane: second }, TK)).doc;
+    const other = (await post("/api/docs", { content: "# Elsewhere\n\nFrom no desk.", title: "Sent elsewhere", origin: "mcp" }, TK)).doc;
+    const counted = await until(`document.querySelector(".dk-arr-b .n")?.textContent === "1"`);
+    const hd = await p.ev(`(() => { const l = document.querySelector(".dk-left")?.getBoundingClientRect(), n = document.querySelector(".dk-arr")?.getBoundingClientRect();
+      return { bar: !document.querySelector("#queue-bar").hidden, gap: l && n ? Math.round(n.left - l.right) : -1, says: document.querySelector(".dk-arr-b")?.textContent || "" }; })()`);
+    rows.push(["a desk has no arrivals bar; its head counts only its own", counted && !hd.bar,
+      hd.bar ? "the queue bar lay over the desk's head" : !counted ? `the head's slot says "${hd.says}", not 1 of the 2 waiting` : "no bar, and the slot says 1 of the 2 waiting"]);
+    rows.push(["the desk's head keeps room to drag the window by", hd.gap > 40, `${hd.gap} px free between Left off and the slot`]);
+    await p.clickOn(".dk-arr-b");
+    const listed = !!mine && await until(`!!document.querySelector('.dk-arr-sheet a[data-read="${mine.id}"]')`, 30);
+    const strays = listed && await p.ev(`!!document.querySelector('.dk-arr-sheet a[data-read="${other?.id}"]')`);
+    if (listed) await p.clickOn('.dk-arr-sheet [data-a="arr-read"]');
+    const undo = listed && await until(`!!document.querySelector('.dk-arr-sheet [data-a="arr-back"]')`, 30);
+    const left = (await (await fetch(`${base}/api/queue`)).json()).map(x => x.id);
+    rows.push(["Mark these read on a desk reads its own, and leaves the rest waiting", !!undo && !strays && left.includes(other?.id) && !left.includes(mine?.id),
+      !listed ? "the sheet did not list this desk's document" : strays ? "the sheet listed another desk's document" : !undo ? "no Undo where Mark these read was"
+        : !left.includes(other?.id) ? "the other desk's document was read too" : left.includes(mine?.id) ? "this desk's document is still waiting" : "this desk's read, the other waiting, and an Undo"]);
+    if (undo) await p.clickOn('.dk-arr-sheet [data-a="arr-back"]');
+    const back = undo && await until(`document.querySelector(".dk-arr-b .n")?.textContent === "1"`, 40);
+    rows.push(["and its Undo puts it back", !!back, back ? "the slot says 1 again" : "the slot did not come back to 1"]);
+    await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     await p.pointerAway();
   } finally {
     if (second) await post(`/api/panes/${second}/stop`).catch(() => {});
@@ -2512,9 +2541,12 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     // 1.19: the date in the head and no clock; Arrived heads the side column
     // and has no ✕; with no friend there is no Friends widget, and Pair with
     // a friend… is in the foot with the version and Check for updates.
-    const side = await p.ev(`(() => { const s = document.querySelector(".hm .hm-side"); const first = [...(s?.children || [])].find(x => !x.hidden); const foot = document.querySelector(".hm .hm-foot")?.textContent || ""; return { date: !!document.querySelector(".hm-head .hm-v")?.textContent.trim(), clock: !!document.querySelector(".hm-time, .hm-cal, [data-w=today], [data-w=snyvi]"), first: first?.dataset.w || first?.className || "", hide: !!document.querySelector(".hm-arrived .hm-hide"), friends: !!document.querySelector("[data-w=friends]"), foot: /snyvi \\S+ · Check for updates · Pair with a friend…/.test(foot), footText: foot, keys: document.querySelector("details.hm-keys") ? "folded" : "none" }; })()`);
-    rows.push(["Home: the date in the head, Arrived first and not hideable, no Friends without a friend, Pair… in the foot", side.date && !side.clock && side.first === "arrived" && !side.hide && !side.friends && side.foot && side.keys === "folded",
-      !side.date ? "no date in the head" : side.clock ? "Today or the snyvi widget is still there" : side.first !== "arrived" ? `the side column starts with ${side.first}` : side.hide ? "Arrived has a ✕" : side.friends ? "a Friends widget with no friend" : !side.foot ? `the foot does not carry the version, Check for updates and Pair…: "${side.footText}"` : side.keys !== "folded" ? "Keys is not folded" : "date, Arrived, Claude, Keys folded; Pair… in the foot"]);
+    const side = await p.ev(`(() => { const s = document.querySelector(".hm .hm-side"); const first = [...(s?.children || [])].find(x => !x.hidden); const foot = document.querySelector(".hm .hm-foot")?.textContent || ""; return { date: !!document.querySelector(".hm-head .hm-v")?.textContent.trim(), clock: !!document.querySelector(".hm-time, .hm-cal, [data-w=today], [data-w=snyvi]"), first: first?.dataset.w || first?.className || "", hide: !!document.querySelector(".hm-arrived .hm-hide"), friends: !!document.querySelector("[data-w=friends]"), foot: /snyvi \\S+ · Check for updates · Pair with a friend…/.test(foot), footText: foot, gone: [...document.querySelectorAll(".hm-keys, [data-w=keys], [data-w=threads], .hm-side .hm-upd, .hm-you")].map(x => x.dataset.w || x.className), bar: !!document.querySelector("#queue-bar:not([hidden])") }; })()`);
+    // 1.32 (audit 67d008cb6f): seven blocks. No Keys or Threads section, the
+    // update's card under the foot, Your turn shut until its button, and no
+    // waiting bar over Home's own sticky bar.
+    rows.push(["Home: the date in the head, Arrived first and not hideable, no Friends without a friend, Pair… in the foot, no Keys, Threads or waiting bar", side.date && !side.clock && side.first === "arrived" && !side.hide && !side.friends && side.foot && !side.gone.length && !side.bar,
+      !side.date ? "no date in the head" : side.clock ? "Today or the snyvi widget is still there" : side.first !== "arrived" ? `the side column starts with ${side.first}` : side.hide ? "Arrived has a Hide" : side.friends ? "a Friends widget with no friend" : !side.foot ? `the foot does not carry the version, Check for updates and Pair…: "${side.footText}"` : side.gone.length ? `still on Home: ${side.gone.join(", ")}` : side.bar ? "the waiting bar is over Home" : "date, Arrived, Claude; Pair… in the foot; no Keys, Threads or waiting bar"]);
 
     // The note bar: one field for a line on any desk, Pick up's to start with.
     const notesOn = async id => ((await get(`/api/desks/${id}/notes`)).notes || []).map(n => n.text);
@@ -2753,6 +2785,95 @@ async function projectDeskRows(cdp, base, token, tmp) {
   return rows;
 }
 
+/** 1.32 (audit 7c0fc42885): a folder with no git of its own is a project of
+ *  its own, so two job folders both called "reel" were two top-level rows.
+ *  They hang under the project whose folder holds them: the parent says how
+ *  many, and opening it shows them, each still its own project. */
+async function nestRows(cdp, base, token, tmp) {
+  const rows = [];
+  const T = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  const ids = [];
+  for (const job of ["one", "two"]) {
+    const dir = join(tmp, "nest", job, "reel");
+    mkdirSync(dir, { recursive: true });
+    const r = await fetch(`${base}/api/docs`, { method: "POST", headers: T, body: JSON.stringify({ content: `# ${job}'s reel`, lang: "md", title: `${job}'s reel`, cwd: dir }) });
+    ids.push((await r.json().catch(() => ({}))).id);
+  }
+  const tree = await (await fetch(`${base}/api/tree`)).json();
+  const parent = tree.find(x => x.root && (x.root === tmp || x.root.endsWith(basename(tmp))));
+  const reels = tree.filter(x => x.name === "reel" && x.root.includes(`${basename(tmp)}/nest/`));
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  try {
+    await p.goto(`${base}/`);
+    const row = parent && await until(`!!document.querySelector('#tree .t-proj[data-pid="${parent.id}"] > summary')`);
+    const seen = row ? await p.ev(`(() => {
+      const top = [...document.querySelectorAll("#tree > .t-proj")].map(d => d.dataset.pid);
+      return { subs: document.querySelector('#tree .t-proj[data-pid="${parent.id}"] > summary .t-subs')?.textContent || "", top };
+    })()`) : null;
+    const reelsTop = seen ? reels.filter(r => seen.top.includes(String(r.id))).length : -1;
+    rows.push(["two folders called reel hang under the project that holds them", ids.every(Boolean) && reels.length === 2 && !!seen && +seen.subs >= 2 && reelsTop === 0,
+      !ids.every(Boolean) ? "a send was refused" : reels.length !== 2 ? `${reels.length} reel projects` : !seen ? "the parent has no row" : reelsTop ? `${reelsTop} reel still a top-level row` : `the parent says ${seen.subs}, no reel at the top`]);
+    if (row) {
+      const was = await p.ev(`document.querySelector('#tree .t-proj[data-pid="${parent.id}"]').open`);
+      if (!was) await p.clickOn(`#tree .t-proj[data-pid="${parent.id}"] > summary .nm`);
+      const under = await until(`${JSON.stringify(reels.map(r => String(r.id)))}.every(id => !!document.querySelector('#tree .t-proj[data-pid="${parent.id}"] > ul > .t-sub > .t-proj[data-pid="' + id + '"]'))`);
+      rows.push(["opening the parent shows them, each its own project", under, under ? "both reels under it, one step in" : "the reels are not under the opened parent"]);
+      if (!was) await p.clickOn(`#tree .t-proj[data-pid="${parent.id}"] > summary .nm`);
+    }
+  } finally {
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** The keys sheet (audit 67d008cb6f): the desk's head names the account
+ *  its Claude runs as; the sheet opens on that account, not in a form; its
+ *  two "Add …" rows are folded and only one opens at a time; and an
+ *  account's ⋯ puts Rename, Renew and Remove from every desk in its row.
+ *  Its desk is parked after, so Home's Pick up is still home-bench. */
+async function keysSheetRows(cdp, base) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}) => (await fetch(base + path, { method: "POST", headers: H, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const d = await post("/api/desks", { name: "keys-sheet" });
+  const desk = d.desk ? d.desk.id : d.id;
+  const acc = (await post("/api/accounts", { label: "Work", token: "sk-ant-oat01-" + "b".repeat(80) })).account;
+  if (acc) await post(`/api/desks/${desk}/account`, { account: acc.id });
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  const p = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
+  try {
+    await p.goto(`${base}/desk/${desk}#cap=${cap}`);
+    const named = await until(`document.querySelector(".dk-keys-b .acc")?.textContent === "Work"`);
+    rows.push(["the desk's head names the account its Claude runs as", !!acc && named,
+      !acc ? "the account was refused" : named ? "Work, beside the key" : `the button says "${await p.ev(`document.querySelector(".dk-keys-b")?.textContent || ""`)}"`]);
+    await p.clickOn(".dk-keys-b");
+    const opened = await until(`!!document.querySelector(".dk-keys-sheet .dk-acc-rows input")`);
+    const at = opened ? await p.ev(`({ on: document.activeElement?.matches(".dk-acc-rows input:checked") ? document.activeElement.value : "", open: document.querySelectorAll(".dk-keys-sheet .dk-add[open]").length, renew: document.querySelectorAll(".dk-keys-sheet .dk-acc-rows [data-a=acc-renew]").length })`) : null;
+    rows.push(["it opens on the account picked, its forms folded, Renew out of sight", !!at && at.on === String(acc?.id) && !at.open && !at.renew,
+      !at ? "no sheet" : at.on !== String(acc?.id) ? `the hand is on ${at.on || "something else"}` : at.open ? `${at.open} form open` : at.renew ? "Renew shows a year early" : "on Work, both Add rows shut"]);
+    await p.clickOn(".dk-keys-sheet .dk-acc-more > summary");
+    await p.clickOn(".dk-keys-sheet .dk-key-more > summary");
+    const one = await until(`document.querySelector(".dk-key-more").open && !document.querySelector(".dk-acc-more").open && document.activeElement?.name === "name"`);
+    rows.push(["one Add row open at a time, the hand in its first field", one, one ? "Add a key open, Add a Claude account shut, the hand on Name" : "both open, or the hand is elsewhere"]);
+    if (acc) {
+      await p.clickOn(`.dk-acc-dots[data-n="${acc.id}"]`);
+      const acts = await until(`/Remove from every desk/.test(document.querySelector(".dk-acc-acts")?.textContent || "") && !!document.querySelector('.dk-acc-acts [data-a=acc-name]')`);
+      rows.push(["an account's ⋯ says what reaches past this desk", acts, acts ? "Rename, Renew, Remove from every desk, in its row" : "no actions in the row"]);
+    }
+  } finally {
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+    if (acc) await post(`/api/accounts/${acc.id}/delete`);
+    await post(`/api/desks/${desk}/park`, { next: "bench: the keys sheet is read" });
+  }
+  return rows;
+}
+
 /** 1.7.2, on a desk: a note or a name the daemon refused is back in its
  *  field with the reason under it; the rail puts back what it changed when
  *  the daemon says no, and says which thing failed, in that thing's row. In
@@ -2777,6 +2898,11 @@ async function widgetBoxRows(cdp, base, tmp) {
     writeFileSync(join(widgets, name, "run.sh"), script, { mode: 0o755 });
   };
   put("wbox", { title: "Box title", scope: "desk", run: { command: "sh run.sh", every: 5 } }, "#!/bin/sh\necho hi\n");
+  // And one that is this desk's own (1.32), in the desk's folder of widgets.
+  const own = join(widgets, `@${desk}`, "wown");
+  mkdirSync(own, { recursive: true });
+  writeFileSync(join(own, "widget.json"), JSON.stringify({ name: "wown", title: "Own one", scope: "desk", run: { command: "run.sh", every: 5 } }));
+  writeFileSync(join(own, "run.sh"), "#!/bin/sh\necho own\n", { mode: 0o755 });
   // And a global one that prints more than its one line holds.
   put("wlong", { title: "Long one", scope: "global", run: { command: "run.sh", every: 5 }, lines: 1 },
     `#!/bin/sh\necho '${"A line that goes on. ".repeat(12)}'\n`);
@@ -2789,12 +2915,47 @@ async function widgetBoxRows(cdp, base, tmp) {
     const box = `#wg-${desk}-wbox`;
     const came = await until(`!!document.querySelector("${box} .wg-why")`);
     const b = came && await p.ev(`(() => { const el = document.querySelector("${box}");
-      return { head: el.querySelector(".sec-head").textContent, by: el.querySelector(".wg-by").textContent,
+      return { head: el.querySelector(".sec-head").textContent, by: el.querySelector(".sec-fold").dataset.tipSub,
         body: !!el.querySelector(".wg-body"), tell: !!el.querySelector("[data-wtell]"),
         cut: el.querySelector(".wg-why").classList.contains("cut"), more: __ui.vis("${box} .wg-why > .wg-more"),
         whole: el.querySelector(".wg-why").textContent.includes("runs by itself") }; })()`);
-    rows.push(["a widget's box says its own title, and how often it runs", !!b && /Box title/.test(b.head) && /^every 5 s/.test(b.by),
+    // Shared, on every desk: its by-line, the name's tip, says so, ahead of how often.
+    rows.push(["a widget's box says its own title, where it runs, and how often", !!b && /Box title/.test(b.head) && /^every desk · every 5 s/.test(b.by),
       !came ? "no box with a line came for a widget that cannot reach its script" : `head "${b.head.trim()}", by-line "${b.by}"`]);
+    const obox = `#wg-${desk}-wown`;
+    const ocame = await until(`!!document.querySelector("${obox} .sec-fold[data-tip-sub]")`);
+    const o = ocame && await p.ev(`(() => { const el = document.querySelector("${obox}");
+      return { by: el.querySelector(".sec-fold").dataset.tipSub, src: el.dataset.wsrc }; })()`);
+    rows.push(["a desk's own widget says only how often, and its frame is the desk's", !!o && /^every 5 s/.test(o.by) && o.src === "own",
+      !ocame ? "no box came for a widget in the desk's own folder" : `by-line "${o.by}", data-wsrc "${o.src}"`]);
+    // An agent's widget is removed from its box's menu: Undo stands where
+    // it was, at its height, and puts the folder back.
+    if (o) {
+      const h0 = await p.ev(`document.querySelector("${obox}").offsetHeight`);
+      await p.ev(`(() => { const h = document.querySelector("${obox} .sec-head"), r = h.getBoundingClientRect();
+        h.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.x + 8, clientY: r.y + 4 })); return 1; })()`);
+      const offered = await until(`[...document.querySelectorAll("#ctx:not([hidden]) button.danger")].some(b => b.textContent.trim() === "Remove")`, 30);
+      if (offered) await p.ev(`[...document.querySelectorAll("#ctx:not([hidden]) button.danger")].find(b => b.textContent.trim() === "Remove").click(), 1`);
+      const undo = offered && await until(`!!document.querySelector('[data-wundo="wown"]:not(:disabled)')`, 30);
+      const h1 = undo && await p.ev(`document.querySelector('[data-wundo="wown"]').closest("section").offsetHeight`);
+      const kept = existsSync(join(widgets, ".removed")) && readdirSync(join(widgets, ".removed")).some(n => n.startsWith(`${desk}-wown-`));
+      rows.push(["Remove on an agent's widget keeps its folder, and says Undo where it was", !!undo && h1 === h0 && kept && !existsSync(own),
+        !offered ? "no Remove in a desk's own widget's menu" : !undo ? "no Undo where the box was" : h1 !== h0 ? `the rail moved: ${h0} px → ${h1} px` : !kept ? "nothing kept in widgets/.removed" : "Undo, at its height, and the folder kept"]);
+      if (undo) {
+        await p.clickOn('[data-wundo="wown"]');
+        // Its place holds, saying so, until the runner has run it again: a
+        // round or two, and its period when Undo beat the round.
+        const holding = await until(`/Bringing .* back/.test(document.querySelector('section.wg[data-w="wown"]')?.textContent || "")`, 30);
+        const back = await until(`!!document.querySelector("${obox} .sec-fold[data-tip-sub]")`, 150);
+        rows.push(["Undo puts it back, its place held until it runs", holding && back && existsSync(own), !existsSync(own) ? "the folder did not come back" : !holding ? "its place did not hold" : back ? "Bringing it back…, then its box" : "the folder is back, its box not"]);
+      }
+      const shared = await p.ev(`(() => { const h = document.querySelector("${box} .sec-head"), r = h.getBoundingClientRect();
+        h.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.x + 8, clientY: r.y + 4 })); return 1; })()`)
+        && await until(`!!document.querySelector("#ctx:not([hidden]) button")`, 30)
+        && await p.ev(`[...document.querySelectorAll("#ctx:not([hidden]) button")].some(b => b.textContent.trim() === "Remove")`);
+      await p.press("Escape");
+      rows.push(["a shared widget, the reader's own, has no Remove", !shared, shared ? "Remove offered on a shared widget" : "Turn off alone"]);
+    }
     rows.push(["a failed one keeps no room for a body it never printed", !!b && !b.body, !b ? "no box" : b.body ? "an empty body still holds its lines under the line" : "the line, and nothing under it"]);
     rows.push(["its reason is kept whole, two lines of it shown with more", !!b && b.whole && b.cut && b.more,
       !b ? "no box" : !b.whole ? "the reason is cut short" : !b.cut ? "the line is not cut to two lines" : !b.more ? "no more on a cut line" : "two lines, and more"]);
@@ -2831,6 +2992,8 @@ async function widgetBoxRows(cdp, base, tmp) {
     await post(`/api/desks/${desk}/park`, { next: "bench: the boxes are read" });
     rmSync(join(widgets, "wbox"), { recursive: true, force: true });
     rmSync(join(widgets, "wlong"), { recursive: true, force: true });
+    rmSync(join(widgets, `@${desk}`), { recursive: true, force: true });
+    rmSync(join(widgets, ".removed"), { recursive: true, force: true });
   }
   return rows;
 }
@@ -3118,14 +3281,22 @@ async function panelRows(cdp, base, token) {
     const tickBy = body => fetch(`${base}/api/panes/${pa}/notes/${n2}/tick`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
     const wrong = await tickBy({ by: "bench-agent", commit: "main" });
     const tk = await tickBy({ by: "bench-agent", commit: "90F09D6aa" });
+    // 1.32 (audit 7c0fc42885): the done half is one row, "N done", at the
+    // list's foot; an agent's tick lands under it, out of sight until the
+    // row is clicked. A tick by hand stays in sight (above, n1).
+    const fold = await until(`!!document.querySelector('[data-a="notes-done"]')`, 40);
+    const foldSays = await q.ev(`document.querySelector('[data-a="notes-done"]')?.textContent.trim() || ""`);
+    const hidden2 = await q.ev(`!document.querySelector('.dk-note.done:has([data-n="${n2}"])')`);
+    rows.push(["the done notes fold into one row, and an agent's tick goes under it", fold && /^\d+ done$/.test(foldSays) && hidden2,
+      !fold ? "no done row" : !/^\d+ done$/.test(foldSays) ? `the row reads "${foldSays}"` : !hidden2 ? "the agent's tick is still a row of its own" : `"${foldSays}", the agent's tick under it`]);
+    await q.ev(`document.querySelector('[data-a="notes-done"][aria-expanded="false"]')?.click()`);
     const byAgent = tk.ok && await until(`(document.querySelector('.dk-note.done:has([data-n="${n2}"]) > .nm')?.dataset.tipSub || "").includes("ticked by bench-agent")`, 40);
-    const sha = await q.ev(`document.querySelector('.dk-note.done:has([data-n="${n2}"]) .dk-sha')?.textContent || ""`);
-    rows.push(["an agent's tick carries its commit, and a branch name is refused", wrong.status === 400 && sha === "90f09d6",
-      wrong.status !== 400 ? `"main" as a commit answered ${wrong.status}` : `the row shows "${sha}"`]);
-    // The commit sits on the number's line, and who ticked it is the tip:
-    // no third line under a ticked note.
-    const oneLine = await q.ev(`(() => { const li = document.querySelector('.dk-note.done:has([data-n="${n2}"])'); return li ? { meta: !!li.querySelector(".dk-meta .dk-sha"), by: !!li.querySelector(".dk-by") } : null; })()`);
-    rows.push(["a ticked note says where it went on its number's line", byAgent && oneLine?.meta && !oneLine.by,
+    // Where it went is the tip -- "ticked by bench-agent · 90f09d6" -- and
+    // the menu's Copy commit: no hash on the row, and no third line.
+    const oneLine = await q.ev(`(() => { const li = document.querySelector('.dk-note.done:has([data-n="${n2}"])'); return li ? { sha: !!li.querySelector(".dk-sha"), by: !!li.querySelector(".dk-by"), tip: li.querySelector(".nm")?.dataset.tipSub || "" } : null; })()`);
+    rows.push(["an agent's tick carries its commit, and a branch name is refused", wrong.status === 400 && byAgent && /90f09d6/.test(oneLine?.tip || ""),
+      wrong.status !== 400 ? `"main" as a commit answered ${wrong.status}` : `the tip reads "${oneLine?.tip || ""}"`]);
+    rows.push(["a ticked note says where it went in its tip, not on its row", byAgent && oneLine && !oneLine.sha && !oneLine.by,
       !byAgent ? "the tip does not say who ticked it" : JSON.stringify(oneLine)]);
     const named = await fetch(`${base}/api/panes/${pa}/name`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ name: "bench named" }) });
     const headSays = named.ok && await until(`document.querySelector('${P(pa)} .pn-head')?.textContent.includes("bench named")`, 40);
@@ -3188,6 +3359,10 @@ async function panelRows(cdp, base, token) {
       { question: "bench: throws or drills?", options: ["Throws", "Drills"] },
     ] })).json().catch(() => ({}));
     const gIds = (grouped.turns || []).map(t => t.id);
+    // They rise in the corner as one card; the pill opens the tray, where
+    // they wait however long the answering takes.
+    const gRose = gIds.length === 3 && await until(`!!document.querySelector('#onyou .oy-card .dk-turn.grp[data-g="${gIds[0]}"]')`, 40);
+    if (gRose) await q.clickOn("#onyou .oy-pill");
     const gCard = gIds.length === 3 && await until(`document.querySelectorAll('.dk-turn.grp[data-g="${gIds[0]}"] .tn-gq').length === 3`, 40);
     const gRec = gCard && await q.ev(`document.querySelectorAll('.dk-turn.grp[data-g="${gIds[0]}"] .tn-opt.rec').length`);
     const steps = [];
@@ -3203,12 +3378,32 @@ async function panelRows(cdp, base, token) {
       gIds.length !== 3 ? `ask with questions answered ${JSON.stringify(grouped).slice(0, 120)}` : !gCard ? "no card with three rows" : gRec !== 2 ? `${gRec} recommended options marked, not 2` :
         !gFoot ? `the foot never offered to send: ${steps.join(" / ")}` : `${steps.join(" → ")} → send`]);
     if (gCard) await q.ev(`document.querySelector('[data-a="tn-gunsend"][data-g="${gIds[0]}"]')?.click(); 1`);
+    await q.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
+    const trayShut = await until(`!document.querySelector('#onyou .oy-tray')`, 20);
+    rows.push(["the questions rose in the corner as one card, and the pill's tray held them until Esc", gRose && trayShut,
+      !gRose ? "no card rose in the corner" : "the tray did not close on Esc"]);
+
+    // Claude's own question dialog is on screen in its panel: it neither
+    // rises nor counts here, and is kept for Home.
+    const dlg = await (await agent("ask", { kind: "decide", via: "dialog", text: "bench: dialog question?", options: ["Yes", "No"] })).json().catch(() => ({}));
+    await sleep(700);
+    const dlgHere = await q.ev(`(document.querySelector("#onyou")?.textContent || "").includes("bench: dialog question?")`);
+    const dlgKept = ((await (await fetch(`${base}/api/desks/${desk}/threads`, { headers: H })).json().catch(() => ({}))).turns || []).some(t => t.text === "bench: dialog question?");
+    if (dlg.turn?.id) await agent(`turns/${dlg.turn.id}`, { drop: true });
+    rows.push(["Claude's own dialog stays in its panel: not in the corner, kept for Home", !!dlg.turn?.id && !dlgHere && dlgKept,
+      !dlg.turn?.id ? `the ask answered ${JSON.stringify(dlg).slice(0, 100)}` : dlgHere ? "it showed in the corner" : "it was not kept"]);
 
     // #95: a command handed over is a card with the whole command; one that
     // could close the paste early is refused at the door; Run types it into
     // the panel that asked as a ! command, Enter apart, on the click alone.
     const refusedCmd = await agent("handover", { kind: "run", text: "Run this", cmd: "echo \u001b[201~ typed as keys", by: "bench-agent" });
+    const railAt = `(() => { const r = document.querySelector('.dk-sec[data-sec="panels"]')?.getBoundingClientRect(); return r ? Math.round(r.top) + ":" + Math.round(r.height) : ""; })()`;
+    const railBefore = await q.ev(railAt);
     const handed = await agent("handover", { kind: "run", text: "Upload the bench file", cmd: "echo bench-run-ok", by: "bench-agent" });
+    const rose = await until(`!!document.querySelector('#onyou .oy-card .tn-cmd')`, 60);
+    const railAfter = await q.ev(railAt);
+    rows.push(["a hand-over rises in the corner, and the rail does not move", rose && !!railBefore && railBefore === railAfter && !(await q.ev(`!!document.querySelector('[data-part="rail.turns"]')`)),
+      !rose ? "no card rose in the corner" : railBefore !== railAfter ? `Panels moved: ${railBefore} → ${railAfter}` : "a Your turn section is still on the rail"]);
     await agent("agent", { session: "0b1c2d3e-4f50-4617-8899-aabbccddeeff" });
     const card = await until(`document.querySelector('.dk-turn .tn-cmd')?.textContent === "echo bench-run-ok" && !!document.querySelector('[data-a="tn-run"]')`, 60);
     await q.ev(`window.__typed = []; const send = WebSocket.prototype.send; WebSocket.prototype.send = function (d) { try { const j = JSON.parse(d); if (j.t === "in") window.__typed.push(j.d); } catch {} return send.call(this, d); }; 1`);

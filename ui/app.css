@@ -340,7 +340,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    hears it, since #pop is inside #trees. */
 #rail-nav, #pop[hidden] { display: none; }
 :root[data-side="0"] #rail-nav { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; min-height: 0; padding: 6px 0; }
-:root[data-side="0"] :is(.brand-name, .bm-say, #live, #btn-search, #side > #note, #side .gutter, #trees > :not(#pop)) { display: none; }
+:root[data-side="0"] :is(.brand-name, #live, #btn-search, #side > #note, #side .gutter, #trees > :not(#pop)) { display: none; }
 :root[data-side="0"] .side-head { flex-direction: column; gap: 10px; padding: 14px 0 4px; }
 :root[data-side="0"] #btn-side-hide { margin: 0; }
 /* The mark in a box the size of the rail's icons, so it sits on their
@@ -418,6 +418,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .side-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 12px 10px 16px; }
 .brand { font-weight: 600; letter-spacing: -.01em; color: var(--fg); display: inline-flex; align-items: center; gap: 8px; }
 .brand:hover { text-decoration: none; }
+/* On Home, the mark is the current row: the accent tint behind it, as a row's. */
+.brand.active { border-radius: var(--r-sm); background: var(--accent-bg); }
+:root:not([data-side="0"]) .brand.active { margin: -3px auto -3px -6px; padding: 3px 6px; }
+.brand.active .brand-name { color: var(--accent); }
 /* snyvi itself, the face from icons/icon-small.svg, and the one mascot on
    screen: the note at the foot of the sidebar is its voice. Calm and awake
    most of the time; a waiting note perks it up (the nub pulses, it blinks,
@@ -452,37 +456,6 @@ html[data-link="off"] .brand-mark .bm-open, html[data-link="off"] .brand-mark .b
 html[data-link="off"] .brand-mark .bm-shut { display: inline; }
 
 /* ---------- snyvi answers ---------- */
-/* The note at the foot of the sidebar is what an agent said, and it carries a
-   byline to say who. This is snyvi speaking for itself, so it has no byline
-   and no card: a short line in a bubble under the face, and a face to match.
-   It never opens on its own -- only for a reader who comes over and rests
-   there -- and never over a note still waiting to be read.
-   These rules follow the ones above on purpose: `html[data-say]` and
-   `html[data-note]` weigh the same, so the later block is the one that wins
-   while snyvi is talking, and the waiting-note blink stops for the moment. */
-.brand-mark .bm-love, .brand-mark .bm-wink { display: none; }
-.brand-mark .bm-love path { fill: var(--heart); }
-.brand-mark .bm-wink { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
-html[data-say] .brand-mark .bm-open { animation: none; }
-html[data-say] .brand-mark svg { animation: bm-nod .5s ease 1; transform-origin: 50% 100%; }
-html[data-say="glad"] .brand-mark .bm-open { display: none; }
-html[data-say="glad"] .brand-mark .bm-glad { display: inline; }
-html[data-say="wink"] .brand-mark .bm-l { display: none; }
-html[data-say="wink"] .brand-mark .bm-wink { display: inline; }
-html[data-say="love"] .brand-mark .bm-open { display: none; }
-html[data-say="love"] .brand-mark .bm-love { display: inline; }
-html[data-say="love"] .brand-mark .bm-heart { opacity: 1; transform: scale(1); }
-@keyframes bm-nod { 0%, 100% { transform: none; } 40% { transform: translateY(-2px) scale(1.04, .97); } }
-/* It says it where its own name is written. A bubble under the face was a
-   card hanging over the sidebar, covering the first rows of the tree to say
-   two words; this covers nothing, moves nothing, and costs no space at all --
-   the word "snyvi" steps aside for the length of the answer and comes back.
-   The logo speaking in place of its own name is also the right shape for the
-   thing it is: snyvi only ever answers, so it only ever borrows its own line.
-   Short lines only, then: it has the width between the mark and the count. */
-.brand { position: relative; }
-.brand-name { transition: opacity var(--dur-quick) ease; }
-html[data-say] .brand-name { opacity: 0; }
 /* How many agents hold a stream on the daemon now, and the way to the connect
    page. It was a row of its own, "Agents live", which spent a line of the
    sidebar on a number read rarely; it is a pill at the foot, beside the
@@ -639,12 +612,11 @@ button.sec-fold:hover { color: var(--fg-2); }
 .sec.folded > .sec-body { display: none; }
 .sec-n.ok { color: var(--ok); }
 .sec-n.bad { color: var(--danger); }
-/* A widget's seat (docs/WIDGETS.md): who wrote it and when, a failed run's
-   line, and the body in a fixed room -- `--lines` of 20 px -- so a new body
-   never moves what is under it. A longer one is cut, and opens where it is
+/* A widget's seat (docs/WIDGETS.md): a failed run's line, and the body in
+   a fixed room -- `--lines` of 20 px -- so a new body never moves what is
+   under it. Who writes it is its name's tip (app.js `patchSeat`). A longer one is cut, and opens where it is
    on a click (that is the reader moving the page, not the widget). Past its
    time the whole seat steps back. */
-.wg-by { margin: 0; padding: 0 8px; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wg-ask { display: flex; align-items: center; gap: 8px; margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-2); }
 .wg-allow { flex: none; padding: 2px 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); color: var(--accent); font-size: var(--fs-micro); font-weight: 600; }
 .wg-allow:hover:not(:disabled) { background: var(--accent-bg); }
@@ -844,6 +816,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desks .ctx.hot { color: var(--warn); font-weight: 600; }
 .t-desks .dot { flex: none; display: grid; place-items: center; width: 10px; height: 10px; }
 .t-desks .dot.on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.t-desks .dot.run::before { content: ""; width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--fg-3); }
 .t-desks .dot.blk { width: auto; color: var(--warn); font-size: var(--fs-micro); font-weight: 600; line-height: 1; white-space: nowrap; }
 .t-desks .k { min-width: 2ch; text-align: right; font-size: var(--fs-micro); font-family: var(--mono); color: var(--fg-2); flex: none; font-variant-numeric: tabular-nums; }
 /* A row's ✕ -- delete a document, close a desk -- takes the place of what is
@@ -910,6 +883,18 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    only: the list keeps its order and every row its place. */
 .t-proj.quiet > summary > .nm { color: var(--fg-2); }
 .t-proj > summary.new > .r-ico { color: var(--accent); }
+/* A friend where a row's icon stands: the first letter of their name in a
+   circle the icon's size, so the column stays one column (02-tree.js
+   `whoIco`). */
+.r-who { flex: none; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--rule); color: var(--fg-2); font-size: var(--fs-micro); font-weight: 650; line-height: 1; }
+.t-doc .r-who { width: 14px; height: 14px; letter-spacing: -.04em; }
+/* Grey like any read row: the accent is "where you are" and "unread", and a
+   friend is neither (audit 67d008cb6f). It lights as a page glyph does. */
+:is(.t-proj > summary.new, .t-doc a.new, .t-doc a.active) > .r-who { background: var(--accent-bg); color: var(--accent); }
+/* How many subfolder projects a project holds, after its chevron, as a
+   section's count is; they hang under it, one step in (03-queue.js `nest`). */
+.t-subs { flex: none; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; color: var(--fg-3); }
+.t-sub { list-style: none; margin-left: 14px; }
 /* An idle desk's name steps back, so the live ones -- the dot, "needs you"
    -- are what the eye finds. The desk on screen keeps its ink. */
 .t-desk > a:not(.active):not(:has(.dot)) > .title { color: var(--fg-2); }
@@ -938,9 +923,9 @@ summary:is(:hover, :focus-within) > .b-new, .b-new:focus-visible { opacity: 1; }
    saying so, and the way to it. Its ✕ follows it rather than splitting the
    slack with it. */
 .b-new.has { opacity: 1; color: var(--fg-3); }
-/* …in the Desks rows' colours while its desk is doing something: a panel
-   running, or one waiting on the reader. Idle, it stays quiet, so it does
-   not read as a second desk row. */
+/* …green while an agent at its desk is working, amber while a panel waits
+   on the reader (02-tree.js `deskState`). Otherwise quiet, a shell open
+   included, so it does not read as a second desk row. */
 .b-new.has.on { color: var(--ok); }
 .b-new.has.blk { color: var(--warn); }
 /* A project with no desk yet keeps the slot, empty until the row is hovered,
@@ -1163,9 +1148,6 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
    padding on the bar would give it a height and push the page down, and a
    margin on the card would collapse through the bar and do the same. */
 #queue-bar:not([hidden]) ~ #find { padding-top: 58px; }
-/* On a desk the head is the desk's own row, and the bar lays over its
-   middle, between the name and the buttons, as it did before the head. */
-:root[data-view="desk"] #queue-bar { top: 0; }
 #queue-bar .qb { position: relative; top: 10px; display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 5px 5px 5px 9px; animation: rise var(--dur-quick) var(--ease-out); }
 /* snyvi at the front of the bar, holding what came: the toast's head, the
    size of the count's line, leaning in to the text it is holding up. Its
@@ -1262,26 +1244,10 @@ pre.code .inv { color: var(--del-fg); }
 .inbox-head { margin-bottom: 28px; }
 .inbox-head h1 { font-size: var(--fs-h2); letter-spacing: -.02em; font-weight: 650; margin: 0 0 4px; }
 .inbox-head p { color: var(--fg-3); margin: 0; font-size: var(--fs-body-s); }
-.inbox { list-style: none; margin: 0; padding: 0; }
-.inbox li a { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title time" "sub sub"; gap: 2px 16px; padding: 12px 14px; margin: 0 -14px; border-radius: var(--r-md); color: inherit; border-bottom: 1px solid var(--rule); transition: background var(--t); }
-.inbox li a:hover { background: var(--bg-side); text-decoration: none; }
-.inbox .title { grid-area: title; font-weight: 600; font-size: var(--fs-body-s); letter-spacing: -.005em; }
-.inbox .time { grid-area: time; font-size: var(--fs-small); color: var(--fg-3); font-variant-numeric: tabular-nums; }
-.inbox .sub { grid-area: sub; font-size: var(--fs-small); color: var(--fg-3); }
-.inbox .sub b { font-weight: 500; color: var(--fg-2); }
-.inbox a.new .title::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin: 0 9px 2px 0; vertical-align: middle; }
-.inbox-sec { display: flex; align-items: center; gap: 10px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; margin: 32px 0 4px; }
-.inbox-sec .n { background: var(--accent); color: var(--on-accent); border-radius: var(--r-pill); padding: 0 7px; line-height: 17px; font-variant-numeric: tabular-nums; font-size: var(--fs-micro); }
-.inbox-sec button { margin-left: auto; font-weight: 500; font-size: var(--fs-small); color: var(--fg-2); padding: 3px 8px; border-radius: var(--r-sm); }
-.inbox-sec button + button { margin-left: 0; }
-/* Removed · Show, at the foot of the Inbox, and the rows it opens. */
-.inbox-sec button:hover { background: var(--rule); color: var(--fg); }
-.inbox.waiting { margin-bottom: 8px; }
-.empty-state { margin: 20vh auto 0; max-width: 46ch; text-align: center; color: var(--fg-2); }
-.empty-state h1 { font-size: var(--fs-h3); font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; color: var(--fg); }
-.empty-state p { margin: 0 0 18px; font-size: var(--fs-body-s); }
-.empty-state .hero .mk { display: block; width: 44px; height: 44px; margin: 0 auto 16px; }
-.empty-state pre { text-align: left; font-family: var(--mono); font-size: var(--fs-ui); background: var(--code-bg); padding: 12px 16px; border-radius: var(--r-sm); display: inline-block; margin: 0; }
+/* The Inbox's list and its empty state are home.js's, which draws them
+   (`inboxHtml`): off first paint since 1.32, as the page waits for that
+   chunk before it draws its rows anyway. The folder list (browse.js)
+   carries the rows it shares with it. */
 
 /* ---------- rail ---------- */
 /* Two things live in the rail and they scroll apart. The contents can be
@@ -1381,25 +1347,11 @@ pre.code .ln::before { cursor: pointer; }
 .mk-love, .mk-puff, .mk-cheek { fill: var(--heart); }
 .mk-shine { fill: var(--mascot-shine); }   /* the peek's alone: at 72 px the eyes keep their light */
 
-/* A face moves only for what happens a few times a day (docs/DESIGN.md
-   §7.2): something arriving, the queue emptying, a small failure. The
-   answers to clicks -- rest, glad, wink -- change the face and keep still. */
-[data-feel="love"] .mk { animation: mk-hop .62s var(--ease-spring) 1; }
-[data-feel="whoa"] .mk { animation: mk-pop .5s cubic-bezier(.2,1.8,.4,1) 1; }
-[data-feel="oops"] .mk { animation: mk-shake .46s ease-in-out 1; }
-/* The antenna is the part with no face on it, so it carries the rest of the
-   feeling: it swings behind a hop and droops when the answer is a no. */
-[data-feel="love"] .mk-nub { animation: mk-swing .62s cubic-bezier(.3,1.5,.5,1) 1; }
-[data-feel="oops"] .mk-nub { transform: translateY(1.4px) rotate(-14deg); }
-.mk-puff { transform-box: view-box; transform-origin: 26px 8px; animation: mk-puff 1.5s cubic-bezier(.3,.7,.4,1) var(--dur-move) 1 both; }
-@keyframes mk-hop { 0% { transform: none; } 32% { transform: translateY(-4px) scale(1.06, .94); } 62% { transform: translateY(0) scale(.95, 1.05); } 82% { transform: translateY(-1px); } 100% { transform: none; } }
-@keyframes mk-pop { 0% { transform: scale(.62); } 55% { transform: scale(1.12); } 100% { transform: none; } }
-@keyframes mk-shake { 0%, 100% { transform: none; } 20% { transform: rotate(-7deg); } 50% { transform: rotate(6deg); } 80% { transform: rotate(-3deg); } }
-@keyframes mk-swing { 0%, 100% { transform: none; } 30% { transform: rotate(-20deg); } 65% { transform: rotate(12deg); } }
-@keyframes mk-puff { from { opacity: 0; transform: translate(0, 2px) scale(.4); } 35% { opacity: 1; } to { opacity: 0; transform: translate(3px, -11px) scale(1); } }
+/* How a face moves for a feeling is look.js's, fetched once the page is
+   idle: off first paint since 1.32. */
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .toast, .mk, .mk-nub, .mk-puff { animation: none; }
+  .toast { animation: none; }
 }
 
 /* ---------- palette / help ---------- */
@@ -1450,11 +1402,11 @@ pre.code .lc { display: block; content-visibility: auto; contain-intrinsic-block
 .b-empty:hover { background: var(--rule); color: var(--fg-2); }
 
 /* ---------- where the mascot never is, and the quiet switch ----------
-   On a desk the panels are the work: no face in a toast or the queue bar
+   On a desk the panels are the work: no face in a toast (and no queue bar)
    there (docs/DESIGN.md §2.3). The quiet switch (§2.5, ⌘K and the mark's
    menu) keeps every face at rest and nothing of it moving: no hops, blinks,
-   hearts, hover lines or peek; a waiting aside is the nub, lit. */
-:root[data-view="desk"] :is(.toast .who, #queue-bar .qb-who) { display: none; }
+   hearts or peek; a waiting aside is the nub, lit. */
+:root[data-view="desk"] .toast .who { display: none; }
 
 /* Working: the one mark for a process under way (docs/DESIGN.md §7.4) --
    three dots, the light walking along them, beside a word that says what.
@@ -1467,7 +1419,7 @@ pre.code .lc { display: block; content-visibility: auto; contain-intrinsic-block
 @keyframes dots { 30% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .dots i:nth-child(-n+2) { opacity: 1; } }
 :root[data-mascot="quiet"] :is(.mk, .mk *, .brand-mark *, .note-bg) { animation: none !important; transition: none !important; }
-:root[data-mascot="quiet"] :is(.bm-say, .note-bg, .uc-bg, .mk-puff, .brand-mark .bm-heart) { display: none !important; }
+:root[data-mascot="quiet"] :is(.note-bg, .uc-bg, .mk-puff, .brand-mark .bm-heart) { display: none !important; }
 /* The last one waiting read: love, on the mark, once (app.js renderQueue). */
 html[data-cleared] .brand-mark .bm-open { display: none; }
 html[data-cleared] .brand-mark .bm-glad { display: inline; }

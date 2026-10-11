@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (await filedAct(a, b, d) || keysAct(a, b, d))) return;
+    if (d && (await filedAct(a, b, d) || keysAct(a, b, d) || arrAct(a, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -39,7 +39,7 @@ async function act(b, byKey) {
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
     else if (a === "more") { docsAll = !docsAll; rail(); }
-    else if (a === "notes-more") { notesAll = !notesAll; rail(); }
+    else if (a === "notes-more" || a === "notes-done") { a === "notes-more" ? notesAll = !notesAll : notesDone = !notesDone; rail(); }
     // Off this desk's list, and back: the row keeps its place with an Undo,
     // as a note's does, and the daemon is told after the rail has changed.
     else if (a === "doc-x") {
@@ -104,7 +104,7 @@ async function act(b, byKey) {
       if (x) {
         // The last open line, ticked: the mark says so once the daemon has it.
         const last = stillOpen(x) && !noteList.some(y => y !== x && stillOpen(y));
-        x.done = !x.done;
+        x.done = !x.done; if (x.done) notesKept.add(x.id);
         rail();
         // The daemon owns the order -- a line just ticked goes to the end of
         // the done half -- so the list is read back rather than guessed at.
@@ -366,7 +366,7 @@ function click(e) {
   if (fd) { ctx.fold(fd.dataset.fold); return; }
   const wa = e.target.closest("[data-wallow]");
   if (wa) { ctx.allowWidget(wa); return; }
-  const ws = e.target.closest("[data-wretry], [data-wnot], [data-wtell]");
+  const ws = e.target.closest("[data-wretry], [data-wnot], [data-wtell], [data-wundo]");
   if (ws) { ctx.seatAct(ws); return; }
   // A widget's body or failed line past its room opens where it is, and
   // closes again.
@@ -497,7 +497,7 @@ export function open(c) {
   if (deskId !== c.id) {
     for (const v of [...views.values()]) dropView(v);
     docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
-    focused = null; full = false; keysClose();
+    focused = null; full = false; keysClose(); forgetArrivals();
   }
   deskId = c.id; reading = null;
   // Home's "last touched" and the desk it offers to pick up start here.
@@ -715,7 +715,10 @@ export function actions(el) {
       { label: "Add a picture…", run: () => pickImages(x.id) },
       { label: `Copy #${x.id}`, run: () => copySha(note.querySelector(".dk-num"), "✓") },
       ...(x.done && x.done_doc ? [{ label: "Open what it sent", run: () => ctx.read(x.done_doc) }] : []),
-      ...(x.done && x.done_commit ? [{ label: "Copy commit", run: () => copySha(note.querySelector(".dk-sha")) }] : []), R,
+      // Where a ticked line's work went is its tip, not marks on the row:
+      // these are the hands for it (06-rail.js `doneWords`).
+      ...(x.done && x.done_commit ? [{ label: `Copy commit ${x.done_commit.slice(0, 7)}`, run: () => navigator.clipboard?.writeText(x.done_commit) }] : []),
+      ...(x.done && /^https?:\/\//.test(x.done_evidence) ? [{ label: `Open ${evSay(x.done_evidence)}`, run: () => openLink(x.done_evidence) }] : []), R,
       { label: "Remove from the list", danger: true, run: does("note-x") },
       ...(noteList.some(y => y.done && !y.gone) ? [{ label: "Remove done notes", run: does("note-clear") }] : []),
     ] };

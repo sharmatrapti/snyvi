@@ -17,13 +17,21 @@
 //!
 //! What the reader decided about a widget -- hidden, its settings, the hash
 //! of the folder they allowed to run, whether their own edits rerun, the
-//! desks it is on and until when -- is `widget_prefs`, by name, and nothing
-//! a writer sends changes it.
+//! desks it is on and until when -- is `widget_prefs`, by owner and name,
+//! and nothing a writer sends changes it.
+//!
+//! **A widget file has an owner** (1.32): the desk whose folder it is in
+//! (`widgets/@<desk id>/<name>/`), or none -- 0 -- for one in the widgets
+//! folder itself, shared by the desks it is on or global. An agent's
+//! widget is its desk's and runs nowhere else; sharing it is the reader's
+//! move. A name is shared or owned, never both, so two desks may each own
+//! a `status` while a shared `status` would be refused.
 //!
 //! **An agent asks first** (#111). A widget file it proposes is a card on Your
 //! turn, and so is the first box a panel pushes onto a desk: `widget_asks`
 //! keeps the reader's answer per desk and name -- waiting, yes, not now, or
-//! ended -- and the body that waits behind the card.
+//! ended -- and the body that waits behind the card. A box the reader
+//! removed is `removed` there, with its last body kept for Undo.
 //!
 //! Nothing is deleted on the reader's account: hiding is a flag, and a body
 //! cleared by its writer is the writer's to clear.
@@ -111,6 +119,35 @@ pub const STOPPED: &str = "stopped: ";
 pub const TITLE_COLUMN_1_31: &str =
     "ALTER TABLE widget_bodies ADD COLUMN title TEXT NOT NULL DEFAULT ''";
 
+/// 1.32: a widget file's owner, the desk it belongs to (0: shared, or
+/// global). `widget_prefs` is keyed by owner and name, which SQLite cannot
+/// change in place, so it is built again. A widget on exactly one desk is
+/// marked to be that desk's -- its owner the desk's id, negative -- and
+/// `adopt` moves its folder at the next start, once. A seat says whose it
+/// is. Version 18 of `store::MIGRATIONS`, never in `SCHEMA`.
+pub const OWNER_1_32: [&str; 5] = [
+    "CREATE TABLE widget_prefs_1_32 (
+       owner INTEGER NOT NULL DEFAULT 0,
+       name TEXT NOT NULL,
+       hidden INTEGER NOT NULL DEFAULT 0,
+       settings TEXT NOT NULL DEFAULT '{}',
+       trusted_hash TEXT NOT NULL DEFAULT '',
+       rerun_edits INTEGER NOT NULL DEFAULT 0,
+       updated_at INTEGER NOT NULL,
+       desks TEXT NOT NULL DEFAULT '',
+       until INTEGER NOT NULL DEFAULT 0,
+       until_pane TEXT NOT NULL DEFAULT '',
+       PRIMARY KEY (owner, name)
+     )",
+    "INSERT INTO widget_prefs_1_32 (owner, name, hidden, settings, trusted_hash, rerun_edits, updated_at, desks, until, until_pane)
+     SELECT CASE WHEN desks GLOB '[0-9]*' AND desks NOT GLOB '*[^0-9]*' THEN -CAST(desks AS INTEGER) ELSE 0 END,
+            name, hidden, settings, trusted_hash, rerun_edits, updated_at, desks, until, until_pane
+     FROM widget_prefs",
+    "DROP TABLE widget_prefs",
+    "ALTER TABLE widget_prefs_1_32 RENAME TO widget_prefs",
+    "ALTER TABLE widget_bodies ADD COLUMN owner INTEGER NOT NULL DEFAULT 0",
+];
+
 /// The most a seat's line keeps of why a run failed. A longer one ends in
 /// "…", so it is never read as whole when it is not.
 pub const ERROR_MAX: usize = 600;
@@ -121,11 +158,11 @@ pub const FAILS_TO_STOP: u8 = 3;
 /// The left's sections, in the order a new reader has them: today's.
 /// `widgets` is the slot every global widget sits in, together.
 pub const LEFT: [&str; 4] = ["inbox", "desks", "folders", "widgets"];
-/// The right's, on a desk. `turn` is Your turn with Suggested under it, and
-/// is always first; `widgets` is the slot the desk's widgets sit in.
-pub const RIGHT: [&str; 6] = ["turn", "panels", "points", "docs", "notes", "widgets"];
-/// The one section that never moves and is never hidden.
-pub const FIXED: &str = "turn";
+/// The right's, on a desk. `widgets` is the slot the desk's widgets sit in.
+/// Your turn was `turn`, fixed first, until 1.32: it waits in the desk's
+/// corner now, so a stored layout that names it loses it here (`order`
+/// drops an id it does not know).
+pub const RIGHT: [&str; 5] = ["panels", "points", "docs", "notes", "widgets"];
 
 /// Which sections each side has, in order, and which of them are hidden. A
 /// section's id is unique on its side; `widgets` is on both, so a hidden
@@ -183,14 +220,12 @@ impl Layout {
     /// what can be. Whatever a page sends goes through this first.
     pub fn normalize(&self) -> Layout {
         let left = order(&self.left, &LEFT);
-        let mut right = order(&self.right, &RIGHT);
-        right.retain(|x| x != FIXED);
-        right.insert(0, FIXED.to_string());
+        let right = order(&self.right, &RIGHT);
         let can_hide = |h: &str| -> bool {
             match h.split_once(':') {
                 Some(("left", "widgets")) | Some(("right", "widgets")) => true,
                 Some(_) => false,
-                None => h != FIXED && h != "widgets" && (LEFT.contains(&h) || RIGHT.contains(&h)),
+                None => h != "widgets" && (LEFT.contains(&h) || RIGHT.contains(&h)),
             }
         };
         let mut hidden: Vec<String> = Vec::new();
@@ -415,20 +450,34 @@ pub struct Seat {
     pub hidden: bool,
     /// A widget file's title; empty for a push, whose head is its name.
     pub title: String,
+    /// The desk a widget file belongs to; 0 for a shared or global one, and
+    /// for a push.
+    pub owner: i64,
+    /// An agent's: a desk's own widget file, or a box a panel pushed (its
+    /// panel may have closed since). Only these have Remove.
+    pub agent: bool,
 }
 
 /// Who wrote a body: "panel 2", "a script", or for a widget file how often
-/// it runs ("every 2 min"), with the title its head says.
+/// it runs ("every 2 min"), with the title its head says and the desk it
+/// belongs to (0: none).
 pub struct Writer<'a> {
     pub source: Source,
     pub writer: &'a str,
     pub pane: &'a str,
     pub title: &'a str,
+    pub owner: i64,
 }
 
+/// A seat's columns, its prefs' `hidden` by the widget's owner: a desk's own
+/// widget and a shared one never have the same name on a desk.
 const SEAT_COLS: &str =
     "b.desk_id, b.name, b.source, b.body_html, b.tone, b.count, b.lines, b.stale_after,
-     b.writer, b.pane, b.error, b.updated_at, COALESCE(p.hidden, 0), b.title";
+     b.writer, b.pane, b.error, b.updated_at,
+     COALESCE((SELECT p.hidden FROM widget_prefs p WHERE p.name = b.name AND p.owner = b.owner), 0),
+     b.title, b.owner,
+     CASE WHEN b.source = 'file' THEN b.owner != 0 ELSE b.pane != '' OR EXISTS
+       (SELECT 1 FROM widget_asks a WHERE a.desk_id = b.desk_id AND a.name = b.name) END";
 
 fn seat(r: &rusqlite::Row) -> rusqlite::Result<Seat> {
     Ok(Seat {
@@ -448,6 +497,8 @@ fn seat(r: &rusqlite::Row) -> rusqlite::Result<Seat> {
         updated_at: r.get(11)?,
         hidden: r.get::<_, i64>(12)? != 0,
         title: r.get(13)?,
+        owner: r.get(14)?,
+        agent: r.get::<_, i64>(15)? != 0,
     })
 }
 
@@ -455,8 +506,7 @@ fn seat(r: &rusqlite::Row) -> rusqlite::Result<Seat> {
 /// new one lands at the end of its slot and nothing above it moves.
 pub fn seats(conn: &Connection, desk_id: i64) -> Result<Vec<Seat>> {
     let mut st = conn.prepare(&format!(
-        "SELECT {SEAT_COLS} FROM widget_bodies b LEFT JOIN widget_prefs p ON p.name = b.name
-         WHERE b.desk_id = ?1 ORDER BY b.rowid"
+        "SELECT {SEAT_COLS} FROM widget_bodies b WHERE b.desk_id = ?1 ORDER BY b.rowid"
     ))?;
     let rows = st.query_map([desk_id], seat)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -467,8 +517,7 @@ pub fn seat_of(conn: &Connection, desk_id: i64, name: &str) -> Result<Option<Sea
     Ok(conn
         .query_row(
             &format!(
-                "SELECT {SEAT_COLS} FROM widget_bodies b LEFT JOIN widget_prefs p ON p.name = b.name
-                 WHERE b.desk_id = ?1 AND b.name = ?2"
+                "SELECT {SEAT_COLS} FROM widget_bodies b WHERE b.desk_id = ?1 AND b.name = ?2"
             ),
             params![desk_id, name],
             seat,
@@ -521,12 +570,12 @@ pub fn put(
         }
     }
     conn.execute(
-        "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, tone, count, lines, stale_after, writer, pane, error, updated_at, title)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, '', ?12, ?13)
+        "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, tone, count, lines, stale_after, writer, pane, error, updated_at, title, owner)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, '', ?12, ?13, ?14)
          ON CONFLICT(desk_id, name) DO UPDATE SET source = excluded.source, body_md = excluded.body_md,
            body_html = excluded.body_html, tone = excluded.tone, count = excluded.count, lines = excluded.lines,
            stale_after = excluded.stale_after, writer = excluded.writer, pane = excluded.pane, error = '',
-           updated_at = excluded.updated_at, title = excluded.title",
+           updated_at = excluded.updated_at, title = excluded.title, owner = excluded.owner",
         params![
             desk_id,
             name,
@@ -540,7 +589,8 @@ pub fn put(
             w.writer,
             w.pane,
             now,
-            w.title
+            w.title,
+            w.owner
         ],
     )?;
     Ok(Put::Done)
@@ -559,12 +609,12 @@ pub fn fail(
 ) -> Result<()> {
     let why = cut(why, ERROR_MAX);
     conn.execute(
-        "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, writer, error, updated_at, title)
-         VALUES (?1, ?2, 'file', '', '', ?3, ?4, ?5, ?6)
+        "INSERT INTO widget_bodies (desk_id, name, source, body_md, body_html, writer, error, updated_at, title, owner)
+         VALUES (?1, ?2, 'file', '', '', ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(desk_id, name) DO UPDATE SET error = excluded.error, updated_at = excluded.updated_at,
-           writer = excluded.writer, title = excluded.title
+           writer = excluded.writer, title = excluded.title, owner = excluded.owner
          WHERE widget_bodies.source = 'file'",
-        params![desk_id, name, w.writer, why, now, w.title],
+        params![desk_id, name, w.writer, why, now, w.title, w.owner],
     )?;
     Ok(())
 }
@@ -602,10 +652,12 @@ pub fn clear(conn: &Connection, desk_id: i64, name: &str, source: Source) -> Res
     Ok(n > 0)
 }
 
-/// The desks with a seat for `name` (0 for the global one).
-pub fn desks_of(conn: &Connection, name: &str) -> Result<Vec<i64>> {
-    let mut st = conn.prepare("SELECT desk_id FROM widget_bodies WHERE name = ?1")?;
-    let rows = st.query_map([name], |r| r.get(0))?;
+/// The desks with a seat for `name` (0 for the global one): the widget
+/// `owner` has, and for a shared name the boxes pushed under it too.
+pub fn desks_of(conn: &Connection, owner: i64, name: &str) -> Result<Vec<i64>> {
+    let mut st =
+        conn.prepare("SELECT desk_id FROM widget_bodies WHERE name = ?1 AND owner = ?2")?;
+    let rows = st.query_map(params![name, owner], |r| r.get(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -632,12 +684,15 @@ pub fn pane_ended(conn: &Connection, pane: &str, said: &str) -> Result<usize> {
 /// What the reader decided about a widget.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 pub struct Prefs {
+    /// The desk the widget belongs to; 0 for a shared or global one.
+    pub owner: i64,
     pub name: String,
     pub hidden: bool,
     pub settings: String,
     pub trusted_hash: String,
     pub rerun_edits: bool,
-    /// The desks a desk widget is on; none is every desk.
+    /// The desks a shared desk widget is on; none is every desk. A desk's
+    /// own widget is on its desk alone, whatever this says.
     pub desks: Vec<i64>,
     /// When it turns itself off; 0 is when the reader does.
     pub until: i64,
@@ -648,6 +703,9 @@ pub struct Prefs {
 impl Prefs {
     /// Whether a desk widget is on desk `id`.
     pub fn on_desk(&self, id: i64) -> bool {
+        if self.owner != 0 {
+            return id == self.owner;
+        }
         self.desks.is_empty() || self.desks.contains(&id)
     }
     /// Whether its time is up: past `until`, or its panel `live` no more.
@@ -665,27 +723,35 @@ fn desks_read(s: &str) -> Vec<i64> {
     s.split(',').filter_map(|x| x.trim().parse().ok()).collect()
 }
 
-pub fn prefs(conn: &Connection, name: &str) -> Result<Prefs> {
+const PREFS_COLS: &str =
+    "owner, name, hidden, settings, trusted_hash, rerun_edits, desks, until, until_pane";
+
+fn prefs_row(r: &rusqlite::Row) -> rusqlite::Result<Prefs> {
+    Ok(Prefs {
+        owner: r.get(0)?,
+        name: r.get(1)?,
+        hidden: r.get::<_, i64>(2)? != 0,
+        settings: r.get(3)?,
+        trusted_hash: r.get(4)?,
+        rerun_edits: r.get::<_, i64>(5)? != 0,
+        desks: desks_read(&r.get::<_, String>(6)?),
+        until: r.get(7)?,
+        until_pane: r.get(8)?,
+    })
+}
+
+/// What the reader decided about `owner`'s widget `name` (0: a shared or
+/// global one), or the defaults when nothing yet.
+pub fn prefs(conn: &Connection, owner: i64, name: &str) -> Result<Prefs> {
     Ok(conn
         .query_row(
-            "SELECT name, hidden, settings, trusted_hash, rerun_edits, desks, until, until_pane
-             FROM widget_prefs WHERE name = ?1",
-            [name],
-            |r| {
-                Ok(Prefs {
-                    name: r.get(0)?,
-                    hidden: r.get::<_, i64>(1)? != 0,
-                    settings: r.get(2)?,
-                    trusted_hash: r.get(3)?,
-                    rerun_edits: r.get::<_, i64>(4)? != 0,
-                    desks: desks_read(&r.get::<_, String>(5)?),
-                    until: r.get(6)?,
-                    until_pane: r.get(7)?,
-                })
-            },
+            &format!("SELECT {PREFS_COLS} FROM widget_prefs WHERE owner = ?1 AND name = ?2"),
+            params![owner, name],
+            prefs_row,
         )
         .optional()?
         .unwrap_or_else(|| Prefs {
+            owner,
             name: name.to_string(),
             settings: "{}".into(),
             ..Prefs::default()
@@ -705,16 +771,23 @@ pub struct Change<'a> {
     pub until_pane: Option<&'a str>,
 }
 
-/// Change what the reader decided about `name`.
-pub fn set_prefs(conn: &Connection, name: &str, ch: &Change, now: i64) -> Result<Prefs> {
-    let was = prefs(conn, name)?;
+/// Change what the reader decided about `owner`'s widget `name`.
+pub fn set_prefs(
+    conn: &Connection,
+    owner: i64,
+    name: &str,
+    ch: &Change,
+    now: i64,
+) -> Result<Prefs> {
+    let was = prefs(conn, owner, name)?;
     conn.execute(
-        "INSERT INTO widget_prefs (name, hidden, settings, trusted_hash, rerun_edits, desks, until, until_pane, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-         ON CONFLICT(name) DO UPDATE SET hidden = excluded.hidden, settings = excluded.settings,
+        "INSERT INTO widget_prefs (owner, name, hidden, settings, trusted_hash, rerun_edits, desks, until, until_pane, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT(owner, name) DO UPDATE SET hidden = excluded.hidden, settings = excluded.settings,
            trusted_hash = excluded.trusted_hash, rerun_edits = excluded.rerun_edits, desks = excluded.desks,
            until = excluded.until, until_pane = excluded.until_pane, updated_at = excluded.updated_at",
         params![
+            owner,
             name,
             ch.hidden.unwrap_or(was.hidden) as i64,
             ch.settings.unwrap_or(&was.settings),
@@ -726,37 +799,107 @@ pub fn set_prefs(conn: &Connection, name: &str, ch: &Change, now: i64) -> Result
             now
         ],
     )?;
-    prefs(conn, name)
+    prefs(conn, owner, name)
 }
 
-/// A widget file's seats on desks it is no longer on: what its runs printed
-/// there, which a run makes again if it comes back. The desks it left.
+/// A widget changing hands: what the reader decided about it, and its
+/// seats, go from `from` to `to` (0: shared). Shared, it stays on the desk
+/// it was that desk's, and only there until the reader ticks more; a desk's
+/// own, its seats elsewhere go. The desks whose seats changed.
+pub fn rehome(conn: &Connection, name: &str, from: i64, to: i64, now: i64) -> Result<Vec<i64>> {
+    let was = prefs(conn, from, name)?;
+    let desks: Vec<i64> = if to == 0 { vec![from] } else { Vec::new() };
+    conn.execute(
+        "DELETE FROM widget_prefs WHERE owner = ?1 AND name = ?2",
+        params![from, name],
+    )?;
+    let ch = Change {
+        hidden: Some(was.hidden),
+        settings: Some(&was.settings),
+        trusted_hash: Some(&was.trusted_hash),
+        rerun_edits: Some(was.rerun_edits),
+        desks: Some(&desks),
+        until: Some(was.until),
+        until_pane: Some(&was.until_pane),
+    };
+    set_prefs(conn, to, name, &ch, now)?;
+    let mut touched = desks_of(conn, from, name)?;
+    if to != 0 {
+        conn.execute(
+            "DELETE FROM widget_bodies WHERE name = ?1 AND owner = ?2 AND source = 'file' AND desk_id != ?3",
+            params![name, from, to],
+        )?;
+    }
+    conn.execute(
+        "UPDATE widget_bodies SET owner = ?3 WHERE name = ?1 AND owner = ?2 AND source = 'file'",
+        params![name, from, to],
+    )?;
+    touched.sort_unstable();
+    touched.dedup();
+    Ok(touched)
+}
+
+/// The widgets marked in 1.32 to become a desk's own (`OWNER_1_32`): each
+/// one's name and desk, its owner still negative until `adopted` or
+/// `stays_shared` settles it.
+pub fn to_adopt(conn: &Connection) -> Result<Vec<(String, i64)>> {
+    let mut st = conn.prepare("SELECT name, -owner FROM widget_prefs WHERE owner < 0")?;
+    let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// A marked widget whose folder moved into its desk's: the desk's own now,
+/// and its seat says so.
+pub fn adopted(conn: &Connection, name: &str, desk: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE widget_prefs SET owner = ?2, desks = '' WHERE owner = -?2 AND name = ?1",
+        params![name, desk],
+    )?;
+    conn.execute(
+        "UPDATE widget_bodies SET owner = ?2 WHERE name = ?1 AND desk_id = ?2 AND source = 'file'",
+        params![name, desk],
+    )?;
+    Ok(())
+}
+
+/// A marked widget that could not move: shared, as it was, on its one desk.
+pub fn stays_shared(conn: &Connection, name: &str, desk: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE widget_prefs SET owner = 0 WHERE owner = -?2 AND name = ?1",
+        params![name, desk],
+    )?;
+    Ok(())
+}
+
+/// A shared widget file's seats on desks it is no longer on: what its runs
+/// printed there, which a run makes again if it comes back. The desks it
+/// left.
 pub fn off_desks(conn: &Connection, name: &str, desks: &[i64]) -> Result<Vec<i64>> {
     if desks.is_empty() {
         return Ok(Vec::new());
     }
-    let gone: Vec<i64> = desks_of(conn, name)?
+    let gone: Vec<i64> = desks_of(conn, 0, name)?
         .into_iter()
         .filter(|d| *d != 0 && !desks.contains(d))
         .collect();
     for d in &gone {
         conn.execute(
-            "DELETE FROM widget_bodies WHERE desk_id = ?1 AND name = ?2 AND source = 'file'",
+            "DELETE FROM widget_bodies WHERE desk_id = ?1 AND name = ?2 AND source = 'file' AND owner = 0",
             params![d, name],
         )?;
     }
     Ok(gone)
 }
 
-/// Let a stopped widget file run again: on one desk, or on all. The desks
-/// whose seat it was.
-pub fn unstop(conn: &Connection, name: &str, desk: Option<i64>) -> Result<Vec<i64>> {
+/// Let `owner`'s stopped widget file run again: on one desk, or on all.
+/// The desks whose seat it was.
+pub fn unstop(conn: &Connection, owner: i64, name: &str, desk: Option<i64>) -> Result<Vec<i64>> {
     let mut st = conn.prepare(
-        "SELECT desk_id FROM widget_bodies WHERE name = ?1 AND source = 'file'
+        "SELECT desk_id FROM widget_bodies WHERE name = ?1 AND source = 'file' AND owner = ?4
          AND substr(error, 1, length(?2)) = ?2 AND (?3 IS NULL OR desk_id = ?3)",
     )?;
     let ds: Vec<i64> = st
-        .query_map(params![name, STOPPED, desk], |r| r.get(0))?
+        .query_map(params![name, STOPPED, desk, owner], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     for d in &ds {
         conn.execute(
@@ -891,4 +1034,57 @@ pub fn asks_ending(
         )?;
     }
     Ok(due)
+}
+
+/// The reader removed an agent's box: its seat goes, and what it last
+/// showed is kept on its ask, as the body a panel sends (`Body::parse`), for
+/// Undo. Its panel is kept too: that panel's pushes are refused after this,
+/// and a new panel's ask again. Whether there was an agent's box to remove.
+pub fn remove_box(conn: &Connection, desk_id: i64, name: &str, now: i64) -> Result<bool> {
+    let seat = conn
+        .query_row(
+            "SELECT body_md, tone, count, lines, stale_after, pane, writer FROM widget_bodies
+             WHERE desk_id = ?1 AND name = ?2 AND source = 'push'",
+            params![desk_id, name],
+            |r| {
+                Ok((
+                    serde_json::json!({
+                        "body": r.get::<_, String>(0)?, "tone": r.get::<_, String>(1)?,
+                        "count": r.get::<_, String>(2)?, "lines": r.get::<_, i64>(3)?,
+                        "stale_after": r.get::<_, i64>(4)?,
+                    })
+                    .to_string(),
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((raw, pane, writer)) = seat else {
+        return Ok(false);
+    };
+    if pane.is_empty() && ask_of(conn, desk_id, name)?.is_none() {
+        return Ok(false);
+    }
+    conn.execute(
+        "INSERT INTO widget_asks (desk_id, name, answer, pane, writer, body, updated_at)
+         VALUES (?1, ?2, 'removed', ?3, ?4, ?5, ?6)
+         ON CONFLICT(desk_id, name) DO UPDATE SET answer = 'removed', body = excluded.body,
+           pane = CASE WHEN excluded.pane != '' THEN excluded.pane ELSE widget_asks.pane END,
+           writer = excluded.writer, until = 0, until_pane = '', updated_at = excluded.updated_at",
+        params![desk_id, name, pane, writer, raw, now],
+    )?;
+    clear(conn, desk_id, name, Source::Push)
+}
+
+/// Undo a removed box: allowed again, and the ask -- with the body it last
+/// showed, to put back -- or None when it is not one removed.
+pub fn restore_box(conn: &Connection, desk_id: i64, name: &str, now: i64) -> Result<Option<Ask>> {
+    match ask_of(conn, desk_id, name)? {
+        Some(a) if a.answer == "removed" => {
+            ask_answer(conn, desk_id, name, "yes", 0, "", now)?;
+            Ok(Some(a))
+        }
+        _ => Ok(None),
+    }
 }
