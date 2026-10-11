@@ -2319,31 +2319,16 @@ async function deskRows(cdp, base, token) {
     rows.push(["an aside from a panel goes back to that panel", !!there,
       !from ? "the daemon did not say where the aside came from" : !led ? "the card does not lead to the panel" : !there ? `the click landed on ${await p.ev("location.pathname")}, not panel 2 of still-a` : "the click opened still-a with panel 2 focused"]);
 
-    // 1.32: no queue bar on a desk (audit dc5adb4641). The head keeps room to
-    // drag the window by, its slot counts this desk's waiting and no other's,
-    // and Mark these read leaves every other desk's waiting, with an Undo.
+    // 1.32: no queue bar on a desk (audit dc5adb4641). 1.33: no slot in the
+    // head either -- the rail's Documents already shows what waits here, in
+    // bold -- so the head keeps its room to drag the window by.
     const TK = { "content-type": "application/json", authorization: `Bearer ${token}` };
     await post("/api/queue/clear", {}, TK);
     const mine = (await post("/api/docs", { content: "# Here\n\nFrom panel 2.", title: "Sent here", origin: "mcp", pane: second }, TK)).doc;
-    const other = (await post("/api/docs", { content: "# Elsewhere\n\nFrom no desk.", title: "Sent elsewhere", origin: "mcp" }, TK)).doc;
-    const counted = await until(`document.querySelector(".dk-arr-b .n")?.textContent === "1"`);
-    const hd = await p.ev(`(() => { const l = document.querySelector(".dk-left")?.getBoundingClientRect(), n = document.querySelector(".dk-arr")?.getBoundingClientRect();
-      return { bar: !document.querySelector("#queue-bar").hidden, gap: l && n ? Math.round(n.left - l.right) : -1, says: document.querySelector(".dk-arr-b")?.textContent || "" }; })()`);
-    rows.push(["a desk has no arrivals bar; its head counts only its own", counted && !hd.bar,
-      hd.bar ? "the queue bar lay over the desk's head" : !counted ? `the head's slot says "${hd.says}", not 1 of the 2 waiting` : "no bar, and the slot says 1 of the 2 waiting"]);
-    rows.push(["the desk's head keeps room to drag the window by", hd.gap > 40, `${hd.gap} px free between Left off and the slot`]);
-    await p.clickOn(".dk-arr-b");
-    const listed = !!mine && await until(`!!document.querySelector('.dk-arr-sheet a[data-read="${mine.id}"]')`, 30);
-    const strays = listed && await p.ev(`!!document.querySelector('.dk-arr-sheet a[data-read="${other?.id}"]')`);
-    if (listed) await p.clickOn('.dk-arr-sheet [data-a="arr-read"]');
-    const undo = listed && await until(`!!document.querySelector('.dk-arr-sheet [data-a="arr-back"]')`, 30);
-    const left = (await (await fetch(`${base}/api/queue`)).json()).map(x => x.id);
-    rows.push(["Mark these read on a desk reads its own, and leaves the rest waiting", !!undo && !strays && left.includes(other?.id) && !left.includes(mine?.id),
-      !listed ? "the sheet did not list this desk's document" : strays ? "the sheet listed another desk's document" : !undo ? "no Undo where Mark these read was"
-        : !left.includes(other?.id) ? "the other desk's document was read too" : left.includes(mine?.id) ? "this desk's document is still waiting" : "this desk's read, the other waiting, and an Undo"]);
-    if (undo) await p.clickOn('.dk-arr-sheet [data-a="arr-back"]');
-    const back = undo && await until(`document.querySelector(".dk-arr-b .n")?.textContent === "1"`, 40);
-    rows.push(["and its Undo puts it back", !!back, back ? "the slot says 1 again" : "the slot did not come back to 1"]);
+    const listed = !!mine && await until(`!!document.querySelector('#rail [data-read="${mine.id}"], #rail [href="/d/${mine.id}"]')`, 40);
+    const hd = await p.ev(`(() => ({ bar: !document.querySelector("#queue-bar").hidden, slot: !!document.querySelector(".dk-head .dk-arr") }))()`);
+    rows.push(["a desk has no arrivals bar or slot; its rail lists what it sent", listed && !hd.bar && !hd.slot,
+      hd.bar ? "the queue bar lay over the desk's head" : hd.slot ? "the head still has an arrivals slot" : !listed ? "the rail's Documents did not list the panel's document" : "no bar, no slot, and the rail lists it"]);
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     await p.pointerAway();
   } finally {
@@ -2849,9 +2834,9 @@ async function keysSheetRows(cdp, base) {
   const until = async (expr, tries = 50) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
   try {
     await p.goto(`${base}/desk/${desk}#cap=${cap}`);
-    const named = await until(`document.querySelector(".dk-keys-b .acc")?.textContent === "Work"`);
+    const named = await until(`document.querySelector(".dk-keys-b .acc")?.textContent === "as Work"`);
     rows.push(["the desk's head names the account its Claude runs as", !!acc && named,
-      !acc ? "the account was refused" : named ? "Work, beside the key" : `the button says "${await p.ev(`document.querySelector(".dk-keys-b")?.textContent || ""`)}"`]);
+      !acc ? "the account was refused" : named ? "as Work, beside the key" : `the button says "${await p.ev(`document.querySelector(".dk-keys-b")?.textContent || ""`)}"`]);
     await p.clickOn(".dk-keys-b");
     const opened = await until(`!!document.querySelector(".dk-keys-sheet .dk-acc-rows input")`);
     const at = opened ? await p.ev(`({ on: document.activeElement?.matches(".dk-acc-rows input:checked") ? document.activeElement.value : "", open: document.querySelectorAll(".dk-keys-sheet .dk-add[open]").length, renew: document.querySelectorAll(".dk-keys-sheet .dk-acc-rows [data-a=acc-renew]").length })`) : null;

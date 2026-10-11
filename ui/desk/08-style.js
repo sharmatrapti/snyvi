@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ARRIVALS_CSS;
+  s.textContent = CSS + THREAD_CSS + ONYOU_CSS;
   document.head.append(s);
 }
 
@@ -39,7 +39,9 @@ const CSS = `
    takes the width it needs. */
 .dk-left { flex: 0 1 auto; max-width: 320px; min-width: 0; margin-right: auto; display: flex; align-items: center; gap: 6px; }
 .dk-left:has(.dk-left-in) { flex: 1 1 0; max-width: none; }
-.dk-head .dk-left ~ .icon { margin-left: 0; }
+.dk-head .dk-left ~ .dk-tabs { margin-left: 0; }
+/* Left off takes the free space, and only it: a second auto margin on the
+   tabs split that space and stood the key in the middle of the head. */
 .dk-left-b { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 6px; border: 0; border-radius: var(--r-sm);
   background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); text-align: left; cursor: text; }
 button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
@@ -52,13 +54,13 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    panes. A key just kept lights its row and the button once, in the
    background only, so nothing moves. */
 .dk-keys { position: relative; flex: none; display: flex; align-items: center; }
-:is(.dk-keys-b, .dk-arr-b) { display: flex; align-items: center; gap: 3px; padding: 2px 5px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
-:is(.dk-keys-b, .dk-arr-b):is(:hover, [aria-expanded="true"]) { background: var(--rule); color: var(--fg); }
-:is(.dk-keys-b, .dk-arr-b) .n { font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
-:is(.dk-keys-b, .dk-arr-b).none { color: var(--fg-3); }
+.dk-keys-b { display: flex; align-items: center; gap: 3px; padding: 2px 5px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); white-space: nowrap; cursor: pointer; }
+.dk-keys-b:is(:hover, [aria-expanded="true"]) { background: var(--rule); color: var(--fg); }
+.dk-keys-b .n { font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+.dk-keys-b.none { color: var(--fg-3); }
 @keyframes dk-kept { 0%, 40% { background: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; } }
-:is(.dk-keys-b, .dk-arr-b).kept, .dk-key.new { animation: dk-kept calc(var(--dur-moment) * 2) ease-out; }
-@media (prefers-reduced-motion: reduce) { :is(.dk-keys-b, .dk-arr-b).kept, .dk-key.new { animation: none; } }
+.dk-keys-b.kept, .dk-key.new { animation: dk-kept calc(var(--dur-moment) * 2) ease-out; }
+@media (prefers-reduced-motion: reduce) { .dk-keys-b.kept, .dk-key.new { animation: none; } }
 .dk-keys-sheet { position: absolute; top: calc(100% + 6px); right: 0; z-index: var(--z-pop); width: min(460px, calc(100vw - 32px)); padding: 8px 10px 10px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-small); color: var(--fg-2); text-align: left; white-space: normal; cursor: auto; }
 /* The keys sheet (audit 67d008cb6f): a title, two short lists under labels
    that read as labels -- above their rows, not ruled like one -- and an
@@ -104,8 +106,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-acc-live > button { justify-self: start; padding: 0; border: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; }
 .dk-acc-live label button + button { border-color: var(--rule-2); color: var(--fg-3); }
 .dk-acc-link { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); text-decoration: underline; cursor: pointer; }
-/* The account a desk runs as, leading its key button when it is not your login. */
-.dk-keys-b .acc { max-width: 12ch; overflow: hidden; text-overflow: ellipsis; font-weight: 600; color: var(--fg); margin-right: 2px; }
+/* The account a desk runs as, leading its key button when it is not your login:
+   "as Trapti" in the button's own quiet colour, never bold -- bold, beside the
+   desk's name, it read as the desk's title. */
+.dk-keys-b .acc { max-width: 16ch; overflow: hidden; text-overflow: ellipsis; margin-right: 2px; }
 :is(.dk-keys-say, .dk-key-m) code { font-family: var(--mono); }
 /* An agent's suggestion: a ghost row, quieter than a line of the reader's,
    with its two answers always shown. */
@@ -176,6 +180,11 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-head .icon:disabled:hover { background: none; color: var(--fg-3); }
 .dk-cap { font-family: var(--mono); font-size: 11px; color: var(--fg-3); margin-left: auto; padding: 2px 0 2px 5px; font-variant-numeric: tabular-nums; }
 .dk-tabs:not(:empty) + .dk-cap { margin-left: 0; }
+/* The keys sit just before the + and come first, so what follows them
+   takes no free space of its own: the +'s old auto margin, from when it led
+   the right-hand group, split the space with the tabs' and left a wide gap
+   between the key and the +. Here, after those rules, so it wins. */
+.dk-head .dk-keys ~ :is(.icon, .dk-cap) { margin-left: 0; }
 .dk-grid { flex: 1; min-height: 0; display: grid; gap: 6px; position: relative; }
 .dk-none { color: var(--fg-3); padding: 24px; }
 .dk-none button { color: var(--accent); }
@@ -199,6 +208,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .pn-slot { font-family: var(--mono); color: var(--fg-2); }
 .pn-start[hidden], .pn-connect[hidden] { display: none; }
 .pn-cmd { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; }
+/* The account a panel runs as, after its command, when that is worth saying. */
+.pn-acc { flex: none; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; color: var(--fg-3); }
+.pn-acc:empty { display: none; }
+.pn-acc::before { content: "as "; }
 .pn-git { font-family: var(--mono); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
 .pn-state { margin-left: auto; padding-left: 8px; }
 /* The context window, before the state: quiet, warmer from 70%, the waiting
@@ -255,9 +268,11 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .pn-body .g::before { content: ""; position: absolute; inset: 0; background: currentColor; -webkit-mask: var(--g) 0 0 / 100% 100% no-repeat; mask: var(--g) 0 0 / 100% 100% no-repeat; }
 .pn-body .x.r { width: calc(var(--r) * var(--cw)); }
 .pn-body .g.r::before { -webkit-mask-size: var(--cw) 100%; mask-size: var(--cw) 100%; -webkit-mask-repeat: repeat-x; mask-repeat: repeat-x; }
-/* The offer after an unplanned stop: over the top of the panel, in the
-   waiting amber, out of the way of the prompt it would type into. */
-.pn-offer { position: absolute; left: 12px; right: 12px; top: 8px; z-index: 3; display: flex; gap: 8px; align-items: center; padding: 6px 8px 6px 12px; font-size: 12px;
+/* The offer after an unplanned stop: over the top of the panel's screen, in
+   the waiting amber, out of the way of the prompt it would type into -- and
+   under the panel's head (one 11.5px line and 8px of padding, ~23px), never
+   over it: at top 8px it hid the panel's state and its close. */
+.pn-offer { position: absolute; left: 12px; right: 12px; top: 30px; z-index: 3; display: flex; gap: 8px; align-items: center; padding: 6px 8px 6px 12px; font-size: 12px;
   background: color-mix(in srgb, var(--warn) 12%, var(--bg-raise)); color: var(--fg); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: var(--r-sm); box-shadow: var(--shadow); }
 .pn-offer[hidden] { display: none; }
 .pn-offer > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -265,6 +280,8 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .pn-offer button { flex: none; padding: 3px 8px; border-radius: var(--r-xs); color: var(--fg-2); }
 .pn-offer [data-offer="go"] { color: var(--accent); font-weight: 600; }
 .pn-offer button:hover { background: var(--rule-2); color: var(--fg); }
+.pn-offer button:disabled { opacity: .55; cursor: progress; }
+.pn-offer button:disabled:hover { background: none; }
 .pn-start { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; padding: 8px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: var(--r-sm); box-shadow: var(--shadow); }
 .pn-start button { color: var(--accent); font-weight: 600; flex: none; }
 .pn-start .pn-resume { color: var(--fg); font-weight: 500; }

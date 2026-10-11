@@ -8,7 +8,7 @@ async function act(b, byKey) {
   rowErr = null;
   if (a === "retry") { if (current()) rail(); return e0 && act({ dataset: e0.again }); }
   try {
-    if (d && (await filedAct(a, b, d) || keysAct(a, b, d) || arrAct(a, d))) return;
+    if (d && (await filedAct(a, b, d) || keysAct(a, b, d))) return;
     if (a === "make") ctx.make(b, byKey);
     else if (a === "swap") ctx.swap();
     else if (a === "new") {
@@ -497,7 +497,7 @@ export function open(c) {
   if (deskId !== c.id) {
     for (const v of [...views.values()]) dropView(v);
     docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
-    focused = null; full = false; keysClose(); forgetArrivals();
+    focused = null; full = false; keysClose();
   }
   deskId = c.id; reading = null;
   // Home's "last touched" and the desk it offers to pick up start here.
@@ -616,7 +616,21 @@ async function runAs(v, d, a, cont) {
     v.pane.account = account;
     return ctx.toast(`Panel ${v.pane.slot} runs as ${a.label}`, "from its next start");
   }
-  return switchPanel(v, account, a.label);
+  return switchSoon(v, account, a.label);
+}
+
+/** A switch, or, while Claude is answering -- which the daemon refuses, a
+ *  restart mid-answer losing the answer -- the same switch the moment the
+ *  answer is done. The reader asked for it once; a refusal they had to
+ *  remember to ask again was a dead end (note #113). */
+async function switchSoon(v, account, label) {
+  try { await switchPanel(v, account, label); }
+  catch (e) {
+    if (!/answering/i.test(String(e))) throw e;
+    v.whenDone = () => switchPanel(v, account, label).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e));
+    ctx.toast(`Panel ${v.pane.slot} switches to ${label} when Claude is done`, "it is answering now", null,
+      { label: "Cancel", run: () => { v.whenDone = null; } });
+  }
 }
 
 /** A running panel restarted as `account` (null: its desk's), back into its
@@ -628,8 +642,12 @@ async function switchPanel(v, account, label) {
   const j = await ctx.api(`/api/panes/${v.id}/account`, { account, switch: true });
   v.pane.account = account;
   if (!j.restart) return;
-  v.onStop = () => run(v, cmd, false, j.resume);
-  try { await ctx.api(`/api/panes/${v.id}/stop`, {}); } catch (e) { v.onStop = null; throw e; }
+  // The head says what is happening for the stop and the start: a blank
+  // screen under "● running" said nothing at all.
+  v.switching = label; header(v);
+  const done = () => { v.switching = null; header(v); };
+  v.onStop = () => run(v, cmd, false, j.resume).finally(done);
+  try { await ctx.api(`/api/panes/${v.id}/stop`, {}); } catch (e) { v.onStop = null; done(); throw e; }
   announce(`Panel ${v.pane.slot} continues as ${label}`);
 }
 

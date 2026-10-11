@@ -718,7 +718,7 @@ function install(ctx) {
     // The focus goes back where the menu came from, unless the entry moves
     // it itself -- renaming, opening, going to a desk (`moves`).
     close(!it.moves);
-    Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast(`Could not ${it.label.replace(/…$/, "").toLowerCase()}`, { sub: err, at }));
+    Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast(`Could not ${it.label.replace(/…$/, "").replace(/^./, c => c.toLowerCase())}`, { sub: err, at }));
   });
   // The item under the pointer is the one with the focus: one row lit, and
   // Enter acts on it.

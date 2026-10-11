@@ -78,7 +78,7 @@ function leftOffSlot(d) {
   const head = ctx.docEl.querySelector(".dk-head"), { esc } = ctx;
   if (!head) return;
   let el = head.querySelector(".dk-left");
-  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-left" }); head.querySelector(".dk-arr, .dk-keys, .dk-tabs").before(el); }
+  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-left" }); head.querySelector(".dk-root").after(el); }
   if (leftField === d.id && el.querySelector("input")) return;
   const l = d.left_off;
   if (leftGone && leftGone.desk === d.id) {
@@ -90,8 +90,10 @@ function leftOffSlot(d) {
     : `<button type="button" class="dk-left-b none" data-a="left-edit" data-tip="Where did you leave off?" data-tip-sub="one line, for the next session on this desk">Left off…</button>`;
 }
 
-/* The desk's keys: a slot in the head beside Left off, there whether or not
- * the desk has any, so nothing moves when one arrives. Names only: a value
+/* The desk's keys: a slot at the head's right, against + -- where it once
+ * floated mid-head, Left off and the tabs splitting the space around it
+ * (audit 2dbcf2e538) -- there whether or not the desk has any, so nothing
+ * moves when one arrives. Names only: a value
  * goes from the paste to the daemon and from there to the keychain (or the
  * 0600 file, see src/secrets.rs), and the window never sees it again. The
  * sheet under the slot lists them and takes a new one; a ✕ holds its row for
@@ -111,7 +113,7 @@ function keysSlot(d) {
   const hd = ctx.docEl.querySelector(".dk-head");
   if (!hd) return;
   let el = hd.querySelector(".dk-keys");
-  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-keys" }); hd.querySelector(".dk-tabs").before(el); }
+  if (!el) { el = Object.assign(document.createElement("span"), { className: "dk-keys" }); hd.querySelector('[data-a="new"]').before(el); }
   // The button is redrawn in place; the sheet beside it is left alone, with
   // whatever is typed in it.
   let b = el.querySelector(".dk-keys-b");
@@ -125,7 +127,9 @@ function keysSlot(d) {
   // desk's Claude runs as leads it when it is not your login -- which one a
   // desk is on was a tip's alone, and the thing most asked (note #113, audit
   // 67d008cb6f). It changes when the reader picks, never on its own.
-  const html = (acc ? `<span class="acc">${ctx.esc(acc.label)}</span>` : "") + head("key") + (n ? `<span class="n">${n}</span>` : "");
+  // Said "as Trapti", quiet, so the desk's name stays the one bold word in
+  // the head: in bold the account read as the desk's own title.
+  const html = (acc ? `<span class="acc">as ${ctx.esc(acc.label)}</span>` : "") + head("key") + (n ? `<span class="n">${n}</span>` : "");
   if (b.$html !== html) { b.innerHTML = html; b.$html = html; }
   b.setAttribute("aria-label", [acc ? `Claude as ${acc.label}` : "", n ? `${n} key${n === 1 ? "" : "s"}` : "Keys"].filter(Boolean).join(", "));
   b.dataset.tip = (acc ? `Claude as ${acc.label}${n ? " · " : ""}` : "") + (n ? ks.map(k => k.name).join(", ") : acc ? "" : "What this desk's panels start with");
@@ -145,7 +149,7 @@ const usedSay = t => t ? `used ${ctx.rel(t)}` : "not used yet";
  * its row's ⋯, because it reaches past this desk (audit 67d008cb6f). */
 function keysSheet(d) {
   if (keysOpen === d.id) { keysClose(true); return; }
-  keysClose(); arrClose();
+  keysClose();
   const slot = ctx.docEl.querySelector(".dk-keys");
   if (!slot) return;
   keysOpen = d.id;
@@ -418,7 +422,7 @@ async function accPick(d, account) {
   if (!vs.length) return;
   const name = account ? (ctx.desks.accounts || []).find(a => a.id === account)?.label : "your login";
   ctx.toast(`New panels here start as ${name}`, `${vs.length} running panel${vs.length === 1 ? " keeps" : "s keep"} what ${vs.length === 1 ? "it" : "they"} started as`, null,
-    { label: "Switch them", run: () => { for (const v of vs) switchPanel(v, null, name).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e)); } });
+    { label: "Switch them", run: () => { for (const v of vs) switchSoon(v, null, name).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e)); } });
 }
 
 function accRemove(d, id) {
