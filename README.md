@@ -43,9 +43,11 @@ you can finally build them all, at the same time.
 But the work scatters. Plans get lost in terminal scrollback. What's left to
 do lives in your head. And every project pulls you away from the last.
 
-**snyvi keeps it all in order.** One desk for each project, its agents side
-by side, and everything they write kept where you can read it. It runs on
-your machine, with no account and nothing to configure.
+Agents make it easy to start. **snyvi helps you finish.**
+
+One desk for each project, its agents side by side, and everything they
+write kept where you can read it. It runs on your machine, with no account
+and nothing to configure.
 
 ## Install
 

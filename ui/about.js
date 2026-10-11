@@ -415,6 +415,7 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 .welcome .w-mark .mk { width: 44px; height: 44px; }
 .welcome .doc-title { margin: 14px 0 12px; }
 .w-lede { font-size: 16px; line-height: 1.55; color: var(--fg-2); margin: 0 0 36px; }
+.w-lede b { color: var(--fg); font-weight: 600; }
 .w-q { font-size: var(--fs-h3); font-weight: 600; margin: 0 0 14px; }
 .w-or { margin: 26px 0 8px; font-size: var(--fs-ui); color: var(--fg-3); }
 .w-places { list-style: none; margin: 0; padding: 0; }
@@ -878,7 +879,7 @@ export function welcome({ cap, places, tilde, mascot, esc }) {
     : `<p class="w-tab">Desks live in the snyvi window: <code>snyvi app</code>.</p>`;
   return `<div class="connect welcome"><div class="w-mark">${mascot}</div>` +
     `<h1 class="doc-title">All your passion projects, in one calm place.</h1>` +
-    `<p class="w-lede">More projects than hours? Give each one a desk: its folder, its agents side by side, and everything they write kept.</p>` +
+    `<p class="w-lede">Agents make it easy to start. <b>snyvi helps you finish.</b> Give each project a desk: its folder, its agents side by side, and everything they write kept.</p>` +
     ask + `<p class="connect-foot"><a href="/start" data-nav="start">How snyvi works</a></p></div>`;
 }
 
