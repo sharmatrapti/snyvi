@@ -312,7 +312,7 @@ const HELP = `
   </section>
   <section>
     <h3>Read</h3>
-    <div class="hk"><span>Find in document</span><span class="keys"><kbd>/</kbd></span></div>
+    <div class="hk"><span>Find in document</span><span class="keys">${kb("mod", "F")}<i>/</i><kbd>/</kbd></span></div>
     <div class="hk"><span>Compare with previous version</span><span class="keys"><kbd>c</kbd></span></div>
     <div class="hk"><span>Split / inline diff</span><span class="keys"><kbd>s</kbd></span></div>
     <div class="hk"><span>Preview / source</span><span class="keys"><kbd>v</kbd></span></div>
@@ -1262,7 +1262,7 @@ export function start({ cap, docs }) {
       `${kb("ctrl", "`")} desk / reading · ${kb("ctrl", "⌥", "1")}–${kb("4")} a panel · ${kb("ctrl", "⌥", "N")} new panel · ${kb("ctrl", "⌥", "W")} close it (with Undo) · ${kb("ctrl", "⌥", "Z")} that panel alone. Every other key goes to the panel.`) +
     sec("arrives", "Nothing scrolls away",
       `<p>When an agent writes something worth reading, it sends it here and replies with a link, and by the time you read the reply the document is already open. It is filed under its project, the folder the agent was working in, and under its workflow, one per Claude Code session. There is nothing to import or save: what arrives stays until you remove it, and Undo brings it back. ${showLink("arrives")}</p>`,
-      `${kb("mod", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("/")} find in this one`) +
+      `${kb("mod", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("mod", "F")} find in this one`) +
     sec("waiting", "What is waiting",
       `<p>A document that arrives while you read never takes the page away. It waits, as a row under Waiting in the sidebar and a count in the bar above what you are reading (or a number on the inbox icon, when the sidebar is folded). ${kb("n")} opens the newest and takes it off, so the next ${kb("n")} is the one before it: one key, from the latest back. Opening one any other way counts as read too, and Mark all read clears the list without opening anything. Opened one from the bar in the middle of another? ‹ at the top left takes you back to it, where you were, and once more to the panels; hold it for the last ten places. ${showLink("waiting")}</p>`,
       `${kb("n")} the next one waiting · ${kb("alt", "←")} ${kb("alt", "→")} back / forward · ${kb("h")} home · ${kb("i")} the inbox · ${kb("Del")} remove, ${kb("mod", "Z")} put it back`) +

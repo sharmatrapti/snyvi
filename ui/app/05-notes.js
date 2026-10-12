@@ -203,8 +203,13 @@
     // the page's own shortcuts, where `p` pins the document and `Delete`
     // deletes it -- a query is not a command, and must never arrive as one.
     const from = findBar.hidden ? document.activeElement : null;
+    // A page's preview is framed where nothing of snyvi's can reach, which is
+    // the point of the frame (`applyPreview`): find looks in its source, and
+    // the redraw that brings the source up lays the search over it (#156).
+    if (state.preview === "html" && state.previewOn) togglePreview();
     findBar.hidden = false;
     const input = $("#find-input");
+    input.placeholder = state.preview === "html" ? "Find in the source" : "Find in document";
     input.focus(); input.select();
     try { find = await (findLoading ||= import(`/assets/find.js${boot.v ? `?v=${boot.v}` : ""}`)); }
     catch (e) { findLoading = null; findBar.hidden = true; toast("Could not open find", { sub: e }); return; }
