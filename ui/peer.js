@@ -197,6 +197,9 @@ async function start(ctx, url, body) {
         `<p>Ask them: do you see these same four? If not, remove ${esc(p.name)} from Home and pair again.</p>` +
         `<div class="pr-foot"><button type="button" class="pr-go" data-pr="close">Done</button></div>`);
       ctx.toast(`Paired with ${p.name}`, { sub: `what they send shows under From ${p.name}` });
+      // A document's Send to… is drawn once there is a friend to send to, so
+      // the page open under the sheet is drawn again to have it now.
+      if (ctx.state?.doc) ctx.refreshDoc?.(ctx.state.doc.id);
     } else if (p.state === "failed") over(p.why || "the pairing did not finish");
     else if (p.state === "cancelled") over("the code was cancelled");
     else if (Date.now() > until) over("the code ran out. Make a new one");

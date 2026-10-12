@@ -56,6 +56,10 @@ function wire() {
   $("#find-close").addEventListener("click", close);
 }
 
+/** The next match, or the one before: F3 and Ctrl+G, which the page hears
+ *  wherever the hand is, not only in the box. */
+export function step(back) { goto(idx + (back ? -1 : 1)); }
+
 /** Take the marks back out of the text. Safe before anything was ever found. */
 export function clear() {
   if (!d) return;

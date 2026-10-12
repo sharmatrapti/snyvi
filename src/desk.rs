@@ -69,6 +69,10 @@ pub const KIND_COLUMNS: [&str; 2] = [
 pub const SENT_BY_COLUMN: &str =
     "ALTER TABLE desk_notes ADD COLUMN sent_by TEXT NOT NULL DEFAULT ''";
 
+/// 1.35: a panel made to wait for the reader's first Start (`Pane::held`).
+/// Version 20 of `store::MIGRATIONS`, on the same terms as `POS_COLUMN`.
+pub const HELD_COLUMN: &str = "ALTER TABLE panes ADD COLUMN held INTEGER NOT NULL DEFAULT 0";
+
 /// 1.16: the studio is retired, and a studio desk is a terminal desk on the
 /// same folder (its root was always the folder), with its panels, notes,
 /// keys and documents. Version 4 of `store::MIGRATIONS`. Nothing on disk is
@@ -423,6 +427,13 @@ pub struct Pane {
     /// Its own Claude account, or `None` to start as its desk's
     /// (`crate::accounts::effective`).
     pub account: Option<i64>,
+    /// Made to wait for the reader: a new project desk's first panel, holding
+    /// `claude` until they press Start. Kept here rather than in the page so
+    /// a reload, a second window or a daemon restart still finds it waiting,
+    /// where a pane with no process would otherwise start itself (`resume()`
+    /// in the desk view). Cleared by the first start, whatever it runs.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub held: bool,
 }
 
 /// Where a document came from, when it came from a pane: the desk and the
@@ -483,7 +494,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Desk>> {
         .query_map([], row_to_desk)?
         .collect::<rusqlite::Result<_>>()?;
     let mut stmt = conn.prepare(
-        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session, name, account FROM panes ORDER BY desk_id, slot",
+        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session, name, account, held FROM panes ORDER BY desk_id, slot",
     )?;
     let panes: Vec<(i64, Pane)> = stmt
         .query_map([], |r| Ok((r.get(0)?, row_to_pane(r, 1)?)))?
@@ -526,7 +537,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Desk>> {
         return Ok(None);
     };
     let mut stmt = conn.prepare(
-        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account FROM panes WHERE desk_id = ?1 ORDER BY slot",
+        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account, held FROM panes WHERE desk_id = ?1 ORDER BY slot",
     )?;
     desk.panes = stmt
         .query_map(params![id], |r| row_to_pane(r, 0))?
@@ -893,6 +904,7 @@ pub fn open_pane(
     desk_id: i64,
     cwd: &str,
     cmd: &str,
+    held: bool,
     now: i64,
 ) -> Result<Opened> {
     let tx = conn.transaction()?;
@@ -916,8 +928,8 @@ pub fn open_pane(
     };
     let id = pane_id()?;
     tx.execute(
-        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, created_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-        params![id, desk_id, slot, cwd, cmd, now],
+        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, created_at, held) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, desk_id, slot, cwd, cmd, now, held],
     )?;
     tx.commit()?;
     Ok(Opened::Pane(Pane {
@@ -930,6 +942,7 @@ pub fn open_pane(
         resume: String::new(),
         name: String::new(),
         account: None,
+        held,
     }))
 }
 
@@ -1053,7 +1066,7 @@ pub fn restore_pane(conn: &mut Connection, id: &str) -> Result<Restored> {
     )?;
     tx.execute("DELETE FROM panes_closed WHERE id = ?1", params![id])?;
     let pane = tx.query_row(
-        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account FROM panes WHERE id = ?1",
+        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account, held FROM panes WHERE id = ?1",
         params![id],
         |r| row_to_pane(r, 0),
     )?;
@@ -1114,16 +1127,16 @@ pub fn rename_pane(conn: &Connection, id: &str, name: &str) -> Result<bool> {
 pub fn pane(conn: &Connection, id: &str) -> Result<Option<Placed>> {
     Ok(conn
         .query_row(
-            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, p.name, p.account, d.id, d.name, d.root, d.account
+            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, p.name, p.account, p.held, d.id, d.name, d.root, d.account
              FROM panes p JOIN desks d ON d.id = p.desk_id WHERE p.id = ?1",
             params![id],
             |r| {
                 Ok(Placed {
                     pane: row_to_pane(r, 0)?,
-                    desk_id: r.get(8)?,
-                    desk_name: r.get(9)?,
-                    root: r.get(10)?,
-                    desk_account: r.get(11)?,
+                    desk_id: r.get(9)?,
+                    desk_name: r.get(10)?,
+                    root: r.get(11)?,
+                    desk_account: r.get(12)?,
                 })
             },
         )
@@ -1136,6 +1149,16 @@ pub fn set_cmd(conn: &Connection, id: &str, cmd: &str) -> Result<bool> {
     Ok(conn.execute(
         "UPDATE panes SET cmd = ?2 WHERE id = ?1",
         params![id, cmd.trim()],
+    )? > 0)
+}
+
+/// A panel that waited for the reader (`Pane::held`) no longer does: its
+/// first start, whatever it runs, and before the process is spawned, so a
+/// start that fails leaves it stopped and asking, not held.
+pub fn unhold(conn: &Connection, id: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE panes SET held = 0 WHERE id = ?1 AND held <> 0",
+        params![id],
     )? > 0)
 }
 
@@ -1911,6 +1934,7 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
         resume,
         name: r.get(at + 6)?,
         account: r.get(at + 7)?,
+        held: r.get(at + 8)?,
     })
 }
 

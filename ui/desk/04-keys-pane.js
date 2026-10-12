@@ -82,14 +82,16 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-acc"></span><span class="pn-git"></span><span class="pn-ctx"></span><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-acc"></span><span class="pn-git"></span><span class="pn-ctx"></span><a class="pn-page" hidden></a><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Panel ${p.slot}"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<div class="pn-offer" hidden role="status"><span>${OFFER_SAYS}</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" data-tip="Not now" aria-label="Not now">✕</button></div>` +
     `<div class="pn-switch" hidden role="status"><span></span></div>` +
     `<div class="pn-connect" hidden role="status"></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden data-tip="Resume conversation" data-tip-sub="claude --resume, the one this panel last had">↻ Resume conversation</button></form>`;
-  // A new project desk's first panel, holding `claude` for the reader's Enter.
-  const first = !!(ctx.held && ctx.held.delete(p.id));
+  // A new project desk's first panel, holding `claude` for the reader's
+  // press. The daemon keeps the hold (`Pane::held`), so it is held on every
+  // load and in every window, never resumed, until a Start ends it.
+  const first = !!p.held;
   const kept = keepStopped.delete(p.id) || first;
   const v = {
     id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0, 0, 0], wheelAcc: 0, asked: false,
@@ -108,7 +110,7 @@ function makeView(p) {
   const { body, start } = v;
   // Chunks within a screen of the view, either way, are kept in the document.
   v.io = new IntersectionObserver(e => reach(v, e), { root: body, rootMargin: "100% 0px" });
-  if (first) firstPanel(v);
+  claudeStrip(v, first);
   v.g = v.cv.getContext("2d");
   watchLook();
 
@@ -119,6 +121,9 @@ function makeView(p) {
   body.addEventListener("blur", () => el.classList.remove("on"));
   const hd = el.querySelector(".pn-head");
   hd.addEventListener("click", e => {
+    // The page this panel sent and the reader has not opened (rail.js `pageChips`).
+    const pg = e.target.closest(".pn-page");
+    if (pg) { e.preventDefault(); ctx.read(pg.dataset.read); return; }
     if (e.target.closest(".pn-full")) { focused = v.id; zoom(); return; }
     if (e.target.closest(".pn-ren")) { renamePanel(v); return; }
     const x = e.target.closest(".pn-x");
@@ -127,7 +132,7 @@ function makeView(p) {
     v.dragged = false;
   });
   // A double-click on the head, not the body: there it selects a word.
-  hd.addEventListener("dblclick", e => { if (!e.target.closest(".pn-full, .pn-ren, .pn-x")) { focused = v.id; zoom(); } });
+  hd.addEventListener("dblclick", e => { if (!e.target.closest(".pn-full, .pn-ren, .pn-x, .pn-page")) { focused = v.id; zoom(); } });
   hd.addEventListener("pointerdown", e => drag(v, e));
   body.addEventListener("keydown", e => {
     // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
@@ -387,9 +392,10 @@ function accent() {
   return /^#[0-9a-f]{6}$/i.test(c) ? c : "";
 }
 
-async function run(v, cmd, quiet, again) {
+async function run(v, cmd, quiet, again, once) {
   if (v.starting) return;
   v.starting = true;
+  unready(v);
   v.resumed = true;
   let shell = false;
   const [c, r] = v.size ? v.size.split("x").map(Number) : [80, 24];
@@ -400,7 +406,7 @@ async function run(v, cmd, quiet, again) {
     // the daemon holds to it only while the mark does, and past it starts
     // `cmd` with the conversation offered -- a panel unshown for minutes.
     const was = document.activeElement;
-    const j = await ctx.api(`/api/panes/${v.id}/start`, { ...(again ? { resume: true } : {}), marked: !!quiet, cmd, cols: c, rows: r, accent: accent() });
+    const j = await ctx.api(`/api/panes/${v.id}/start`, { ...(again ? { resume: true } : {}), ...(once ? { once: true } : {}), marked: !!quiet, cmd, cols: c, rows: r, accent: accent() });
     v.status = j.status;
     // The account picked is not the one running: its token is gone, or a
     // key Claude Code ranks above it is set.
@@ -488,6 +494,9 @@ function paintUsage() {
 /** Who sent a document on the rail: the panel in that slot by the name it
  *  holds still under, or the slot alone once the panel is gone. */
 const sentBy = (vs, slot) => {
+  // Slot 0: sent from the desk's folder outside its panels (Claude in the
+  // reader's own terminal), or by a panel since closed.
+  if (!slot) return "this desk's folder";
   const v = vs.find(x => x.pane.slot === slot);
   if (!v) return `[${slot}]`;
   // What sends documents is an agent: a panel that has had a conversation
@@ -550,7 +559,7 @@ function header(v) {
   tipOf(cx, cp == null ? "" : ctxTip(s));
   paintUsage();
   if (s.agent) heardFrom(v);
-  put($(".pn-state"), v.switching ? `↻ as ${v.switching}…` : s.agent === "needs_you" ? "! needs you" : s.blocked ? "! needs you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped");
+  put($(".pn-state"), v.switching ? `↻ as ${v.switching}…` : s.agent === "needs_you" ? "! needs you" : s.blocked ? "! needs you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : v.pane.held ? "○ ready" : "○ stopped");
   // Said once, to a reader who cannot see the dot: a panel that needs the
   // reader, or has finished. Working and running are the quiet states.
   const word = s.agent === "needs_you" || s.blocked ? "needs you" : s.agent === "done" ? "done" : "";
@@ -633,23 +642,88 @@ function switchClick(v, e) {
   if (d && a) runAs(v, d, a, true).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e));
 }
 
-/** The first panel of a new project desk: `claude` in its Start field, the
- *  field focused so Enter runs it -- and, when Claude Code is not set up for
- *  snyvi yet, one strip above it that connects it first. A session started
- *  before that could never see snyvi. */
-async function firstPanel(v) {
-  requestAnimationFrame(() => requestAnimationFrame(() => { if (!v.start.hidden) v.start.querySelector("input").focus(); }));
-  let a;
-  try { a = await (await fetch("/api/agents")).json(); } catch { return; }
-  const row = a.rows.find(r => r.id === "claude");
-  if (!row || row.state === "connected" || !ctx.connect) return;
-  const strip = v.el.querySelector(".pn-connect");
-  strip.innerHTML = `<p>snyvi isn't connected to Claude Code yet. Connect it first, so what Claude writes lands here.</p><div class="w-connect"><button type="button" class="w-btn">Connect</button></div>`;
-  strip.hidden = false;
-  strip.querySelector("button").addEventListener("click", e => {
-    ctx.connect(e.currentTarget, (_, ok) => { if (ok) setTimeout(() => { strip.hidden = true; v.start.querySelector("input").focus(); }, 2400); });
-  });
+/** Where Claude Code stands here, for the panels and the rail to say what is
+ *  missing where the work is (R2): "missing" -- no `claude` on the daemon's
+ *  PATH -- "unconnected", or "connected". Asked once a desk view, and again
+ *  after a Connect; null until the first answer, when nothing is said. */
+let claudeIs = null, claudeAsk = null;
+function claudeNow(again) {
+  if (claudeAsk && !again) return claudeAsk;
+  claudeAsk = fetch("/api/agents").then(r => r.json()).then(a => {
+    const row = a.rows.find(r => r.id === "claude"), was = claudeIs;
+    claudeIs = row && row.state === "connected" ? "connected" : a.claude_on_path ? "unconnected" : "missing";
+    if (claudeIs !== was) { rail(); for (const v of views.values()) claudeStrip(v, !!v.pane.held); }
+    return claudeIs;
+  }).catch(() => { claudeAsk = null; return claudeIs; });
+  return claudeAsk;
 }
+/** Connect, from a panel's strip or the rail: the window's own confirm, then
+ *  everything that said "not connected" asks again. */
+function connectFrom(btn) {
+  ctx.connect(btn, (_, ok) => { if (ok) setTimeout(() => claudeNow(true), 2400); });
+}
+
+/** What snyvi asks for a new project desk, by the panel's one button: the
+ *  question a maker coming back to their own folder has, or, on a folder
+ *  snyvi just made for them, how Claude and snyvi work together. snyvi's own words, never anything it
+ *  received; run only on the reader's press, into a panel they made, and
+ *  quoted as one argument -- so they hold to letters, spaces and . , ' ?
+ *  (bench/ui.mjs checks), which `sh -c` and `cmd /C` both take as typed. */
+const ASK_LEFT = "Where did I leave off? Read this folder and its history, then send me where it stands and three next steps, to snyvi";
+// A folder just made has nothing in it to plan from yet: Claude says, in a
+// page that lands on the desk, how it and snyvi take a project from start
+// to finish, then asks what the reader wants to make -- the first page and
+// the first conversation at once.
+const ASK_NEW = "In plain words for someone new to snyvi, tell me how you and snyvi can help me start this project and see it through. Send it to snyvi as a short page, then ask me what I want to make here.";
+/** Folders snyvi made with Start something new (about.js): their desk asks
+ *  about snyvi, there being nothing to have left off. */
+const madeNew = root => { try { return (JSON.parse(localStorage.getItem("snyvi.own.made") || "[]")).includes(root); } catch { return false; } };
+
+/** The strip over a Claude panel. Over a held one -- a new project desk's
+ *  first, on every load -- it is the desk's one thing to do: *Ask Claude*,
+ *  focused, so Enter presses it, in the middle of the empty panel (`.ready`),
+ *  with a quiet *or just start Claude* for the bare prompt in place of the
+ *  Start bar, so the panel offers one thing and not three. Over any Claude panel while snyvi is not connected, it says so
+ *  with Connect: a session started before that can never see snyvi. A
+ *  panel with Claude Code missing altogether says nothing here; the rail
+ *  says it once for the desk. The strip is an overlay in its own slot, so
+ *  nothing under it moves. */
+function claudeStrip(v, held) {
+  const strip = v.el.querySelector(".pn-connect"), cmd = (v.pane.cmd || "").trim();
+  if (!strip || !(held || /^claude\b/.test(cmd))) return;
+  claudeNow();
+  if (claudeIs == null) return;
+  ready(v, false);
+  if (claudeIs === "unconnected" && (held || v.status.running)) {
+    strip.innerHTML = `<p>snyvi isn't connected to Claude Code yet. Connect it, so what Claude writes lands here${held ? "" : ", then start Claude again"}.</p><div class="w-connect"><button type="button" class="w-btn">Connect</button></div>`;
+    strip.hidden = false;
+    strip.querySelector("button").addEventListener("click", e => connectFrom(e.currentTarget));
+  } else if (claudeIs === "connected" && held && !v.status.running) {
+    const name = ctx.esc(v.pane.cwd.split(/[\\/]/).filter(Boolean).pop() || "this"), plan = madeNew(v.pane.cwd);
+    strip.innerHTML = `<p class="pn-ready">Claude is ready, in ${name}'s folder.</p><div class="w-connect"><button type="button" class="w-btn">${plan ? "Ask Claude about snyvi" : "Ask Claude: where did I leave off?"}</button></div>` +
+      `<p>${plan ? `Claude sends a short page here on how the two of you take <b>${name}</b> from start to finish, then asks what you want to make.` : `It reads the folder and its history, and sends you <b>where ${name} stands</b>: what's done, what's half-done, three next steps.`}</p>` +
+      // Claude's own first question in a folder it hasn't seen has No, exit
+      // picked: said here, before the press, so Enter there doesn't end it.
+      `<p class="pn-fine">If Claude asks whether you trust this folder, choose <b>Yes</b>.</p>` +
+      `<p><button type="button" class="text pn-bare">or just start Claude</button></p>`;
+    strip.hidden = false;
+    ready(v, true);
+    const b = strip.querySelector(".w-btn");
+    b.addEventListener("click", () => { strip.hidden = true; ready(v, false); run(v, `claude "${plan ? ASK_NEW : ASK_LEFT}"`, false, false, true); });
+    strip.querySelector(".pn-bare").addEventListener("click", () => { strip.hidden = true; ready(v, false); run(v, v.start.querySelector("input").value || v.pane.cmd || "claude"); });
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (!strip.hidden && !v.el.contains(document.activeElement)) b.focus(); }));
+    return;
+  } else strip.hidden = true;
+  if (held) requestAnimationFrame(() => requestAnimationFrame(() => { if (!v.start.hidden && !v.el.contains(document.activeElement)) v.start.querySelector("input").focus(); }));
+}
+
+/** A held panel's *Ask Claude* strip goes once the panel starts, by any
+ *  button and in any window: the hold it was for is over. */
+function unready(v) {
+  const st = v.el.querySelector(".pn-connect");
+  if (st && st.querySelector(".pn-ready")) { st.hidden = true; ready(v, false); }
+}
+const ready = (v, on) => v.el.classList.toggle("ready", on);
 
 /** The first time a hook is heard from any panel, that panel says so, once,
  *  in its own place: Claude and snyvi are talking. */

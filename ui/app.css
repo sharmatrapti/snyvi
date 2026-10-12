@@ -317,6 +317,12 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #main.scrolled #chrome .over-t { opacity: 1; transform: none; }
 #chrome .over-x { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
 #chrome .over-x:hover { background: var(--rule-2); color: var(--fg); }
+/* Width, beside the way back: only where it does something, a page of
+   prose. Elsewhere it keeps its room unseen, so the way back never moves. */
+#chrome .over-w { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); visibility: hidden; transition: background var(--t), color var(--t); }
+:root:has(#doc article.kind-markdown) #chrome .over-w { visibility: visible; }
+#chrome .over-w:hover { background: var(--rule-2); color: var(--fg); }
+#chrome .over-w.on { color: var(--accent); }
 /* A desk draws its own head, with the desk's name in it, and the pane does
    not scroll: there the bar is only its buttons, laid over the desk's
    header, which makes room for them (desk.js, .dk-head). */
@@ -353,17 +359,28 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root[data-side="0"] .side-foot { padding: 8px; justify-content: center; }
 #rail-nav .icon { position: relative; flex: none; }
 #rail-nav .icon.on { color: var(--accent); background: var(--accent-bg); }
+/* `on` is an icon whose section is open in the popover. The agents' LED is
+   `on` for a different reason -- someone is connected -- and its light says
+   so: a tinted square round it read as a section open. */
+#rail-live.on:not(:hover) { color: var(--fg-3); background: none; }
 /* On a desk, the Desks icon is where you are, as the current row is. */
 :root[data-view="desk"] #rail-nav [data-pop="desks"]:not(.on) { color: var(--fg); background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
 .badge { position: absolute; top: -4px; right: -6px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--r-pill);
   font: 600 var(--fs-micro)/15px var(--sans); text-align: center; color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 2px var(--bg-side); }
 .badge:empty { display: none; }
 .badge.blk { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, var(--bg-side)); }
-/* Agents connected are live, not unread: the LED says so, and the figure
-   beside it is plain, so it can't be read as a second Inbox count. */
-.badge.live { color: var(--fg-2); background: none; box-shadow: none; }
+/* A plain count -- agents connected, a desk's panels and open notes on its
+   folded rail -- is the same pill in grey: live or many, not unread, so it
+   can't be read as a second Inbox count. The agents' count was `.live`,
+   which is the brand row's chip, so it wore that chip's LED and padding: a
+   second dot, and a figure off the corner (#130). Solid, so the icon's line
+   does not show through it. */
+.badge.q { color: var(--fg-2); background: color-mix(in srgb, var(--fg) 10%, var(--bg-side)); }
 #rail-nav i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .6; }
 #rail-live.on i { opacity: 1; background: var(--ok); box-shadow: var(--led-glow); }
+/* An aside is its own mark, a speech bubble, and one not yet read is a dot
+   on its corner where a count would be: a bare dot on the rail said nothing. */
+#rail-note i { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; opacity: 0; box-shadow: 0 0 0 2px var(--bg-side); }
 :root[data-note] #rail-note i { opacity: 1; background: var(--accent); }
 #rail-note { display: none; }
 #side:has(#note:not([hidden])) #rail-note { display: inline-grid; }
@@ -474,7 +491,7 @@ html[data-link="off"] .brand-mark .bm-shut { display: inline; }
 .live:not(.on)::before { background: none; box-shadow: inset 0 0 0 1.5px currentColor; }
 /* The update pill's look is about.js's, which draws it (1.7.2). */
 /* The page cannot hear the daemon; a stale count is worse than none. */
-html[data-link="off"] .live { visibility: hidden; }
+html[data-link="off"] :is(.live, #rail-live .badge) { visibility: hidden; }
 .icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-sm); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .icon:hover { background: var(--rule); color: var(--fg); }
 .icon.on { color: var(--accent); background: var(--accent-bg); }
@@ -576,6 +593,9 @@ html[data-link="off"] .live { visibility: hidden; }
    section label's edge, the name at 32px, and -- on a row that folds -- the
    heads' chevron right after the name. */
 .sec-head { display: flex; align-items: center; gap: var(--sp-2); height: var(--row-h); margin-top: var(--sp-7); padding-right: 2px; }
+/* In the sidebar a head ends where its rows do, inside their 8px: its + and
+   All stand in the rows' ✕ column, and its count on the rows' edge (#131). */
+#trees .sec-head { padding-right: 8px; }
 .sec-fold { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: var(--sp-2); padding: 0 8px; font: inherit; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; color: var(--fg-3); background: none; border-radius: var(--r-sm); text-align: left; transition: color var(--t); }
 button.sec-fold { cursor: pointer; }
 button.sec-fold:hover { color: var(--fg-2); }
@@ -803,10 +823,15 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* desks: the row, the flat list under it, the + on a folder, and the folder
    menu -- the only ways a desk is reached. The desk view itself is styled by
    ui/desk.js, which is not on the wire until a desk is opened. */
-/* A desk's row ends in one column, drawn on every row: a 10px box for the
+/* A desk's row ends in one column, drawn on every row: a 22px box for the
    mark -- a green dot running, an amber ! waiting, nothing idle -- and the
    count, right-aligned. Both were laid out only when there was something to
-   show, so the dot on one row sat where the count did on the next. */
+   show, so the dot on one row sat where the count did on the next. 22px is
+   a project row's desk glyph's slot, so the sidebar's marks are one column
+   under the Inbox and the Desks alike, and the ✕ slot beside it is the
+   column the section heads' + and All stand in (#131). The mark is the
+   end's last, whatever order the row writes them in, so a count never
+   pushes it out of its column. */
 /* A desk row on its way to another place: the line is where it lands, and
  * nothing else moves until it does. */
 .t-drop { position: fixed; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; z-index: var(--z-pop); }
@@ -816,7 +841,7 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desks .end { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
 .t-desks .ctx { font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .t-desks .ctx.hot { color: var(--warn); font-weight: 600; }
-.t-desks .dot { flex: none; display: grid; place-items: center; width: 10px; height: 10px; }
+.t-desks .dot { flex: none; order: 1; display: grid; place-items: center; width: 22px; height: 10px; }
 .t-desks .dot.on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
 .t-desks .dot.run::before { content: ""; width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--fg-3); }
 .t-desks .dot.blk { width: auto; color: var(--warn); font-size: var(--fs-micro); font-weight: 600; line-height: 1; white-space: nowrap; }
@@ -848,14 +873,16 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 :is(.t-doc, .t-desk) > a { --row: var(--rule); }
 :is(.t-doc, .t-desk) > a.active { --row: var(--accent-bg); }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x) { position: absolute; top: 50%; translate: 0 -50%; right: 6px; width: auto; margin: 0; padding: 2px 4px; opacity: 0; pointer-events: none; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
-.t-desk > a > .ren { right: 26px; }
+.t-desk > a > .ren { right: 30px; }
 :is(.t-doc, .t-desk) > a:is(:hover, :focus-visible, :has(:focus-visible)) > :is(.ren, .row-x), .arming > a > .row-x { opacity: 1; pointer-events: auto; }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x):hover { background: linear-gradient(var(--rule-2) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
 .t-doc > a:is(:hover, :has(:focus-visible)) :is(.k, .pin), .arming > a :is(.end, .k), .t-desk > a:has(> [data-armed]) > .ren { visibility: hidden; }
 /* A desk's ✕ has a slot of its own at the row's end, as a project's does:
    hovering shows it and hides nothing, so the dot and the count beside it
-   stay where they are. Armed, "Close?" lays over the end as before. */
-.t-desk > a > .row-x { position: static; translate: none; flex: none; width: 22px; height: 22px; padding: 0; margin: 0 -4px 0 0; display: grid; place-items: center; background: none; }
+   stay where they are. Armed, "Close?" lays over the end as before. Inside
+   the row's padding, where a project's ✕ is: 4px past it, it was a column of
+   its own. */
+.t-desk > a > .row-x { position: static; translate: none; flex: none; width: 22px; height: 22px; padding: 0; margin: 0; display: grid; place-items: center; background: none; }
 .t-desk > a > .row-x[data-armed] { position: absolute; right: 6px; width: auto; height: auto; padding: 2px 4px; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
 /* A row lights the moment the pointer is on it, and only lets go slowly. */
 :is(.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-doc a):hover { transition-duration: 0s; }
@@ -1144,14 +1171,19 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
    it reads as part of the page and not the chrome. Sticky like the find bar,
    so a reader deep in a long page still sees the count. */
 #queue-bar[hidden] { display: none; }
-#queue-bar { position: sticky; top: var(--head-h); z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 0 48px; box-sizing: border-box; font-size: var(--fs-ui); }
-/* Its height is nothing, so a bar that appears mid-read lays over the page's
-   top margin rather than pushing the text down under the reader; the find
-   bar makes room for it instead. The 10 px gap is the card's own offset:
-   padding on the bar would give it a height and push the page down, and a
-   margin on the card would collapse through the bar and do the same. */
-#queue-bar:not([hidden]) ~ #find { padding-top: 58px; }
-#queue-bar .qb { position: relative; top: 10px; display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 5px 5px 5px 9px; animation: rise var(--dur-quick) var(--ease-out); }
+#queue-bar { position: sticky; top: var(--head-h); z-index: calc(var(--z-sticky) + 1); height: 0; margin: 0 auto; max-width: calc(var(--measure) + 144px); padding: 0 72px; box-sizing: border-box; font-size: var(--fs-ui); }
+/* Its height is nothing, so a bar that appears mid-read pushes no text down
+   under the reader. And the card rises into the bar's own row above it, in
+   the room the title takes once the page scrolls: laid over the page, it
+   hid the page's title, then the lines under it, which no reader new to
+   snyvi knew to scroll past. The title gives way while it is up; the way
+   back and Width at the row's ends keep theirs (72 px of side room clears
+   ‹ › and Width with ✕ on a narrow page). The offset is the card's own: padding on the bar
+   would give it a height and push the page down. */
+#main:has(#queue-bar:not([hidden])) #chrome .over-t { visibility: hidden; }
+/* Narrow, the rail's own button joins them at the right: room for three. */
+@media (max-width: 1100px) { #queue-bar { padding-right: 112px; } }
+#queue-bar .qb { position: relative; top: calc(8px - var(--head-h)); display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 5px 5px 5px 9px; animation: rise var(--dur-quick) var(--ease-out); }
 /* snyvi at the front of the bar, holding what came: the toast's head, the
    size of the count's line, leaning in to the text it is holding up. Its
    feeling comes and goes with the count (app.js, `qbFeel`); at rest the

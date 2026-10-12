@@ -30,7 +30,8 @@ or a structure rather than describing it. Images in Markdown show only when the 
 `![take 2](take2.mp4)`, so several takes can be shown in one document to choose from.\n\
 - Something visual or interactive -- a mockup, a comparison, a chart, a clickable prototype: one \
 self-contained HTML file. It opens as a real page and its scripts run, but it cannot make network requests, \
-so inline its CSS, JS and images (data: URIs); a <script src> from a CDN does load.\n\
+so inline its CSS, JS and images (data: URIs); a <script src> from a CDN does load. Files beside it are not \
+loaded: a page of pictures or clips from beside it goes as Markdown, as above.\n\
 - A screenshot or a recording: the image (png, jpg, gif, webp, svg, avif) or the video or audio file, by `path`.\n\
 - A PDF you produced: the PDF, by `path`.\n\
 - Source files and diffs are highlighted; a diff can be read split.\n\n\

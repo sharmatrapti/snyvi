@@ -233,9 +233,15 @@
     on ? (root.dataset.wide = "1") : delete root.dataset.wide;
     store.set("snyvi.wide", on ? "1" : "0");
     pressed($("#btn-wide"), on);
+    pressed($("#btn-wide-top"), on);
   }
   $("#btn-wide").addEventListener("click", control("wide", toggleWide));
   pressed($("#btn-wide"), root.dataset.wide === "1");
+  // The same, where the reading is: in the page's own bar, beside the way
+  // back. The column under the theme's button is not where a reader looks
+  // for how wide the page is, and a first one never found it there.
+  $("#btn-wide-top").addEventListener("click", control("wide", toggleWide));
+  pressed($("#btn-wide-top"), root.dataset.wide === "1");
 
   function toggleWrap() {
     const on = root.dataset.wrap !== "1";
@@ -445,6 +451,17 @@
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyB" && !inField) { e.preventDefault(); keys(!keysOn); return; }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
+    // Find, on the key every other app has it on (#156), letters awake or
+    // not, and over the browser's own bar, which searched the sidebar and the
+    // rail with the page. Not from a panel, where Ctrl+F, F3 and Ctrl+G are
+    // the program's; not over a PDF, whose viewer has a find of its own. In
+    // the bar it selects the query again, as a browser's does.
+    const mod = (e.metaKey || e.ctrlKey) && !e.altKey, inPanel = !!e.target.closest?.(".pn");
+    if (mod && !e.shiftKey && e.key.toLowerCase() === "f" && !inPanel && (!inField || e.target.id === "find-input")
+        && (state.view === "doc" || (browsing() && state.browsePath)) && !(state.preview === "pdf" && state.previewOn)) {
+      e.preventDefault(); openFind(); return;
+    }
+    if (!findBar.hidden && find && !inPanel && (e.key === "F3" || (mod && e.key.toLowerCase() === "g"))) { e.preventDefault(); find.step(e.shiftKey); return; }
     if (e.key === "Escape") {
       // Esc takes down whatever is over the page, one press for all of it;
       // only with nothing over it, and the hand in no field and no panel,

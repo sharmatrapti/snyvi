@@ -5,6 +5,7 @@ fn db() -> Connection {
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(POS_COLUMN).unwrap();
+    conn.execute_batch(HELD_COLUMN).unwrap();
     conn.execute_batch(SENT_BY_COLUMN).unwrap();
     conn.execute_batch(crate::thread::THREAD_COLUMN).unwrap();
     conn.execute_batch(crate::accounts::SCHEMA).unwrap();
@@ -484,7 +485,7 @@ fn closing_a_desk_keeps_its_list_and_reopening_brings_it_back() {
 }
 
 fn pane(conn: &mut Connection, desk: i64) -> Opened {
-    open_pane(conn, desk, "/p", "", 0).unwrap()
+    open_pane(conn, desk, "/p", "", false, 0).unwrap()
 }
 
 fn slots(conn: &Connection, desk: i64) -> Vec<i64> {
@@ -542,6 +543,31 @@ fn a_pane_keeps_the_last_conversation_and_only_a_uuid() {
     assert!(close_pane(&tx, &p.id, 1).unwrap().is_some());
     tx.commit().unwrap();
     assert!(super::pane(&conn, &p.id).unwrap().is_none());
+}
+
+/// A new project desk's first panel waits for the reader on every read of
+/// the desk, not only the first, until its first start clears the hold;
+/// a panel made without one is never held.
+#[test]
+fn a_held_panel_waits_until_its_first_start() {
+    let mut conn = db();
+    let d = create(&conn, "/p", None, 0).unwrap();
+    let Opened::Pane(p) = open_pane(&mut conn, d.id, "/p", "claude", true, 0).unwrap() else {
+        panic!("no pane")
+    };
+    assert!(p.held);
+    assert!(
+        get(&conn, d.id).unwrap().unwrap().panes[0].held,
+        "read back"
+    );
+    assert!(super::pane(&conn, &p.id).unwrap().unwrap().pane.held);
+    assert!(unhold(&conn, &p.id).unwrap());
+    assert!(!unhold(&conn, &p.id).unwrap(), "once");
+    assert!(!get(&conn, d.id).unwrap().unwrap().panes[0].held);
+    let Opened::Pane(q) = pane(&mut conn, d.id) else {
+        panic!("no pane")
+    };
+    assert!(!q.held);
 }
 
 /// A planned restart marks the panes it should bring back, and only the

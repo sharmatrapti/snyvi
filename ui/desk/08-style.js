@@ -142,21 +142,21 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
   :root[data-view="desk"][data-rail="0"]:not([data-full]) #app:not(:has(#rail.empty)) { grid-template-columns: var(--side-c) minmax(0,1fr) 44px; }
   :root[data-view="desk"][data-rail="0"]:not([data-full]) #rail:not(.empty) { display: flex; padding: 0; }
   :root[data-view="desk"][data-rail="0"] #rail > :not(.dk-strip, .rail-grip) { display: none; }
-  :root[data-view="desk"][data-rail="0"] .dk-strip { display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: 60px; }
+  :root[data-view="desk"][data-rail="0"] .dk-strip { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 52px; }
   :root[data-view="desk"][data-rail="0"]:not([data-frame="page"]) #app:not(:has(#rail.empty)) .dk-head { padding-right: 0; }
   :root[data-view="desk"][data-rail="0"] #app:not(:has(#rail.empty)) #chrome #btn-rail { display: none; }
 }
 /* Over the window's drag grip, which keeps the strip's empty top. */
 .dk-strip { position: relative; z-index: 1; pointer-events: none; }
 .dk-strip button { pointer-events: auto; }
-.dk-strip button { position: relative; display: grid; place-items: center; width: 32px; height: 34px; border-radius: var(--r-sm); color: var(--fg-2); transition: background var(--t), color var(--t); }
+.dk-strip button { position: relative; display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-sm); color: var(--fg-2); transition: background var(--t), color var(--t); }
 .dk-strip button:hover { background: var(--rule); color: var(--fg); }
 .dk-strip button.none { color: var(--fg-3); }
-.dk-strip .ds-open { margin-bottom: 6px; }
-/* The count under its mark, in a line of its own the width of the button,
-   so a number arriving or leaving moves nothing. */
-.dk-strip .n { display: block; height: 12px; margin-top: -2px; font-size: 11px; line-height: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.dk-strip .ds-docs:not(.none) .n { color: var(--accent); }
+/* The sidebar's rail, mirrored (#129): its 28px icons, 6px apart, the way
+   back on the line of the sidebar's own (52px down) and the first mark on
+   the line of its first, 10px under it. The count is the sidebar's badge
+   (app.css), on the corner, so a count arriving moves nothing. */
+.dk-strip .ds-open { margin-bottom: 4px; }
 .dk-strip .ds-panels.blk { color: var(--warn); }
 .pn-full:hover, .pn-ren:hover, .pn-x:hover { background: var(--rule-2); color: var(--fg); }
 /* The pen, full view and ✕, on every panel, in the grid and in full view
@@ -220,7 +220,14 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    the tools and the figure coming in moves neither. */
 .pn-ctx:not(.kept) { display: none; }
 .pn-ctx.kept { min-width: 11ch; text-align: right; margin-left: auto; }
-.pn-ctx.kept + .pn-state { margin-left: 0; }
+.pn-ctx.kept ~ .pn-state, .pn-ctx.kept ~ .pn-page { margin-left: 0; }
+/* The page this panel sent, unread (rail.js pageChips): before the state, in
+   the head's open middle, so the state stays against the tools. Its height
+   is the line's: no padding up or down, so the head keeps its own. */
+.pn-page { flex: none; margin-left: auto; padding: 0 8px; border-radius: 999px; background: var(--accent-bg); color: var(--accent); font-weight: 600; text-decoration: none; overflow: hidden; text-overflow: ellipsis; }
+.pn-page[hidden] { display: none; }
+.pn-page:hover { text-decoration: underline; }
+.pn-page:not([hidden]) + .pn-state { margin-left: 0; }
 .ctx { color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .ctx.warm { color: var(--fg-2); }
 .ctx.hot { color: var(--warn); font-weight: 600; }
@@ -291,6 +298,15 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .pn-connect p { margin: 0 0 8px; line-height: 1.45; }
 .pn-connect p:last-child { margin: 0; }
 .pn-connect .ok { color: var(--ok); }
+.pn-connect .pn-ready { color: var(--fg); font-weight: 600; font-size: var(--fs-body-s); }
+/* A new desk's first panel, before it starts: the card in the middle of the
+   empty panel, and no Start bar -- the card's quiet line starts it bare. */
+.pn.ready .pn-start { display: none; }
+.pn.ready .pn-connect { top: 50%; bottom: auto; left: 50%; right: auto; width: min(400px, calc(100% - 24px)); box-sizing: border-box; transform: translate(-50%, -50%); padding: 18px 20px; font-size: var(--fs-ui); }
+.pn.ready .pn-connect .w-connect { margin: 4px 0 8px; }
+.pn-connect .pn-fine { color: var(--fg-3); font-size: var(--fs-small); }
+.pn-connect .pn-fine b { color: var(--fg-2); }
+.pn-connect .pn-bare { margin: 4px 0 0 -8px; font-size: var(--fs-small); }
 .pn-connect .w-btn { font: inherit; font-weight: 600; color: var(--on-accent); background: var(--accent); border: 0; border-radius: var(--r-sm); padding: 5px 12px; cursor: pointer; }
 .dk-wait .dk-empty { display: flex; align-items: center; gap: 6px; }
 .dk-ask { margin: 2px 8px 6px; font-size: 12px; line-height: 1.5; color: var(--fg-2); }
@@ -308,7 +324,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
  * head and the rows under it, drawn the way the sidebar draws its rows: a
  * mark at the left, the name, and one fact at the right. A panel is a Row,
  * as a desk is; a document and a note are Sub-rows. */
-.dk-foot { display: flex; gap: 10px; margin-top: 2px; }
+.dk-foot { display: flex; gap: 10px; margin-top: 2px; min-width: 0; }
+.dk-foot .dk-new { flex: none; white-space: nowrap; }
+.dk-why { color: var(--fg-3); font-size: 12px; align-self: center; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* #toc styles an outline -- a rule down the left, entries clamped to two
  * lines -- and these are rows, so both are undone at #toc's own weight. */
 #toc .dk-rail ul { list-style: none; margin: 2px 0 0; padding: 0; border-left: 0; }
@@ -371,6 +389,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-doc:hover { background: var(--rule); }
 #toc .dk-docs li a:hover { color: var(--fg); text-decoration: none; }
 .dk-doc.on { background: var(--accent-bg); }
+/* The row of the page rising in the corner (11-elsewhere.js), ringed while
+   the card is up, so the eye goes from the card to where pages stay. */
+.dk-doc.rose { box-shadow: inset 0 0 0 2px var(--accent); }
 #toc .dk-doc.on a, .dk-doc.on a svg, .dk-doc.on a .age { color: var(--accent); }
 .dk-doc.on .age { display: none; }
 .dk-doc.on .dk-tools { padding-right: 3px; }

@@ -360,7 +360,20 @@ if [ "$want_init" = 1 ]; then
     # nothing is added that the reader took out.
     "$snyvi" init-claude --refresh | sed 's/^/  /'
   elif have claude || [ -d "$HOME/.claude" ]; then
-    "$snyvi" init-claude --auto
+    # A fresh install asks first, as the window's Connect does: it writes to
+    # ~/.claude, which is the reader's. With no terminal to ask in (piped
+    # from curl with no tty, CI), nothing is written and the window offers it.
+    if ( : </dev/tty ) 2>/dev/null; then
+      printf "\nConnect Claude Code? It adds snyvi's MCP server and hooks to ~/.claude\n(snyvi uninstall-claude takes them out) [Y/n] " >/dev/tty
+      answer=
+      read -r answer </dev/tty || answer=n
+      case $answer in
+        [nN]*) say "  Not connected; the window offers it, or \`snyvi init-claude --auto\`" ;;
+        *) "$snyvi" init-claude --auto ;;
+      esac
+    else
+      say "  Claude Code is here: the window will offer to connect it."
+    fi
   else
     say "  Claude Code is not here; \`snyvi init-claude --auto\` when it is, or \`snyvi init <agent>\` for another agent"
   fi

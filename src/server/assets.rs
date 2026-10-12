@@ -106,8 +106,11 @@ pub(crate) const MERMAID_JS_GZ: &[u8] = include_bytes!("../../ui/mermaid.min.js.
 /// needs inline styles for the SVG it produces, and images may be data URIs.
 /// `blob:` is for a note's pictures: they come behind the desk's capability,
 /// which an `<img>` cannot send, so the page fetches them and shows its own
-/// object URL. Only the page itself can mint one.
-pub(crate) const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+/// object URL. Only the page itself can mint one. `media-src` adds one host,
+/// snyvi.com, for the Welcome tour's clips (ui/about.js `TOUR_CLIPS`): a
+/// `<video>` may play from there and nowhere else, and nothing may be sent
+/// there, `connect-src` staying the daemon's own.
+pub(crate) const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' https://snyvi.com; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 pub(crate) const FONTS: &[(&str, &[u8])] = &[
     ("inter.woff2", include_bytes!("../../ui/fonts/inter.woff2")),
@@ -153,6 +156,26 @@ pub(crate) const FONTS: &[(&str, &[u8])] = &[
         include_bytes!("../../ui/fonts/symbols-nerd.woff2"),
     ),
 ];
+
+/// The Welcome tour's pictures (ui/about.js `TOUR`), one per step in each
+/// side, light and dark. Real screens, cropped to the one thing the step
+/// says, and for two steps the frame after the press. Each step plays a clip
+/// from snyvi.com; these are what it is wherever the clip can't play, so
+/// they are compiled in: a first run offline, or a window that can't play
+/// H.264, still has the whole tour. About 500 KB, the reason the binary's
+/// budget went to 19 MB (src/bench.rs).
+macro_rules! tour {
+    ($($n:literal),* $(,)?) => {
+        &[$(
+            (concat!("tour-", $n, "-light.webp"), include_bytes!(concat!("../../ui/tour/tour-", $n, "-light.webp"))),
+            (concat!("tour-", $n, "-dark.webp"), include_bytes!(concat!("../../ui/tour/tour-", $n, "-dark.webp"))),
+        )*]
+    };
+}
+pub(crate) const TOUR: &[(&str, &[u8])] = tour!(
+    "promise", "desk", "connect", "ready", "plan", "waiting", "turn", "notes", "home", "focus",
+    "friend", "agents", "search",
+);
 
 /// Where the UI is read from.
 ///
@@ -874,6 +897,14 @@ pub(crate) async fn doc_file(
 pub(crate) async fn asset_font(Path(name): Path<String>) -> Response {
     match FONTS.iter().find(|(n, _)| *n == name) {
         Some((_, bytes)) => immutable("font/woff2", *bytes),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// `/assets/tour/{name}`: one of `TOUR`, or nothing.
+pub(crate) async fn asset_tour(Path(name): Path<String>) -> Response {
+    match TOUR.iter().find(|(n, _)| *n == name) {
+        Some((_, bytes)) => immutable("image/webp", *bytes),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }

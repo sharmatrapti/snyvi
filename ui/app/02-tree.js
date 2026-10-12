@@ -123,6 +123,7 @@
     widgets: '<rect x="3.5" y="3.5" width="17" height="7" rx="1.8"/><rect x="3.5" y="13.5" width="17" height="7" rx="1.8"/>',
     pin: '<path d="M9 3.5h6l-1 6 3.5 3.5h-11L10 9.5zM12 13v7.5"/>',
     clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    aside: '<path d="M20.5 14.5a2 2 0 0 1-2 2H8.5l-5 4V5.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/>',
     wait: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3"/>',
     more: '<circle cx="6" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18" cy="12" r=".8"/>',
     prev: '<path d="m15 6-6 6 6 6"/>',

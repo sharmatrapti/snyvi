@@ -5,6 +5,7 @@ fn db() -> Connection {
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
     conn.execute_batch(crate::desk::POS_COLUMN).unwrap();
+    conn.execute_batch(crate::desk::HELD_COLUMN).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     for c in COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
@@ -13,7 +14,7 @@ fn db() -> Connection {
 }
 
 fn pane_on(conn: &mut Connection, desk: i64) -> String {
-    match crate::desk::open_pane(conn, desk, "/w", "", 0).unwrap() {
+    match crate::desk::open_pane(conn, desk, "/w", "", false, 0).unwrap() {
         crate::desk::Opened::Pane(p) => p.id,
         o => panic!("no pane: {o:?}"),
     }

@@ -334,6 +334,7 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     };
     let n = routes_in("\nfn router(")
         + routes_in("\nfn pane_routes(")
+        + routes_in("\nfn browse_routes(")
         + routes_in("\nfn account_routes(")
         + routes_in("\nfn peer_routes(")
         + routes_in("\nfn thread_routes(")
@@ -752,7 +753,14 @@ fn the_hash_behind_the_version_covers_every_chunk_the_page_can_fetch() {
         .filter_map(|e| {
             let p = e.path();
             let name = p.file_name()?.to_str()?.to_string();
-            if p.is_dir() && name != "fonts" && !ui.join(format!("{name}.js")).exists() {
+            // A directory of parts holds scripts; one of pictures (the tour's
+            // stills) or fonts is served some other way.
+            let parts = p.is_dir()
+                && std::fs::read_dir(&p)
+                    .ok()?
+                    .filter_map(|e| e.ok())
+                    .any(|e| e.path().extension().is_some_and(|x| x == "js"));
+            if parts && !ui.join(format!("{name}.js")).exists() {
                 // A script kept as parts: served under the directory's name.
                 return Some(format!("{name}.js"));
             }
@@ -938,7 +946,7 @@ async fn an_aside_from_a_panel_says_which_and_one_from_nowhere_is_still_taken() 
         let desk = store.create_desk("/tmp/ledger", Some("ledger")).unwrap();
         for _ in 0..2 {
             if let crate::desk::Opened::Pane(p) =
-                store.open_pane(desk.id, "/tmp/ledger", "").unwrap()
+                store.open_pane(desk.id, "/tmp/ledger", "", false).unwrap()
             {
                 *pane.lock().unwrap() = p.id;
             }
@@ -1011,7 +1019,7 @@ async fn a_ctrl_clicked_folder_opens_in_the_reader() {
     let at = std::sync::Mutex::new((0, String::new()));
     let (_tmp, router, leaves) = gated_router_with("snyvi-resolve-dir", |store| {
         let desk = store.create_desk(&root, Some("ledger")).unwrap();
-        if let crate::desk::Opened::Pane(p) = store.open_pane(desk.id, &root, "").unwrap() {
+        if let crate::desk::Opened::Pane(p) = store.open_pane(desk.id, &root, "", false).unwrap() {
             *at.lock().unwrap() = (desk.id, p.id);
         }
     });
@@ -1490,7 +1498,8 @@ async fn a_band_is_held_until_its_own_desk_moves() {
     let store = Store::open(&paths).unwrap();
     let desk = store.create_desk("/tmp/band", Some("band")).unwrap();
     let other = store.create_desk("/tmp/other", Some("other")).unwrap();
-    let crate::desk::Opened::Pane(pane) = store.open_pane(desk.id, "/tmp/band", "").unwrap() else {
+    let crate::desk::Opened::Pane(pane) = store.open_pane(desk.id, "/tmp/band", "", false).unwrap()
+    else {
         panic!("a pane")
     };
     let app = new_app(&paths, store, token, window, None, None);
@@ -1860,6 +1869,8 @@ async fn the_doc_event_says_a_draft_is_quiet() {
 
 #[cfg(unix)]
 mod accounts;
+#[cfg(unix)]
+mod first_desk;
 mod keys;
 mod routes;
 use routes::{Gate, ROUTES};

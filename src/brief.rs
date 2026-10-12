@@ -596,6 +596,7 @@ mod tests {
                     resume: String::new(),
                     name: String::new(),
                     account: None,
+                    held: false,
                 })
                 .collect(),
         }

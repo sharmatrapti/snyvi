@@ -380,6 +380,9 @@ function click(e) {
   // The row of the document on the page is a toggle: a second click puts
   // the panes back, the way the first put the document up.
   if (r) { e.preventDefault(); if (r.dataset.read === reading) ctx.go(deskId, true); else ctx.read(r.dataset.read); return; }
+  // The rail's Connect, where a desk waits on Claude Code (R2).
+  const cn = e.target.closest('button[data-a="connect"]');
+  if (cn) { connectFrom(cn); return; }
   const b = e.target.closest("[data-a]");
   // `detail` is 0 for a click a key made: what it opens is then a keyboard's.
   if (b && !b.disabled) act(b, !e.detail);
@@ -496,7 +499,7 @@ export function open(c) {
   if (first) measure();
   if (deskId !== c.id) {
     for (const v of [...views.values()]) dropView(v);
-    docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
+    docList = []; docsAt = null; docsAll = false; claudeAsk = null; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
     focused = null; full = false; keysClose();
   }
   deskId = c.id; reading = null;

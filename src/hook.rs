@@ -459,6 +459,11 @@ fn prompt_output(event: &Event, context: &str, title: &str, desk: &str) -> Optio
 /// makes no card of what an agent wrote. Not again on the turn this one
 /// kept going (`stop_hook_active`), and only for Claude Code, which is where
 /// Run types and the only client known to take the field.
+///
+/// A command that only opens a file -- `xdg-open review.html` -- is a thing
+/// to look at, and that goes to snyvi, not to a Run that opens a browser
+/// beside it (#153: a page of clips was left as `! xdg-open`, and once
+/// nudged to hand it over the agent opened it in the browser itself).
 fn stop_output(event: &Event) -> Option<String> {
     if event.stop_hook_active.as_ref().and_then(Value::as_bool) == Some(true)
         || !event
@@ -469,30 +474,75 @@ fn stop_output(event: &Event) -> Option<String> {
         return None;
     }
     let cmd = bang_line(event.last_assistant_message.get()?)?;
-    let context = format!(
-        "Your reply asks the user to type `! {cmd}` themselves. In a snyvi panel a command \
-         that is theirs to run goes on their Your turn: call hand_over with kind run and cmd \
-         set to that command, so they can press Run, then end your turn. If you already \
-         handed it over, end your turn without repeating it."
-    );
+    let context = match opened_file(cmd) {
+        Some(file) => format!(
+            "Your reply asks the user to open `{file}` themselves (`! {cmd}`). In a snyvi panel \
+             a page, a picture, a clip or a document for them to look at goes to snyvi: send it \
+             with send_document by path, then say it is waiting in snyvi, and do not open it in \
+             a browser for them. An HTML file there must be self-contained -- files beside it \
+             are not loaded -- so a page of clips or pictures from beside it goes as Markdown, \
+             `![step](clip.mp4)`. If you already sent it, end your turn without repeating it."
+        ),
+        None => format!(
+            "Your reply asks the user to type `! {cmd}` themselves. In a snyvi panel a command \
+             that is theirs to run goes on their Your turn: call hand_over with kind run and cmd \
+             set to that command, so they can press Run, then end your turn. If you already \
+             handed it over, end your turn without repeating it."
+        ),
+    };
     Some(
         json!({ "hookSpecificOutput": { "hookEventName": "Stop", "additionalContext": context } })
             .to_string(),
     )
 }
 
-/// The first line of a reply that is a `! command` for the reader to type,
-/// as Claude Code's shell mode takes it: `!`, a space, and a command word,
-/// bare or in backticks. The command, without its `!`.
+/// A `! command` for the reader to type, as Claude Code's shell mode takes
+/// it: `!`, a space, and a command word. First a line that is one, bare or
+/// in backticks; failing that, one in backticks inside a line of prose --
+/// "**Watch them:** `! xdg-open …`" was missed (#153). The command, without
+/// its `!`.
 fn bang_line(reply: &str) -> Option<&str> {
-    reply.lines().find_map(|l| {
-        let l = l.trim().trim_matches('`').trim();
-        let cmd = l.strip_prefix("! ")?.trim();
-        let word = cmd.split_whitespace().next()?;
-        word.chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._/-~".contains(c))
-            .then_some(cmd)
-    })
+    fn whole(l: &str) -> Option<&str> {
+        bang(l.trim().trim_matches('`').trim())
+    }
+    fn inline(l: &str) -> Option<&str> {
+        l.split('`').skip(1).step_by(2).find_map(bang)
+    }
+    reply
+        .lines()
+        .find_map(whole)
+        .or_else(|| reply.lines().find_map(inline))
+}
+
+fn bang(s: &str) -> Option<&str> {
+    let cmd = s.strip_prefix("! ")?.trim();
+    let word = cmd.split_whitespace().next()?;
+    word.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "._/-~".contains(c))
+        .then_some(cmd)
+}
+
+/// The file a command only opens for looking at -- `xdg-open`, `open`,
+/// `gio open`, a browser -- or `None`: a URL is not a file snyvi can take
+/// (a test window's address stays a Run), and anything else is a command.
+fn opened_file(cmd: &str) -> Option<&str> {
+    let mut words = cmd.split_whitespace();
+    let first = words.next()?;
+    let opener = match first.rsplit('/').next()? {
+        "gio" => words.next() == Some("open"),
+        w => matches!(
+            w,
+            "xdg-open"
+                | "open"
+                | "sensible-browser"
+                | "firefox"
+                | "google-chrome"
+                | "chromium"
+                | "chromium-browser"
+        ),
+    };
+    let file = words.last()?.trim_matches(|c| c == '"' || c == '\'');
+    (opener && !file.is_empty() && !file.starts_with('-') && !file.contains("://")).then_some(file)
 }
 
 /// A title snyvi gave, and so one it may give again: the old
@@ -1509,6 +1559,35 @@ mod tests {
         ] {
             assert_eq!(bang_line(prose), None, "{prose}");
         }
+        // In backticks inside prose, caught too (#153); a whole line still wins.
+        assert_eq!(
+            bang_line("**Watch them:** `! xdg-open /tmp/vid/review.html`\n\nThat page shows…"),
+            Some("xdg-open /tmp/vid/review.html")
+        );
+        assert_eq!(bang_line("Say `hi`, then `!x`"), None);
+
+        // A file to look at goes to snyvi; a URL, or any other command, to a Run.
+        let said = |msg: &str| -> String {
+            let out: Value =
+                serde_json::from_str(&stop_output(&stop(msg, json!(false))).unwrap()).unwrap();
+            out["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let opens = said("**Watch them:** `! xdg-open /tmp/vid/review.html`");
+        assert!(opens.contains("open `/tmp/vid/review.html`"), "{opens}");
+        assert!(opens.contains("send_document by path"), "{opens}");
+        assert!(!opens.contains("hand_over"), "{opens}");
+        assert_eq!(opened_file("gio open shot.png"), Some("shot.png"));
+        assert_eq!(
+            opened_file("/usr/bin/open -a Preview out.pdf"),
+            Some("out.pdf")
+        );
+        assert_eq!(opened_file("xdg-open http://127.0.0.1:7861/"), None);
+        assert_eq!(opened_file("cargo test"), None);
+        assert!(said("! xdg-open http://127.0.0.1:7861/").contains("hand_over with kind run"));
+
         assert!(stop_output(&stop(reply, json!(true))).is_none());
         assert!(stop_output(&stop("All done.", json!(false))).is_none());
         assert!(stop_output(&stop(reply, json!("odd"))).is_some());
