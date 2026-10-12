@@ -65,7 +65,7 @@ grep -q "now run this binary" $HOME/init3.log
 check "h=s['hooks']; assert h['SessionStart'][0]['hooks'][0]['command']=='snyvi hook', h; assert [(x.get('matcher'), x['hooks'][0]['command']) for x in h['PostToolUse']]==[('Bash','other --x'),('Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|WebSearch|ExitPlanMode|mcp__snyvi__.*','snyvi hook'),('Write|Edit|MultiEdit','snyvi hook')], h; assert s['theme']=='dark'; assert d['mcpServers']['snyvi']['command']=='snyvi', d"
 echo "--- 4. status says so"
 snyvi status | tee $HOME/status.log
-grep -q "Claude Code: MCP server registered (snyvi mcp); hooks: SessionStart, UserPromptSubmit, Notification, Stop, SessionEnd, PostToolUse" $HOME/status.log
+grep -q "Claude Code: MCP server registered (snyvi mcp); hooks: SessionStart, UserPromptSubmit, Notification, Stop, StopFailure, SessionEnd, PostToolUse" $HOME/status.log
 echo "--- 5. --claude-md, twice"
 snyvi init-claude --claude-md | grep -q "Added a line"
 snyvi init-claude --claude-md | grep -q "already asks"
