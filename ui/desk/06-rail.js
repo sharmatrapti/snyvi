@@ -289,10 +289,15 @@ const gsOn = () => { try { return localStorage.getItem("snyvi.own.gs") !== '"don
  * out of sight -- panels (amber when one waits on the reader), documents
  * waiting, notes open; a thread is on its panel's row. A mark opens the
  * rail on its section. Every slot is always drawn, a count of none is only dimmer, so
- * nothing on the strip moves as counts come and go. */
+ * nothing on the strip moves as counts come and go. The count is the
+ * sidebar's own badge on the mark's corner, laid over it, so the two folded
+ * rails read as one (#129, #130): the accent for what waits on the reader,
+ * amber for what is blocked, and a quiet grey for a plain count. Panels are
+ * a prompt in a box: the box split down the middle is the rail itself, and
+ * the first mark already wears it. */
 const STRIP = {
   rail: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M9.5 3v10"/>',
-  panels: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M8 3v10"/>',
+  panels: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6.5l2 1.5-2 1.5M8.5 10h2.5"/>',
   docs: ICO.doc,
   notes: '<circle cx="8" cy="8" r="5.5"/><path d="M5.8 8.2l1.5 1.5 3-3.2"/>',
 };
@@ -315,10 +320,10 @@ function stripEl() {
 function stripHtml(d, vs, waiting) {
   const blocked = vs.some(v => v.status.blocked);
   const left = notesAt === d.id ? noteList.filter(x => !x.done && !x.gone && !x.suggested_by).length : 0;
-  const mark = (sec, label, n, sub, cls = "") => `<button type="button" class="ds-${sec}${n ? "" : " none"}${cls}" data-sec="${sec}" data-tip="${label}" data-tip-sub="${sub}" aria-label="${label}: ${sub}">${stripIco(sec)}<span class="n">${n || ""}</span></button>`;
+  const mark = (sec, label, n, sub, cls = "", tone = " q") => `<button type="button" class="ds-${sec}${n ? "" : " none"}${cls}" data-sec="${sec}" data-tip="${label}" data-tip-sub="${sub}" aria-label="${label}: ${sub}">${stripIco(sec)}<b class="badge${tone}">${n || ""}</b></button>`;
   return `<button type="button" class="ds-open" data-sec="" data-tip="Show the rail" aria-label="Show the rail">${stripIco("rail")}</button>` +
-    mark("panels", "Panels", d.panes.length, blocked ? "one needs you" : `${d.panes.length} of ${ctx.desks.per_desk}`, blocked ? " blk" : "") +
-    mark("docs", "Documents", waiting, waiting ? `${waiting} waiting` : "none waiting") +
+    mark("panels", "Panels", d.panes.length, blocked ? "one needs you" : `${d.panes.length} of ${ctx.desks.per_desk}`, blocked ? " blk" : "", blocked ? " blk" : " q") +
+    mark("docs", "Documents", waiting, waiting ? `${waiting} waiting` : "none waiting", "", "") +
     mark("notes", "Notes", left, left ? `${left} open` : "none open");
 }
 

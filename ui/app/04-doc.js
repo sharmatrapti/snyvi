@@ -411,7 +411,7 @@
     const tip = n ? `${plural(n, "agent")} connected` : "No agent connected", who = names.map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(", ");
     const rl = $("#rail-live");
     for (const el of [liveEl, rl]) { el.dataset.tip = tip; el.ariaLabel = tip; who ? (el.dataset.tipSub = who) : delete el.dataset.tipSub; }
-    rl.classList.toggle("on", n > 0); badge("#rail-live", n, " live");
+    rl.classList.toggle("on", n > 0); badge("#rail-live", n, " q");
   }
   function setOnline(map) {
     state.online = map && typeof map === "object" ? map : {};

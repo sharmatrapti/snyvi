@@ -49,16 +49,17 @@ function layout() {
   // with them, or their next key would land on the reading view.
   const keep = [...grid.querySelectorAll(":scope > .dk-div")], want = [...shown.map(v => v.el), ...keep];
   if (want.length !== grid.children.length || want.some((el, i) => grid.children[i] !== el)) {
-    // Every pane that is not where it was is drawn whole below: one put back
-    // in the page, or one a move put in another place.
-    const had = grid.contains(document.activeElement) ? document.activeElement : null, back = shown.filter((v, i) => grid.children[i] !== v.el);
+    const had = grid.contains(document.activeElement) ? document.activeElement : null;
     grid.replaceChildren(...want);
     if (had && had.isConnected) had.focus({ preventScroll: true });
     // A canvas put back in the page -- after a document read over the desk,
     // a pane the grid had no room for, a pane moved -- keeps its pixels, but WebKit's
     // GPU canvas shows none of them until something draws on it: the pane
-    // stood empty until a scroll. Drawn whole, it is shown whole.
-    for (const v of back) v.behind = true;
+    // stood empty until a scroll. Drawn whole, it is shown whole. Every one,
+    // not only those that moved: replaceChildren takes each pane out and
+    // puts it back, and a close left the panes that kept their place blank
+    // or showing a frame from long before (#155).
+    for (const v of shown) v.behind = true;
   }
   for (const v of shown) catchUp(v);
   pace();

@@ -142,21 +142,21 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
   :root[data-view="desk"][data-rail="0"]:not([data-full]) #app:not(:has(#rail.empty)) { grid-template-columns: var(--side-c) minmax(0,1fr) 44px; }
   :root[data-view="desk"][data-rail="0"]:not([data-full]) #rail:not(.empty) { display: flex; padding: 0; }
   :root[data-view="desk"][data-rail="0"] #rail > :not(.dk-strip, .rail-grip) { display: none; }
-  :root[data-view="desk"][data-rail="0"] .dk-strip { display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: 60px; }
+  :root[data-view="desk"][data-rail="0"] .dk-strip { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 52px; }
   :root[data-view="desk"][data-rail="0"]:not([data-frame="page"]) #app:not(:has(#rail.empty)) .dk-head { padding-right: 0; }
   :root[data-view="desk"][data-rail="0"] #app:not(:has(#rail.empty)) #chrome #btn-rail { display: none; }
 }
 /* Over the window's drag grip, which keeps the strip's empty top. */
 .dk-strip { position: relative; z-index: 1; pointer-events: none; }
 .dk-strip button { pointer-events: auto; }
-.dk-strip button { position: relative; display: grid; place-items: center; width: 32px; height: 34px; border-radius: var(--r-sm); color: var(--fg-2); transition: background var(--t), color var(--t); }
+.dk-strip button { position: relative; display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-sm); color: var(--fg-2); transition: background var(--t), color var(--t); }
 .dk-strip button:hover { background: var(--rule); color: var(--fg); }
 .dk-strip button.none { color: var(--fg-3); }
-.dk-strip .ds-open { margin-bottom: 6px; }
-/* The count under its mark, in a line of its own the width of the button,
-   so a number arriving or leaving moves nothing. */
-.dk-strip .n { display: block; height: 12px; margin-top: -2px; font-size: 11px; line-height: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.dk-strip .ds-docs:not(.none) .n { color: var(--accent); }
+/* The sidebar's rail, mirrored (#129): its 28px icons, 6px apart, the way
+   back on the line of the sidebar's own (52px down) and the first mark on
+   the line of its first, 10px under it. The count is the sidebar's badge
+   (app.css), on the corner, so a count arriving moves nothing. */
+.dk-strip .ds-open { margin-bottom: 4px; }
 .dk-strip .ds-panels.blk { color: var(--warn); }
 .pn-full:hover, .pn-ren:hover, .pn-x:hover { background: var(--rule-2); color: var(--fg); }
 /* The pen, full view and ✕, on every panel, in the grid and in full view
