@@ -1,0 +1,5 @@
+# The one-liner reads snyvi.com/install.sh; the bytes still come from the repo.
+/install.sh https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh 302
+/guide/ /guide 301
+/docs /guide 301
+/download /install 301

@@ -2,8 +2,8 @@
 //! function per subcommand. `main` only hands over to [`run`].
 
 use crate::{
-    agents, bench, client, config, desktop, hook, mcp, platform, plural, receive, reset, secrets,
-    server, setup, statusline, store, update, version, watch,
+    agents, bench, client, config, desktop, hook, mcp, platform, plural, receive, render, reset,
+    secrets, server, setup, statusline, store, update, version, watch,
 };
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -187,6 +187,9 @@ enum Cmd {
     /// Say hello: the face, the version and the address. Not in the help; for whoever thought to ask.
     #[command(hide = true)]
     Hi,
+    /// Print the HTML the reader view would show for a Markdown file. Not in the help; snyvi.com's build renders the docs with it (site/build.mjs).
+    #[command(hide = true)]
+    Render { file: PathBuf },
     /// Measure render speed on synthetic documents, and a daemon of its own: binary size, cold start, send, first byte, resident memory.
     Bench {
         /// Exit non-zero if any case exceeds its budget (SNYVI_BENCH_FACTOR scales budgets for slow CI runners).
@@ -372,7 +375,21 @@ pub(crate) fn run() -> Result<()> {
         Cmd::Status => status(&paths),
         Cmd::Bench { check } => bench::run(check),
         Cmd::Hi => hi(),
+        Cmd::Render { file } => render_file(&file),
     }
+}
+
+/// `snyvi render FILE`: the reader view's HTML for a Markdown file, on
+/// stdout. snyvi.com's build renders the docs with it, so a page on the
+/// site reads as it does in the window.
+fn render_file(file: &std::path::Path) -> Result<()> {
+    let source =
+        std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
+    print!(
+        "{}",
+        render::Renderer::new().render_markdown_uncapped(&source, None, None)
+    );
+    Ok(())
 }
 
 /// `snyvi key NAME`: a desk key's value with no newline. `$(...)` would drop

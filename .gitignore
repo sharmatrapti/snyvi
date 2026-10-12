@@ -27,3 +27,8 @@
 # Python bytecode from bench/webkit.py
 __pycache__/
 .gstack/
+
+# snyvi.com, built by site/build.mjs
+/site/out
+# wrangler's own cache and local state, wherever it runs
+.wrangler/
