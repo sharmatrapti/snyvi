@@ -456,7 +456,7 @@
     // rail with the page. Not from a panel, where Ctrl+F, F3 and Ctrl+G are
     // the program's; not over a PDF, whose viewer has a find of its own. In
     // the bar it selects the query again, as a browser's does.
-    const mod = (e.metaKey || e.ctrlKey) && !e.altKey, inPanel = !!e.target.closest(".pn");
+    const mod = (e.metaKey || e.ctrlKey) && !e.altKey, inPanel = !!e.target.closest?.(".pn");
     if (mod && !e.shiftKey && e.key.toLowerCase() === "f" && !inPanel && (!inField || e.target.id === "find-input")
         && (state.view === "doc" || (browsing() && state.browsePath)) && !(state.preview === "pdf" && state.previewOn)) {
       e.preventDefault(); openFind(); return;

@@ -2364,6 +2364,14 @@ async function deskRows(cdp, base, token) {
     const hd = await p.ev(`(() => ({ bar: !document.querySelector("#queue-bar").hidden, slot: !!document.querySelector(".dk-head .dk-arr") }))()`);
     rows.push(["a desk has no arrivals bar or slot; its rail lists what it sent", listed && !hd.bar && !hd.slot,
       hd.bar ? "the queue bar lay over the desk's head" : hd.slot ? "the head still has an arrivals slot" : !listed ? "the rail's Documents did not list the panel's document" : "no bar, no slot, and the rail lists it"]);
+    // 1.35: that was still-a's first page, and a desk's first rises once,
+    // saying where pages stay (desk/11-elsewhere.js `firstHtml`). Later
+    // takes it down, so the rows below start from a quiet corner.
+    const firstRose = !!mine && await until(`/sent this desk's first page/.test(document.querySelector("#onyou .oy-doc .oy-from")?.textContent || "")`, 40);
+    if (firstRose) { await sleep(500); await p.clickOn('#onyou [data-a="ew-later"]'); }
+    const firstSettled = firstRose && await until(`!document.querySelector("#onyou .oy-doc")`, 30);
+    rows.push(["a desk's first page rises once and says where pages stay; Later takes it down", firstRose && firstSettled,
+      !firstRose ? "no card said it was this desk's first page" : !firstSettled ? "Later left the card up" : "it rose, said Documents, and Later took it down"]);
 
     // #122: a document from a panel on another desk was heard nowhere on
     // this one. It rises in the corner, says who sent it, and Later leaves
