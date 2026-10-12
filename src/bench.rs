@@ -511,8 +511,11 @@ fn files_under(dir: &Path) -> Vec<String> {
 /// handlers 110 KB of it), by building the bundled SQLite for size: 17.13.
 /// 18 until 1.30.0: several Claude accounts (signing in through a hidden
 /// terminal, their routes) and widgets that run on the desks chosen, with
-/// their cards, took the musl build from 17.9 to 18.2 MB.
-const BINARY_MB: f64 = 18.5;
+/// their cards, took the musl build from 17.9 to 18.2 MB. 18.5 until
+/// 1.35.0: the Welcome tour's 24 pictures (12 frames, light and dark, src/
+/// server/assets.rs `TOUR`) are 0.48 MB, compiled in so a first run offline
+/// still has the tour; its clips, 2 MB, are fetched from snyvi.com instead.
+const BINARY_MB: f64 = 19.0;
 
 /// Returns whether any row was over budget.
 ///

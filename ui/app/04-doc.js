@@ -322,7 +322,11 @@
   let panelLoading = null, pagesMod = null;
   const panelMod = () => (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`));
   const pagesCtx = () => ({ state, docEl, main, boot, capability, esc, rel, toast, sayErr, leave, offDesk, swapIn, afterRender, loadDesks, deskApi, mascotHead,
-    places: () => (capability ? deskPlaces() : []), tilde });
+    places: () => (capability ? deskPlaces() : []), tilde,
+    // Welcome's ways to a desk (about.js): one made goes to Got another
+    // project? unless `welcome` is false (Start something new), and its Open
+    // goes to the desk.
+    make: (f, welcome = true) => act("make", f, welcome), go: id => showDesk(id, true) });
   const pages = () => pagesMod ? Promise.resolve(pagesMod) : panelMod().then(m => (pagesMod ||= m.pages(pagesCtx())), e => { panelLoading = null; toast("Could not open that page", { sub: e }); throw e; });
   const showConnect = (push = true) => pages().then(m => m.showConnect(push), () => {});
   const showStart = (push = true, at = location.hash) => pages().then(m => m.showStart(push, at), () => {});
@@ -378,8 +382,9 @@
     const b = e.target.closest("[data-w]");
     if (!b || !docEl.contains(b)) return;
     const w = b.dataset.w;
-    if (w === "pick") act("pick", true);
-    else if (w === "place") { const f = pagesMod && pagesMod.place(+b.dataset.i); if (f) act("make", f); }
+    if (w === "pick") act("pick", b.closest(".welcome") ? "welcome" : true);
+    else if (w === "place") { const f = pagesMod && pagesMod.place(+b.dataset.i); if (f) act("make", f, true); }
+    else if (w.startsWith("w-")) pages().then(m => m.welcomeAct(b), () => {});
     else if (w === "connect") connectClaude(b);
     // A friend's buttons in a document's head: Send to…, Keep on a desk…, Save.
     else if (w === "send") peerUse().then(m => m.head(peerCtx, b), () => toast("Could not open that"));
@@ -682,6 +687,7 @@
     markActive();
     buildToc();
     renderMeta(false);
+    turnLine();
     prepareMermaid();
     enhanceCode();
     find?.clear();

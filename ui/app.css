@@ -317,6 +317,12 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #main.scrolled #chrome .over-t { opacity: 1; transform: none; }
 #chrome .over-x { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
 #chrome .over-x:hover { background: var(--rule-2); color: var(--fg); }
+/* Width, beside the way back: only where it does something, a page of
+   prose. Elsewhere it keeps its room unseen, so the way back never moves. */
+#chrome .over-w { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); visibility: hidden; transition: background var(--t), color var(--t); }
+:root:has(#doc article.kind-markdown) #chrome .over-w { visibility: visible; }
+#chrome .over-w:hover { background: var(--rule-2); color: var(--fg); }
+#chrome .over-w.on { color: var(--accent); }
 /* A desk draws its own head, with the desk's name in it, and the pane does
    not scroll: there the bar is only its buttons, laid over the desk's
    header, which makes room for them (desk.js, .dk-head). */
@@ -1144,14 +1150,19 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
    it reads as part of the page and not the chrome. Sticky like the find bar,
    so a reader deep in a long page still sees the count. */
 #queue-bar[hidden] { display: none; }
-#queue-bar { position: sticky; top: var(--head-h); z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 0 48px; box-sizing: border-box; font-size: var(--fs-ui); }
-/* Its height is nothing, so a bar that appears mid-read lays over the page's
-   top margin rather than pushing the text down under the reader; the find
-   bar makes room for it instead. The 10 px gap is the card's own offset:
-   padding on the bar would give it a height and push the page down, and a
-   margin on the card would collapse through the bar and do the same. */
-#queue-bar:not([hidden]) ~ #find { padding-top: 58px; }
-#queue-bar .qb { position: relative; top: 10px; display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 5px 5px 5px 9px; animation: rise var(--dur-quick) var(--ease-out); }
+#queue-bar { position: sticky; top: var(--head-h); z-index: calc(var(--z-sticky) + 1); height: 0; margin: 0 auto; max-width: calc(var(--measure) + 144px); padding: 0 72px; box-sizing: border-box; font-size: var(--fs-ui); }
+/* Its height is nothing, so a bar that appears mid-read pushes no text down
+   under the reader. And the card rises into the bar's own row above it, in
+   the room the title takes once the page scrolls: laid over the page, it
+   hid the page's title, then the lines under it, which no reader new to
+   snyvi knew to scroll past. The title gives way while it is up; the way
+   back and Width at the row's ends keep theirs (72 px of side room clears
+   ‹ › and Width with ✕ on a narrow page). The offset is the card's own: padding on the bar
+   would give it a height and push the page down. */
+#main:has(#queue-bar:not([hidden])) #chrome .over-t { visibility: hidden; }
+/* Narrow, the rail's own button joins them at the right: room for three. */
+@media (max-width: 1100px) { #queue-bar { padding-right: 112px; } }
+#queue-bar .qb { position: relative; top: calc(8px - var(--head-h)); display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 5px 5px 5px 9px; animation: rise var(--dur-quick) var(--ease-out); }
 /* snyvi at the front of the bar, holding what came: the toast's head, the
    size of the count's line, leaning in to the text it is holding up. Its
    feeling comes and goes with the count (app.js, `qbFeel`); at rest the

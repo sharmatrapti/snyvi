@@ -109,6 +109,100 @@ pub(crate) async fn browse_pick(
     }
 }
 
+#[derive(Deserialize)]
+pub(crate) struct NewFolderBody {
+    /// What the reader called it: one folder's name, never a path.
+    pub(crate) name: String,
+    /// Where it goes: a browse root's id, a folder the reader picked in the
+    /// desktop's own dialog (Change…). None is `~/Projects`.
+    #[serde(default)]
+    pub(crate) under: Option<String>,
+}
+
+/// A name that is one folder and nothing more: no separator, no `.` or `..`
+/// to climb with, no leading dot to hide it, nothing Windows refuses in a
+/// name, and short enough to read. Trimmed; None when it is not one.
+pub(crate) fn folder_name(name: &str) -> Option<&str> {
+    let n = name.trim();
+    let bad = |c: char| {
+        c.is_control() || matches!(c, '/' | '\\' | '<' | '>' | ':' | '"' | '|' | '?' | '*')
+    };
+    (!n.is_empty()
+        && n.chars().count() <= 80
+        && !n.starts_with('.')
+        && !n.ends_with('.')
+        && !n.chars().any(bad))
+    .then_some(n)
+}
+
+/// Welcome's *Start something new*: one empty folder, made where the reader
+/// said, and opened as the picker opens one, so the page goes on to its desk
+/// the same way. Behind the same gate as the picker. It makes exactly one
+/// directory -- `~/Projects` too, the first time, when that is where it goes
+/// and it is not there yet -- and never one that exists: an existing folder
+/// is *Choose its folder…*'s, and is never written into from here.
+pub(crate) async fn browse_new(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<NewFolderBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let say = |code: StatusCode, why: String| (code, Json(json!({ "error": why }))).into_response();
+    let Some(name) = folder_name(&b.name) else {
+        return say(
+            StatusCode::BAD_REQUEST,
+            "a folder's name, without / or a leading dot".into(),
+        );
+    };
+    let parent = match b.under.as_deref() {
+        Some(id) => match app.browse.get(id) {
+            Some(r) => std::path::PathBuf::from(r.path),
+            None => return StatusCode::NOT_FOUND.into_response(),
+        },
+        None => match dirs::home_dir() {
+            Some(h) => {
+                let p = h.join("Projects");
+                if let Err(e) = std::fs::create_dir(&p) {
+                    if e.kind() != std::io::ErrorKind::AlreadyExists {
+                        return say(
+                            StatusCode::BAD_REQUEST,
+                            format!("could not make ~/Projects: {e}"),
+                        );
+                    }
+                }
+                p
+            }
+            None => return say(StatusCode::BAD_REQUEST, "no home folder".into()),
+        },
+    };
+    let dir = parent.join(name);
+    if let Err(e) = std::fs::create_dir(&dir) {
+        let code = if e.kind() == std::io::ErrorKind::AlreadyExists {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::BAD_REQUEST
+        };
+        return say(
+            code,
+            if code == StatusCode::CONFLICT {
+                format!("there is already a {name} there")
+            } else {
+                e.to_string()
+            },
+        );
+    }
+    match app.browse.open(&dir) {
+        Ok(root) => {
+            emit(&app, "browse", json!({ "roots": app.browse.list() }));
+            (StatusCode::CREATED, Json(json!({ "root": root }))).into_response()
+        }
+        Err(e) => say(StatusCode::BAD_REQUEST, e.to_string()),
+    }
+}
+
 /// One folder dialog at a time, across every page that asks.
 static PICKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Ends the folder dialog that is open, if one is. Wakes only a dialog

@@ -5,6 +5,7 @@ fn db() -> Connection {
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
     conn.execute_batch(crate::desk::POS_COLUMN).unwrap();
+    conn.execute_batch(crate::desk::HELD_COLUMN).unwrap();
     conn.execute_batch(crate::desk::SENT_BY_COLUMN).unwrap();
     conn.execute_batch(THREAD_COLUMN).unwrap();
     conn.execute_batch(SCHEMA).unwrap();

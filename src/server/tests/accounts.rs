@@ -6,7 +6,7 @@
 use super::*;
 
 /// The page's call: its host, origin and capability, a JSON body or none.
-async fn page(
+pub(super) async fn page(
     router: &Router,
     l: &Leaves,
     method: &str,
@@ -48,7 +48,7 @@ fn desk_and_token(
     let mut ids = (0, String::new());
     let (tmp, app, router, l) = gated_app_with(name, |store| {
         let d = store.create_desk("/tmp", Some("a")).unwrap().id;
-        let crate::desk::Opened::Pane(p) = store.open_pane(d, "/tmp", "").unwrap() else {
+        let crate::desk::Opened::Pane(p) = store.open_pane(d, "/tmp", "", false).unwrap() else {
             panic!("no pane");
         };
         ids = (d, p.id);

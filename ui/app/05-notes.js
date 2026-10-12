@@ -28,7 +28,7 @@
    * list with ids `snyvi:*`, which note.js never tells the daemon about.
    * Their words are note.js's (OWN there), the only file that shows them:
    * first paint carries only their names. */
-  const OWN = new Set(["first-doc", "two-waiting", "second-desk", "two-desks", "blocked", "version"]);
+  const OWN = new Set(["first-doc", "two-waiting", "blocked", "version"]);
   const isOwn = n => String(n.id).startsWith("snyvi:");
   // By when each was said, newest first, as the daemon's list is: an agent's
   // aside after snyvi's line is the one the card shows, not a line behind it.

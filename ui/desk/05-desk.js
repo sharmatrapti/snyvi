@@ -558,7 +558,7 @@ function sync(d) {
   for (const v of [...views.values()]) if (!ids.has(v.id)) dropView(v);
   for (const p of d.panes) {
     const v = views.get(p.id);
-    if (v) { v.pane = p; if (p.status) v.status = { ...v.status, ...p.status }; header(v); }
+    if (v) { if (!p.held) unready(v); v.pane = p; if (p.status) v.status = { ...v.status, ...p.status }; header(v); }
     else views.set(p.id, makeView(p));
   }
   // The daemon's word on full view: this window's own changes are in it
@@ -731,7 +731,7 @@ async function moveTo(v, slot) {
  *  handler takes HTML drag and drop. A press that does not travel is a
  *  click, and focuses the pane as before. */
 function drag(v, e) {
-  if (e.button !== 0 || e.target.closest("button")) return;
+  if (e.button !== 0 || e.target.closest("button, a")) return;
   const x0 = e.clientX, y0 = e.clientY;
   let on = false, over = null;
   const target = ev => {

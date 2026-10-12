@@ -400,6 +400,24 @@ fn pane_routes() -> Router<Arc<App>> {
         )
 }
 
+/// Folders read straight from disk (`api_browse`): the picker, Welcome's
+/// new folder, and what an open folder holds.
+fn browse_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/browse", get(browse_list).post(browse_open))
+        .route("/api/browse/pick", post(browse_pick))
+        .route("/api/browse/pick/cancel", post(browse_pick_cancel))
+        .route("/api/browse/new", post(browse_new))
+        .route("/api/browse/{id}/close", post(browse_close))
+        .route("/api/browse/{id}/reopen", post(browse_reopen))
+        .route("/api/browse/{id}/tree", get(browse_tree))
+        .route("/api/browse/{id}/file", get(browse_file))
+        .route("/api/browse/{id}/raw", get(browse_raw))
+        .route("/api/browse/{id}/raw/{*path}", get(browse_raw_path))
+        .route("/api/browse/{id}/find", get(browse_find))
+        .route("/api/browse/{id}/outline", get(browse_outline))
+}
+
 /// The sidebars' layout and their widgets (`api_widget`).
 fn widget_routes() -> Router<Arc<App>> {
     Router::new()
@@ -491,6 +509,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/assets/mermaid.js", get(asset_mermaid))
         .route("/assets/{name}", get(asset_named))
         .route("/assets/fonts/{name}", get(asset_font))
+        .route("/assets/tour/{name}", get(asset_tour))
         .route("/api/health", get(health))
         .route("/api/about", get(about))
         .route("/api/agents", get(agents))
@@ -530,17 +549,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/reset", get(reset_census).post(reset))
         .route("/api/reveal", post(reveal))
         .route("/api/resolve", post(resolve_path))
-        .route("/api/browse", get(browse_list).post(browse_open))
-        .route("/api/browse/pick", post(browse_pick))
-        .route("/api/browse/pick/cancel", post(browse_pick_cancel))
-        .route("/api/browse/{id}/close", post(browse_close))
-        .route("/api/browse/{id}/reopen", post(browse_reopen))
-        .route("/api/browse/{id}/tree", get(browse_tree))
-        .route("/api/browse/{id}/file", get(browse_file))
-        .route("/api/browse/{id}/raw", get(browse_raw))
-        .route("/api/browse/{id}/raw/{*path}", get(browse_raw_path))
-        .route("/api/browse/{id}/find", get(browse_find))
-        .route("/api/browse/{id}/outline", get(browse_outline))
+        .merge(browse_routes())
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/docs/{id}/blob", get(doc_blob))
         .route("/api/compare/{a}/{b}", get(compare))

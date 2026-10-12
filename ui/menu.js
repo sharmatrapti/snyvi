@@ -57,7 +57,7 @@ export async function pick(ctx, forDesk = false) {
       const trim = p => p && p.replace(/(.)\/+$/, "$1");
       const had = state.desks && state.desks.desks.find(d => trim(d.root) === trim(j.root.path));
       if (had) ctx.show(had.id, true);
-      else await make(ctx, { root: j.root.id, path: "" });
+      else await make(ctx, { root: j.root.id, path: "" }, forDesk === "welcome");
       return;
     }
     // Open in the sidebar as well as on the page; the toggle fills its tree.
@@ -77,8 +77,9 @@ function alreadyOpen({ capability, toast }) {
 
 /** A new desk on folder `f` -- a folder under Folders, or a project by its
  *  id -- or with none on no folder: it starts in the home directory, which
- *  the daemon names. */
-export async function make(ctx, f) {
+ *  the daemon names. `welcome`: asked from Welcome, which goes on to Got
+ *  another one? rather than to the desk. */
+export async function make(ctx, f, welcome) {
   const { toast, api } = ctx;
   try {
     const j = await api("/api/desks", !f ? {} : f.project != null ? { project: f.project, name: f.name } : { root: f.root, path: f.path });
@@ -88,12 +89,13 @@ export async function make(ctx, f) {
     // folder's desk, it opens on a shell, started, as it always did.
     const claude = !!f && await hasClaude();
     try {
-      const p = await api(`/api/desks/${j.desk.id}/panes`, claude ? { cmd: "claude" } : {});
-      if (claude) ctx.hold(p.pane.id);
-      else await api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
+      const p = await api(`/api/desks/${j.desk.id}/panes`, claude ? { cmd: "claude", held: true } : {});
+      if (!claude) await api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
     } catch (e) { toast(claude ? "Could not open Claude's panel" : "Could not start the new desk's shell", { sub: e }); }
     await ctx.load();
-    ctx.show(j.desk.id, true);
+    // Made from Welcome: Got another one? first, the desk one click on.
+    if (welcome && ctx.welcomed) ctx.welcomed(j.desk.id);
+    else ctx.show(j.desk.id, true);
   } catch (e) { toast("Could not make a desk", { sub: e }); }
 }
 

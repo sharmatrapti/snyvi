@@ -233,9 +233,15 @@
     on ? (root.dataset.wide = "1") : delete root.dataset.wide;
     store.set("snyvi.wide", on ? "1" : "0");
     pressed($("#btn-wide"), on);
+    pressed($("#btn-wide-top"), on);
   }
   $("#btn-wide").addEventListener("click", control("wide", toggleWide));
   pressed($("#btn-wide"), root.dataset.wide === "1");
+  // The same, where the reading is: in the page's own bar, beside the way
+  // back. The column under the theme's button is not where a reader looks
+  // for how wide the page is, and a first one never found it there.
+  $("#btn-wide-top").addEventListener("click", control("wide", toggleWide));
+  pressed($("#btn-wide-top"), root.dataset.wide === "1");
 
   function toggleWrap() {
     const on = root.dataset.wrap !== "1";

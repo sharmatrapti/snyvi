@@ -174,6 +174,12 @@ function rail() {
   const live = dl.filter(x => x !== gone), waiting = live.filter(x => x.unread).length;
   const offs = docsAt === d.id ? docOff.filter(x => !gone || x.id !== gone.id) : [];
   const stopped = vs.filter(x => !x.status.running).length;
+  // A new desk whose panels have never started (held): the panel's card is
+  // its one thing to do, so the rail says no more than what goes where --
+  // no hint, no sentence to copy -- until one starts.
+  const fresh = vs.length > 0 && vs.every(x => x.pane.held && !x.status.running);
+  // The card's question is already Claude's: the rail doesn't offer it again.
+  const asked = vs.some(x => [ASK_NEW, ASK_LEFT].some(a => (x.status.cmd || "").includes(a)));
   // A pane's row: the mark, the slot, the name -- and under the cursor, what
   // can be done to that pane: stopped or started, and closed. On the row
   // itself, so a control acts on the pane it sits beside and never on
@@ -209,7 +215,7 @@ function rail() {
       countTip: blocked ? `${ctx.plural(blocked, "panel")} ${blocked === 1 ? "needs" : "need"} you` : "",
     }, `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
-    `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
+    `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && gsOn() && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>`),
     points: () => pointSec(vs),
     // The documents. The count is how many, in the accent while some wait
@@ -228,7 +234,7 @@ function rail() {
     (dl.length ? `<ul class="dk-docs">` + shown.map(x => docRow(x, x === gone, vs, esc)).join("") +
       (found && !found.length ? `<li><p class="dk-empty">No title has “${esc(docsFind.trim())}”</p></li>` : "") +
       (rest || folds ? `<li class="dk-more-li"><button type="button" class="dk-new dk-more" data-a="more" aria-expanded="${folds}">${folds ? "Show fewer" : `${rest} more`}</button></li>` : "") + `</ul>`
-      : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d)) +
+      : docsOff === d.id ? noReach("docs") : offs.length ? "" : waitingFirst(d, fresh, asked)) +
     // What the reader removed from this list, named, and there to open or put back.
     (offs.length ? `<p class="dk-offs-line">${offs.length} removed · <button type="button" class="dk-link" data-a="doc-offs" aria-expanded="${offShown}">${offShown ? "Hide" : "Show"}</button></p>` +
       (offShown ? `<ul class="dk-docs dk-offs">` + offs.map(x => `<li class="dk-doc off"><a href="/d/${x.id}" data-read="${x.id}" data-tip="${esc(x.title)}" data-tip-sub="${esc(x.project)} · ${ctx.fmt(x.received_at)}">${ico("doc")}<span class="title">${esc(x.title)}</span></a>` +
@@ -246,9 +252,37 @@ function rail() {
   // tick of the clock.
   if (drew) { vs.forEach(named); findFocus(); noteFocus(); threadFocus(); docsScroll(docsTop); loadImgs(); fillSeats(d); }
   drawIn(stripEl(), stripHtml(d, vs, waiting));
+  pageChips(vs, live);
   onYou(d);
   meta();
 }
+
+/** A page lands far from where the reader is looking: they are on the panel
+ *  that wrote it, and its row is at the rail's edge. So that panel says so
+ *  in its own head, beside its state, until the page is opened -- the
+ *  newest it sent, and how many when there are more. Its room is the head's
+ *  open middle, with the state still against the tools, so nothing moves. */
+function pageChips(vs, dl) {
+  for (const v of vs) {
+    const a = v.el.querySelector(".pn-page");
+    if (!a) continue;
+    const mine = dl.filter(y => y.unread && y.slot === v.pane.slot), x = mine[0];
+    a.hidden = !x;
+    if (!x) continue;
+    const say = mine.length > 1 ? `sent ${mine.length} pages · Read the newest` : "sent a page · Read it";
+    if (a.dataset.read === x.id && a.textContent === say) continue;
+    a.href = `/d/${x.id}`;
+    a.dataset.read = x.id;
+    a.dataset.tip = x.title;
+    a.dataset.tipSub = "it stays under Documents";
+    a.textContent = say;
+  }
+}
+
+/** Still in the first run: Getting started (about.js `started`, R11) not
+ *  yet put away on Home. The card itself is Home's alone; on a desk the
+ *  panel's own card says what to do, and the rail stays the desk's. */
+const gsOn = () => { try { return localStorage.getItem("snyvi.own.gs") !== '"done"'; } catch { return false; } };
 
 /* The rail folded on a desk is a strip, 44 px, as the sidebar folds to its
  * rail (#101): each section's mark and the count that matters while it is
@@ -308,7 +342,7 @@ function stripClick(e) {
 function docRow(x, gone, vs, esc) {
   if (gone) return `<li class="dk-note gone" role="status"><span class="nm">${esc(x.title)}</span><button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}">Undo</button></li>` + errLine(`d${x.id}`, esc);
   const on = x.id === reading;
-  return `<li class="dk-doc${on ? " on" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? "Back to the panels" : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(sentBy(vs, x.slot))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span><span class="age">${ctx.relShort(x.received_at)}</span></a>` +
+  return `<li class="dk-doc${on ? " on" : ""}${ew.first && ew.first.id === x.id ? " rose" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? "Back to the panels" : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(sentBy(vs, x.slot))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span><span class="age">${ctx.relShort(x.received_at)}</span></a>` +
     // Its tools: the path to copy, where there is one; on the row of the
     // document on the page, the way back to the panes, in view at rest; and
     // the ✕ that takes it off this list -- this list only.
@@ -406,7 +440,8 @@ function meta() {
   // are on its ⋯: this pane is the focused panel's line, and nothing twice.
   const top = "";
   const cp = ctxPct(s), us = cp == null ? "" : usageSub();
-  const low = v ? `<div class="row dk-pl"><span><span class="dk-slot" data-tip="Panel ${v.pane.slot}" data-key="ctrl+alt+${v.pane.slot}">[${v.pane.slot}]</span>${s.model ? ` ${esc(s.model)}` : s.pid ? ` pid ${s.pid}` : ""}` +
+  // A held panel, never started, has no line yet: its card says it all.
+  const low = v && !(v.pane.held && !s.running) ? `<div class="row dk-pl"><span><span class="dk-slot" data-tip="Panel ${v.pane.slot}" data-key="ctrl+alt+${v.pane.slot}">[${v.pane.slot}]</span>${s.model ? ` ${esc(s.model)}` : s.pid ? ` pid ${s.pid}` : ""}` +
     `${cp == null ? "" : ` · <span class="${ctxCls(cp)}${ctxUsed(s) == null ? " none" : ""}" data-tip="${esc(ctxTip(s))}"${us ? ` data-tip-sub="${esc(us)}"` : ""}>${ctxFig(s)}</span>`}${since ? ` · ${since}` : ""}</span></div>` +
     // The folder the panel's shell is in now, when it is not the desk's own.
     ((s.cwd || v.pane.cwd) && (s.cwd || v.pane.cwd) !== d.root ? `<div class="row dk-pl"><b>In</b><span class="dk-in" data-tip="${esc(s.cwd || v.pane.cwd)}" data-tip-mono>${esc(tilde(s.cwd || v.pane.cwd))}</span></div>` : "") : "";
@@ -504,8 +539,8 @@ function noteSec(d) {
     // then the live one, in the same room, so nothing under it moves as it
     // opens and shuts. On an empty list it is the whole of the list.
     (notesOff === d.id ? "" : !(noteField && noteField.kind === "new")
-      ? `<div class="dk-note new idle"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
-      : `<div class="dk-note new"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "What's the status of this project?"}" aria-label="A new note on this desk" spellcheck="false">` +
+      ? `<div class="dk-note new idle"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in idle" placeholder="${rows ? "Add a note" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false"></div>`
+      : `<div class="dk-note new"><span class="dk-lead"><span class="dk-tick ghost" aria-hidden="true"></span></span><input class="dk-note-in" placeholder="${pending.length ? "What it shows" : rows ? "What has to happen" : "Where does it stand?"}" aria-label="A new note on this desk" spellcheck="false">` +
         // Pictures waiting on the line: the picture mark a line wears, with
         // their count, and the ✕ that leaves them out.
         (pending.length ? `<span class="dk-pend" role="status" aria-label="${ctx.plural(pending.length, "picture")} with this line"><span class="dk-pic">${ico("pic")}${pending.length > 1 ? `<span class="c">${pending.length}</span>` : ""}</span><button type="button" data-a="pend-x" data-tip="Leave the pictures out" aria-label="Leave the pictures out">${ico("x")}</button></span>` : "") + noteSays(esc) + `</div>`));
@@ -871,19 +906,30 @@ function evSay(u) {
 /** Who ticked a line, for its tip. */
 const tickedBy = x => x.done_by === "merged" ? "ticked by the merge" : `ticked by ${x.done_by}`;
 
-/** A desk with nothing sent yet waits for its first document, and says how
- *  to get one: the sentence to give Claude, with its Copy. After five
- *  minutes of waiting it names the usual reason nothing comes. */
+/** A desk with nothing sent yet says what lands there, and the one thing
+ *  in the way of it, in the same box whatever it says (R2): Claude Code not
+ *  installed, with where to get it and the other agents; installed but not
+ *  connected, with Connect; or, connected, the wait itself, with the
+ *  sentence to give Claude and its Copy. After five minutes of waiting it
+ *  names the usual reason nothing comes. */
 const WANT = "Plan what's next here and send it to snyvi";
+const GET_CLAUDE = "https://claude.com/claude-code";
 const waitSince = new Map();
-function waitingFirst(d) {
+function waitingFirst(d, fresh, asked) {
+  claudeNow();
+  if (claudeIs === "missing") return `<div class="dk-wait"><p class="dk-empty">What an agent writes for this desk lands here, and stays. Claude Code isn't installed here yet.</p>` +
+    `<p class="dk-ask"><button type="button" class="dk-link" data-a="note-ev" data-u="${GET_CLAUDE}">Get Claude Code ↗</button> · <a class="dk-link" href="/connect">Using a different agent?</a></p></div>`;
+  if (claudeIs === "unconnected") return `<div class="dk-wait"><p class="dk-empty">Connect Claude Code, and what it writes here lands here, and stays.</p>` +
+    `<p class="dk-ask"><button type="button" class="dk-sha" data-a="connect">Connect</button></p></div>`;
+  // Nothing has started: nothing is waited on yet, and the panel's card asks.
+  if (fresh) return `<div class="dk-wait"><p class="dk-empty">What Claude writes for this desk lands here, and stays.</p></div>`;
   if (!waitSince.has(d.id)) waitSince.set(d.id, Date.now());
   const ago = Date.now() - waitSince.get(d.id), long = ago > 300e3;
   // The rail is drawn again on every change of a panel's status, and the
   // ring with it: started as far along as the wait is, so a redraw does not
   // set its few turns going again.
-  return `<div class="dk-wait"><p class="dk-empty"><span class="dk-spin" aria-hidden="true" style="animation-delay:-${ago}ms"></span>Waiting for the first one…</p>` +
-    `<p class="dk-ask">Ask Claude: <q>${WANT}</q> <button type="button" class="dk-sha" data-a="want-copy" data-c="${WANT}">copy</button></p>` +
+  return `<div class="dk-wait"><p class="dk-empty"><span class="dk-spin" aria-hidden="true" style="animation-delay:-${ago}ms"></span>What Claude writes for this desk lands here, and stays.</p>` +
+    (asked ? "" : `<p class="dk-ask">Ask Claude: <q>${WANT}</q> <button type="button" class="dk-sha" data-a="want-copy" data-c="${WANT}">copy</button></p>`) +
     (long ? `<p class="dk-empty">Nothing yet? A Claude session started before snyvi was connected cannot see it: start a new one.</p>` : "") + `</div>`;
 }
 

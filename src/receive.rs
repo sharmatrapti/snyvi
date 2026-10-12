@@ -355,18 +355,38 @@ pub fn pane_origin(store: &Store, pane: Option<&str>) -> Option<crate::desk::Ori
         })
 }
 
+/// The desk a document sent from outside any panel belongs on: the first
+/// desk, in the reader's order, whose folder is the document's project --
+/// Claude in the reader's own terminal, `snyvi send` from the folder. Placed
+/// with slot 0, which the rail reads as "this desk's folder" (R4). A friend's
+/// document keeps its own placement, and a pane's desk always wins: this is
+/// asked only when neither said.
+fn outside(store: &Store, root: &str) -> Option<crate::desk::Origin> {
+    store
+        .desks()
+        .ok()?
+        .into_iter()
+        .find(|d| desk_project(&d.root).0 == root)
+        .map(|d| crate::desk::Origin {
+            id: d.id,
+            name: d.name,
+            slot: 0,
+        })
+}
+
 pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
     let b = read(store, &p)?;
     let origin = p.origin.as_deref().unwrap_or("cli");
     // Attribution only. Which workflow a document joins is still the
     // session's, as it always was; the pane says where it was sent from.
-    let from = pane_origin(store, p.pane.as_deref()).or_else(|| {
-        p.peer
-            .as_ref()
-            .and_then(|fp| fp.desk.as_ref().map(|(o, _)| o.clone()))
-    });
-
     let (root, proj_name, branch) = place(&p, &b);
+    let from = pane_origin(store, p.pane.as_deref())
+        .or_else(|| {
+            p.peer
+                .as_ref()
+                .and_then(|fp| fp.desk.as_ref().map(|(o, _)| o.clone()))
+        })
+        .or_else(|| p.peer.is_none().then(|| outside(store, &root)).flatten());
 
     // Same file, same bytes as the latest snapshot: hand back that document rather
     // than storing a duplicate (an explicit send after a hook send, or vice versa).
@@ -1006,6 +1026,55 @@ mod tests {
         assert_eq!(got.doc.origin, "peer");
         assert_eq!(got.doc.sender, "Trapti");
         assert!(!s.projects().unwrap()[0].friend, "the desk's own row");
+    }
+
+    /// A document sent from a desk's folder outside its panels -- Claude in
+    /// the reader's own terminal -- lands on that desk, slot 0 (R4); a
+    /// pane on another desk keeps its own desk, and a friend's document is
+    /// not placed by folder.
+    #[test]
+    fn a_document_from_a_desks_folder_lands_on_that_desk() {
+        let (s, r, _d) = setup();
+        let garden = Dir::new("snyvi-recv-outside");
+        std::fs::create_dir_all(garden.path.join(".git")).unwrap();
+        std::fs::create_dir_all(garden.path.join("sub")).unwrap();
+        let g = garden.path.to_string_lossy().to_string();
+        let desk = s.create_desk(&g, Some("garden")).unwrap();
+        let other = s.create_desk("/tmp", Some("other")).unwrap();
+        let send = |text: &str, pane: Option<String>| {
+            receive(
+                &s,
+                &r,
+                Payload {
+                    content: Some(text.into()),
+                    cwd: Some(garden.path.join("sub").to_string_lossy().to_string()),
+                    origin: Some("cli".into()),
+                    pane,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .doc
+        };
+        let got = send("# Where it stands\n\none", None);
+        assert_eq!(
+            got.desk,
+            Some(crate::desk::Origin {
+                id: desk.id,
+                name: "garden".into(),
+                slot: 0
+            })
+        );
+
+        let crate::desk::Opened::Pane(p) = s.open_pane(other.id, "/tmp", "", false).unwrap() else {
+            panic!("a pane")
+        };
+        let got = send("# From the other desk\n\ntwo", Some(p.id));
+        assert_eq!(
+            got.desk.map(|o| o.id),
+            Some(other.id),
+            "the pane's desk wins"
+        );
     }
 
     /// A friend's document about a repository the reader has: into the

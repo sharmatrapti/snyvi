@@ -565,6 +565,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (18, widget::OWNER_1_32[4]),
     // 1.33: the conversation a document came from (`NewDoc::session`).
     (19, "ALTER TABLE docs ADD COLUMN session TEXT NOT NULL DEFAULT ''"),
+    (20, desk::HELD_COLUMN),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
@@ -1843,6 +1844,11 @@ impl Store {
         desk::set_cmd(&self.conn.lock().unwrap(), id, cmd)
     }
 
+    /// The reader pressed Start on a panel that was waiting for it (`desk::unhold`).
+    pub fn unhold_pane(&self, id: &str) -> Result<bool> {
+        desk::unhold(&self.conn.lock().unwrap(), id)
+    }
+
     pub fn set_pane_session(&self, id: &str, session: &str) -> Result<bool> {
         desk::set_agent_session(&self.conn.lock().unwrap(), id, session)
     }
@@ -2059,8 +2065,15 @@ impl Store {
         desk::set_cwd(&self.conn.lock().unwrap(), id, cwd)
     }
 
-    pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str) -> Result<Opened> {
-        desk::open_pane(&mut self.conn.lock().unwrap(), desk_id, cwd, cmd, now())
+    pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str, held: bool) -> Result<Opened> {
+        desk::open_pane(
+            &mut self.conn.lock().unwrap(),
+            desk_id,
+            cwd,
+            cmd,
+            held,
+            now(),
+        )
     }
 
     /// Move a pane to another slot on its desk (`desk::move_pane`), and what

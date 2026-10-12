@@ -226,7 +226,7 @@ document.addEventListener("keydown", e => {
  *  it held (11-elsewhere.js). What it has seen stays, in `oySeen`, and the
  *  pin, in this browser. */
 function forgetOnYou() {
-  clearTimeout(oy.timer); clearTimeout(ew.timer); ew.docs = [];
+  clearTimeout(oy.timer); clearTimeout(ew.timer); ew.docs = []; ew.first = null;
   Object.assign(oy, { open: false, older: false, rise: 0, drawnRise: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null });
   oyEl?.remove(); oyEl = null;
   document.documentElement.style.setProperty("--oy-h", "0px");

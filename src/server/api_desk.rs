@@ -180,6 +180,8 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                 "visited_at": d.visited_at, "parked": d.parked, "touched": touched,
                 "panes": panes, "open": open, "done": notes_done, "suggested": suggested, "next": next,
                 "last": last, "git": git.as_deref(), "pulse": pulse,
+                // Getting started's "Its first document" (ui/about.js `started`).
+                "has_doc": last_doc.is_some(),
                 // By name, for Home's Keys widget; never a value.
                 "keys": d.keys,
             })
@@ -354,6 +356,10 @@ pub(crate) struct NewPaneBody {
     /// and nothing here starts anything: Phase 3 spawns, this phase records.
     #[serde(default)]
     pub(crate) cmd: Option<String>,
+    /// Wait for the reader's Start on every load (`desk::Pane::held`): a new
+    /// project desk's first panel, made by the window behind `refuse_desk`.
+    #[serde(default)]
+    pub(crate) held: bool,
 }
 
 /// Every desk, with its panes, and how many panes are open across them.
@@ -1240,7 +1246,7 @@ pub(crate) async fn open_pane(
         return StatusCode::NOT_FOUND.into_response();
     };
     let cmd = b.cmd.unwrap_or_default();
-    match app.store.open_pane(desk.id, &desk.root, cmd.trim()) {
+    match app.store.open_pane(desk.id, &desk.root, cmd.trim(), b.held && !cmd.trim().is_empty()) {
         Ok(crate::desk::Opened::Pane(pane)) => {
             desks_moved(&app);
             (StatusCode::CREATED, Json(json!({ "pane": pane }))).into_response()
@@ -1362,6 +1368,11 @@ pub(crate) struct StartBody {
     /// would put its id over the one on offer.
     #[serde(default)]
     pub(crate) marked: bool,
+    /// Run `cmd` this once, and keep what `Start` re-runs as it was: the
+    /// held panel's *Ask Claude* button, whose question is asked once and
+    /// is not what the panel should run again on its next Start.
+    #[serde(default)]
+    pub(crate) once: bool,
     #[serde(default = "default_cols")]
     pub(crate) cols: u16,
     #[serde(default = "default_rows")]
@@ -1396,6 +1407,20 @@ pub(crate) async fn start_pane(
     let Ok(Some(placed)) = app.store.pane(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // A panel made to wait for the reader starts on their press only: the
+    // page's own start after a reload or a restart is refused, so an older
+    // page that does not know about the hold cannot start it either.
+    if placed.pane.held {
+        if b.marked {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "this panel waits for Start", "held": true })),
+            )
+                .into_response();
+        }
+        let _ = app.store.unhold_pane(&id);
+        desks_moved(&app);
+    }
     let lapsed = b.resume && b.marked && !app.panes.marked(&id);
     let offer = b.marked && (lapsed || !b.resume) && app.panes.offered(&id);
     // A resume is a one-off: what `Start` re-runs stays what the reader typed.
@@ -1415,7 +1440,7 @@ pub(crate) async fn start_pane(
         placed.pane.resume.clone()
     } else {
         let cmd = b.cmd.unwrap_or_else(|| placed.pane.cmd.clone());
-        if cmd.trim() != placed.pane.cmd {
+        if cmd.trim() != placed.pane.cmd && !b.once {
             let _ = app.store.set_pane_cmd(&id, &cmd);
         }
         cmd

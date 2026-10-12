@@ -39,6 +39,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("GET", "/assets/mermaid.js", None, Gate::Open, true),
     ("GET", "/assets/app.js", None, Gate::Open, true),
     ("GET", "/assets/fonts/x.woff2", None, Gate::Open, true),
+    ("GET", "/assets/tour/x.webp", None, Gate::Open, true),
     ("GET", "/api/health", None, Gate::Open, true),
     ("GET", "/api/about", None, Gate::Open, true),
     ("GET", "/api/agents", None, Gate::Open, true),
@@ -165,6 +166,14 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("POST", "/api/browse/pick", None, Gate::Desk, false),
     // With no dialog open, a cancel wakes nothing: safe to let through.
     ("POST", "/api/browse/pick/cancel", None, Gate::Desk, true),
+    // A root that is no root: 404 before anything is made.
+    (
+        "POST",
+        "/api/browse/new",
+        Some(r#"{"name":"x","under":"nope"}"#),
+        Gate::Desk,
+        true,
+    ),
     ("POST", "/api/browse/nope/close", None, Gate::Reader, true),
     ("POST", "/api/browse/nope/reopen", None, Gate::Reader, true),
     ("GET", "/api/browse/nope/tree", None, Gate::Open, true),
