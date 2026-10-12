@@ -725,6 +725,20 @@ jobs:
           if [ -n "$(gh pr list --repo "$upstream" --head "$branch" --json url -q '.[].url')" ]; then
             echo "the pull request for $branch is already open"; exit 0
           fi
+          # Until the first version is merged, every release would read "New
+          # package" and open another one; moderators close duplicates, and
+          # each brings its own CLA nag (1.34.0 and 1.34.1 did). So a new
+          # package waits for the one already open. The branch is written
+          # above, so once that merges, re-running this job opens the version
+          # as "New version".
+          if [ "$kind" = "New package" ]; then
+            open=$(gh pr list --repo "$upstream" --author "${FORK%%/*}" --state open \
+              --search "New package: snymrova.snyvi in:title" --json url -q '.[0].url')
+            if [ -n "$open" ]; then
+              echo "::warning::$open is still the open new-package request; re-run this job once it merges."
+              exit 0
+            fi
+          fi
           gh pr create --repo "$upstream" --head "${FORK%%/*}:$branch" --base master \
             --title "$title" \
             --body "Written by the snyvi release workflow from the release's own checksums: https://github.com/snymrova/snyvi/releases/tag/v$VERSION"
