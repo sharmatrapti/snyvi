@@ -627,10 +627,28 @@ async function switchSoon(v, account, label) {
   try { await switchPanel(v, account, label); }
   catch (e) {
     if (!/answering/i.test(String(e))) throw e;
-    v.whenDone = () => switchPanel(v, account, label).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e));
-    ctx.toast(`Panel ${v.pane.slot} switches to ${label} when Claude is done`, "it is answering now", null,
-      { label: "Cancel", run: () => { v.whenDone = null; } });
+    // Said on the panel until it happens (`switchStrip`), by the account's
+    // name as it is when it does: a toast said it once, cut short, and went.
+    const p = v.pending = { account };
+    const fail = e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e);
+    v.whenDone = () => switchPanel(v, account, labelOf(account)).catch(fail);
+    // And asked again now and then: a turn whose end the hook never said is
+    // over once Claude has been quiet a while (`pane::is_answering`), and a
+    // status that still says `working` would otherwise hold it for ever.
+    const settle = () => { clearInterval(t); if (v.pending === p) { v.pending = null; v.whenDone = null; header(v); } };
+    const t = setInterval(() => {
+      if (v.pending !== p) return clearInterval(t);
+      switchPanel(v, account, labelOf(account)).then(settle, e => { if (!/answering/i.test(String(e))) { settle(); fail(e); } });
+    }, SWITCH_RETRY_MS);
+    header(v);
   }
+}
+const SWITCH_RETRY_MS = 15000;
+
+/** An account's name by its id, null being the desk's own. */
+function labelOf(account) {
+  const id = account ?? current()?.account ?? 0;
+  return (accounts().find(a => a.id === id) || accounts()[0]).label;
 }
 
 /** A running panel restarted as `account` (null: its desk's), back into its

@@ -2378,15 +2378,15 @@ async function deskRows(cdp, base, token) {
     const rose = !!away && await until(`/still-b · panel 1 sent a document/.test(document.querySelector("#onyou .oy-doc .oy-from")?.textContent || "") && /Sent from still-b/.test(document.querySelector("#onyou .oy-doc .oy-title")?.textContent || "")`, 40);
     // Once it has risen: a press mid-rise lands where the button is going.
     if (rose) { await sleep(500); await p.clickOn('#onyou [data-a="ew-later"]'); }
-    const settled = rose && await until(`!document.querySelector("#onyou .oy-doc") && /▣ 1/.test(document.querySelector('a[data-desk="${db}"] .end')?.textContent || "")`, 30);
+    const settled = rose && await until(`!document.querySelector("#onyou .oy-doc") && document.querySelector('a[data-desk="${db}"] .end .k')?.textContent === "1"`, 30);
     const settledSaid = settled ? "" : JSON.stringify(await p.ev(`({ card: !!document.querySelector("#onyou .oy-doc"), row: document.querySelector('a[data-desk="${db}"] .end')?.textContent || "" })`));
     const away2 = (await post("/api/docs", { content: "# Again\n\nFrom still-b.", title: "Again from still-b", origin: "mcp", pane: third }, TK)).doc;
     const rose2 = !!away2 && await until(`!!document.querySelector('#onyou [data-a="ew-open"]')`, 40);
     if (rose2) { await sleep(500); await p.clickOn('#onyou [data-a="ew-open"]'); }
     const opened2 = rose2 && await until(`location.pathname === "/d/${away2 && away2.id}"`, 40);
     rows.push(["a document from another desk rises here; Later leaves it counted on its desk, Open reads it", !ownRose && rose && settled && opened2,
-      ownRose ? "this desk's own document rose in the corner" : !rose ? "no card said still-b's panel sent a document" : !settled ? `Later did not leave ▣ 1 on still-b's row: ${settledSaid}` :
-      !opened2 ? `Open landed on ${await p.ev("location.pathname")}` : "it rose over this desk, Later left ▣ 1 on still-b, and Open read the next one"]);
+      ownRose ? "this desk's own document rose in the corner" : !rose ? "no card said still-b's panel sent a document" : !settled ? `Later did not leave a count of 1 on still-b's row: ${settledSaid}` :
+      !opened2 ? `Open landed on ${await p.ev("location.pathname")}` : "it rose over this desk, Later left a count of 1 on still-b, and Open read the next one"]);
     if (opened2) { await p.ev("history.back(), 1"); await until(`location.pathname === "/desk/${da}"`, 30); }
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
     await p.pointerAway();

@@ -85,6 +85,7 @@ function makeView(p) {
   el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-acc"></span><span class="pn-git"></span><span class="pn-ctx"></span><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Panel ${p.slot}"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<div class="pn-offer" hidden role="status"><span>${OFFER_SAYS}</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" data-tip="Not now" aria-label="Not now">✕</button></div>` +
+    `<div class="pn-switch" hidden role="status"><span></span></div>` +
     `<div class="pn-connect" hidden role="status"></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden data-tip="Resume conversation" data-tip-sub="claude --resume, the one this panel last had">↻ Resume conversation</button></form>`;
   // A new project desk's first panel, holding `claude` for the reader's Enter.
@@ -183,6 +184,7 @@ function makeView(p) {
   start.querySelector("input").addEventListener("keydown", e => e.stopPropagation());
   start.querySelector(".pn-resume").addEventListener("click", () => run(v, "", false, true));
   el.querySelector(".pn-offer").addEventListener("click", e => offerClick(v, e));
+  el.querySelector(".pn-switch").addEventListener("click", e => switchClick(v, e));
   new ResizeObserver(() => fit(v)).observe(body);
   header(v);
   return v;
@@ -577,7 +579,58 @@ function header(v) {
   const off = v.el.querySelector(".pn-offer");
   if (off) off.hidden = !(v.offered && talked(v) && s.running);
   if (off && off.hidden && v.offerWait) offerStop(v);
+  switchStrip(v);
   cursor(v);
+}
+
+/** A switch of account that waits, or the way out of a limit, said on the
+ *  panel it is about rather than in a toast that went before it was done
+ *  (notes #124, #126, #127). Over the top of the screen like the offer, so
+ *  it moves nothing. A switch asked for mid-answer says it goes when the
+ *  answer ends, until it does or is cancelled. A panel whose turn ended at
+ *  its usage limit (`stopped`, from Claude Code's StopFailure) offers the
+ *  other accounts, until the next prompt or a ✕. */
+function switchStrip(v) {
+  const el = v.el.querySelector(".pn-switch");
+  if (!el) return;
+  const s = v.status, on = accountOf(v);
+  const others = v.pending || !s.running || s.stopped !== "rate_limit" || v.limitShut === s.agent_since || !continuable(v)
+    ? [] : accounts().filter(a => a.id !== on.id);
+  const say = v.pending ? `Switches to ${labelOf(v.pending.account)} when this answer ends`
+    : others.length ? `Usage limit reached as ${on.label}` : "";
+  const key = `${say}|${others.map(a => a.id)}`;
+  if (el.dataset.k === key) return;
+  el.dataset.k = key;
+  el.hidden = !say;
+  el.replaceChildren();
+  if (!say) return;
+  const t = document.createElement("span");
+  t.textContent = say;
+  if (v.pending) { t.dataset.tip = "Switching now would lose the answer Claude is writing"; t.dataset.tipSub = "it restarts into this conversation as soon as the answer is done"; }
+  el.append(t);
+  for (const a of others) {
+    const b = document.createElement("button");
+    b.type = "button"; b.dataset.sw = "as"; b.dataset.n = a.id; b.textContent = `Continue as ${a.label}`;
+    b.dataset.tip = "Restarts this panel into its conversation"; b.dataset.tipSub = `as ${a.label}`;
+    el.append(b);
+  }
+  const x = document.createElement("button");
+  x.type = "button"; x.dataset.sw = "x"; x.textContent = "✕";
+  x.dataset.tip = v.pending ? "Cancel the switch" : "Not now";
+  x.setAttribute("aria-label", x.dataset.tip);
+  el.append(x);
+}
+
+function switchClick(v, e) {
+  const b = e.target.closest("[data-sw]");
+  if (!b) return;
+  if (b.dataset.sw === "x") {
+    if (v.pending) { v.whenDone = null; v.pending = null; } else v.limitShut = v.status.agent_since;
+    header(v); v.body.focus();
+    return;
+  }
+  const d = current(), a = accounts().find(x => x.id === +b.dataset.n);
+  if (d && a) runAs(v, d, a, true).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e));
 }
 
 /** The first panel of a new project desk: `claude` in its Start field, the

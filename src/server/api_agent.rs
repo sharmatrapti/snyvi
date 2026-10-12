@@ -75,6 +75,10 @@ pub(crate) struct AgentBody {
     /// `SessionStart`, which only names the conversation).
     #[serde(default)]
     pub(crate) state: Option<String>,
+    /// Why a turn ended without its answer, with `done`: a `StopFailure`'s
+    /// error (`crate::pane::STOP_REASONS`).
+    #[serde(default)]
+    pub(crate) stopped: Option<String>,
     /// The Claude Code session id, a UUID, when the event carried one.
     #[serde(default)]
     pub(crate) session: Option<String>,
@@ -138,7 +142,9 @@ pub(crate) async fn pane_agent(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let mut live = match &b.state {
-        Some(state) => app.panes.set_agent(&id, state),
+        Some(state) => app
+            .panes
+            .set_agent_stopped(&id, state, b.stopped.as_deref().unwrap_or("")),
         // A session named with no state is a SessionStart: an agent is in.
         None if b.session.is_some() => app.panes.agent_in(&id),
         None => app.panes.is_running(&id),

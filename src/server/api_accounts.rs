@@ -364,7 +364,10 @@ pub(crate) async fn set_pane_account(
         }
     }
     let status = app.panes.status(&id);
-    if b.switch && status.agent == "working" {
+    // Mid-answer is `working` and printing: a turn whose end was never heard
+    // -- a limit's `StopFailure` to a hook from before it -- must not hold
+    // the switch that is the way out of the limit (note #127).
+    if b.switch && app.panes.answering(&id) {
         return (
             StatusCode::CONFLICT,
             Json(json!({ "error": "Claude is answering in this panel: switch when it is done" })),

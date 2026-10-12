@@ -24,7 +24,18 @@ use std::path::{Path, PathBuf};
 /// would be read by whatever snyvi the entry names, and one from before the
 /// flag existed fails on it, on every tool call. So whether a written file
 /// is sent is not the entry's to say but `auto_send`'s.
-const STATUS_EVENTS: [&str; 4] = ["UserPromptSubmit", "Notification", "Stop", "SessionEnd"];
+///
+/// `StopFailure` is the end of a turn that ended on an API error -- a usage
+/// limit, an outage -- which Claude Code says in place of `Stop`. Without it a
+/// panel stopped at its limit said `working` until the next prompt, and a
+/// switch to another account waited on it (note #127).
+const STATUS_EVENTS: [&str; 5] = [
+    "UserPromptSubmit",
+    "Notification",
+    "Stop",
+    "StopFailure",
+    "SessionEnd",
+];
 
 /// The tools the status entry runs after. It used to be every tool (`*`),
 /// which is one process started per Read, Grep and Glob of every turn, and
@@ -70,6 +81,9 @@ struct Event {
     source: Str,
     /// SessionStart: the title the session already has, if any.
     session_title: Str,
+    /// StopFailure: the error that ended the turn, `rate_limit` and the rest
+    /// (`crate::pane::STOP_REASONS`).
+    error: Str,
     /// Stop: the text of the reply that just ended the turn.
     last_assistant_message: Str,
     /// Stop: true when Claude Code is already going on because a Stop hook
@@ -247,11 +261,11 @@ pub fn run(paths: &Paths) -> Result<()> {
         // are told the way they know, after. Telling twice sets it twice.
         let asks = starting || name == "UserPromptSubmit";
         if said && !asks {
-            client::agent_state(paths, pane, state, session);
+            client::agent_state(paths, pane, state, session, stop_reason(&event));
         }
         let tell_anyway = |heard: Option<&client::Said>| {
             if said && heard.is_none_or(|h| !h.applied) {
-                client::agent_state(paths, pane, state, session);
+                client::agent_state(paths, pane, state, session, None);
             }
         };
         // The desk brief, on every start -- a new session, a resume, a
@@ -582,7 +596,7 @@ const PLAN_MATCHER: &str = "ExitPlanMode";
 fn agent_state(event: &Event) -> Option<&'static str> {
     match event.hook_event_name.get()? {
         "UserPromptSubmit" | "PostToolUse" => Some("working"),
-        "Stop" => Some("done"),
+        "Stop" | "StopFailure" => Some("done"),
         "SessionEnd" => Some(""),
         // Codex asks for an approval through this event; Claude Code says the
         // same thing with a `Notification`.
@@ -599,6 +613,13 @@ fn agent_state(event: &Event) -> Option<&'static str> {
         }
         _ => None,
     }
+}
+
+/// Why a turn ended without its answer: a `StopFailure`'s error, which goes
+/// with its `done` so a panel stopped at its limit can offer another account.
+fn stop_reason(event: &Event) -> Option<&str> {
+    (event.hook_event_name.get() == Some("StopFailure"))
+        .then(|| event.error.get().unwrap_or("unknown"))
 }
 
 /// Whether the reader asked for every file Claude writes to be sent: the
@@ -895,6 +916,7 @@ pub fn installed(settings: &Value) -> Vec<(&'static str, String)> {
         "UserPromptSubmit",
         "Notification",
         "Stop",
+        "StopFailure",
         "SessionEnd",
         "PostToolUse",
     ] {
@@ -1113,6 +1135,22 @@ mod tests {
         assert_eq!(state_of(&ev("UserPromptSubmit")), Some("working"));
         assert_eq!(state_of(&ev("PostToolUse")), Some("working"));
         assert_eq!(state_of(&ev("Stop")), Some("done"));
+        // A turn ended by a usage limit or an outage is over all the same,
+        // and says why; nothing else does.
+        assert_eq!(state_of(&ev("StopFailure")), Some("done"));
+        let why = |v: Value| {
+            let e: Event = serde_json::from_slice(v.to_string().as_bytes()).unwrap();
+            stop_reason(&e).map(str::to_string)
+        };
+        assert_eq!(
+            why(json!({ "hook_event_name": "StopFailure", "error": "rate_limit" })).as_deref(),
+            Some("rate_limit")
+        );
+        assert_eq!(why(ev("StopFailure")).as_deref(), Some("unknown"));
+        assert_eq!(
+            why(json!({ "hook_event_name": "Stop", "error": "x" })),
+            None
+        );
         assert_eq!(state_of(&ev("SessionEnd")), Some(""));
         assert_eq!(state_of(&ev("SessionStart")), None);
         assert_eq!(
@@ -1136,11 +1174,12 @@ mod tests {
         );
     }
 
-    const ALL: [&str; 5] = [
+    const ALL: [&str; 6] = [
         "SessionStart",
         "UserPromptSubmit",
         "Notification",
         "Stop",
+        "StopFailure",
         "SessionEnd",
     ];
 
@@ -1177,7 +1216,7 @@ mod tests {
             install_into(&mut s, "/opt/snyvi hook", true).unwrap(),
             (true, false)
         );
-        assert_eq!(installed(&s).len(), 6);
+        assert_eq!(installed(&s).len(), 7);
         assert_eq!(s["hooks"]["PostToolUse"].as_array().unwrap().len(), 3);
         assert_eq!(
             install_into(&mut s, "/opt/snyvi hook", true).unwrap(),
@@ -1216,9 +1255,28 @@ mod tests {
                 .unwrap()
                 .0
         );
-        assert_eq!(installed(&old).len(), 6);
+        assert_eq!(installed(&old).len(), 7);
         assert_eq!(old["hooks"]["PostToolUse"].as_array().unwrap().len(), 2);
         assert_eq!(old["hooks"]["PostToolUse"][1]["matcher"], STATUS_TOOLS);
+    }
+
+    /// An install from before `StopFailure` gains it at the next daemon
+    /// start, beside the four it had, and nothing else moves (note #127).
+    #[test]
+    fn an_install_without_stop_failure_gains_it() {
+        let mut s = json!({});
+        install_into(&mut s, "/usr/bin/snyvi hook", false).unwrap();
+        s["hooks"].as_object_mut().unwrap().remove("StopFailure");
+        assert!(!installed(&s).iter().any(|(e, _)| *e == "StopFailure"));
+        assert_eq!(
+            install_into(&mut s, "/usr/bin/snyvi hook", false).unwrap(),
+            (true, false)
+        );
+        assert_eq!(
+            installed(&s),
+            ALL.map(|e| (e, "/usr/bin/snyvi hook".to_string())).to_vec()
+        );
+        assert_eq!(s["hooks"]["StopFailure"][0]["hooks"][0]["timeout"], 10);
     }
 
     /// An install from 1.12 ran the status entry on every tool. The next
@@ -1397,12 +1455,12 @@ mod tests {
             { "matcher": "Bash", "hooks": [{ "type": "command", "command": "other --x" }] } ] } });
         let mut s = before.clone();
         install_into(&mut s, "/opt/snyvi hook", true).unwrap();
-        assert_eq!(remove_from(&mut s), 8);
+        assert_eq!(remove_from(&mut s), 9);
         assert_eq!(s, before);
         // A file that had only ours goes back to having no hooks key at all.
         let mut s = json!({ "theme": "dark" });
         install_into(&mut s, "snyvi hook", true).unwrap();
-        assert_eq!(remove_from(&mut s), 8);
+        assert_eq!(remove_from(&mut s), 9);
         assert_eq!(s, json!({ "theme": "dark" }));
         assert_eq!(remove_from(&mut s), 0);
     }
