@@ -165,6 +165,28 @@ fn a_restart_waits_for_agents_and_recent_output_but_not_forever() {
     assert!(!is_busy(&s(false, ""), just_now, a_while));
 }
 
+/// A switch of account waits only for an answer being written: `working`
+/// and printing. A turn whose end nobody heard -- a `StopFailure` to a hook
+/// from before it, a crash -- is over after `ANSWER_SILENT`, not ten
+/// minutes; and a turn that is done, or a question, never holds a switch.
+#[test]
+fn a_switch_waits_only_for_an_answer_being_written() {
+    let s = |running: bool, agent: &'static str| Status {
+        running,
+        agent,
+        ..Status::default()
+    };
+    let just_now = Duration::from_secs(1);
+    let quiet = ANSWER_SILENT + Duration::from_secs(1);
+    assert!(is_answering(&s(true, "working"), just_now));
+    assert!(!is_answering(&s(true, "working"), quiet));
+    assert!(!is_answering(&s(true, "done"), just_now));
+    assert!(!is_answering(&s(true, "needs_you"), just_now));
+    assert!(!is_answering(&s(true, ""), just_now));
+    assert!(!is_answering(&s(false, "working"), just_now));
+    assert!(ANSWER_SILENT < WORKING_SILENT);
+}
+
 /// The marks wait for someone to look: ten minutes with nobody here
 /// spends nothing. The first look starts `RESUME_FOR`; past it, an
 /// unspent resume is an offer; past the cap, nothing is either.
@@ -722,6 +744,17 @@ async fn an_agent_state_is_set_on_a_running_pane_once_per_change() {
         dots.iter().any(|d| d.contains("\"agent\":\"needs_you\"")),
         "{dots:?}"
     );
+    // A turn that ended on an error is done, with why (`StopFailure`).
+    assert!(panes.set_agent_stopped(id, "done", "rate_limit"));
+    assert_eq!(panes.status(id).stopped, "rate_limit");
+    assert!(panes.set_agent_stopped(id, "done", "a_new_error"));
+    assert_eq!(panes.status(id).stopped, "unknown", "a word not known yet");
+    assert!(panes.set_agent_stopped(id, "working", "rate_limit"));
+    assert_eq!(panes.status(id).stopped, "", "only done carries a reason");
+    assert!(panes.set_agent_stopped(id, "done", "rate_limit"));
+    assert!(panes.set_agent(id, "working"));
+    assert_eq!(panes.status(id).stopped, "", "the next prompt clears it");
+    assert!(panes.set_agent_stopped(id, "done", "rate_limit"));
     live.stop();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while panes.status(id).running && tokio::time::Instant::now() < deadline {
@@ -732,6 +765,7 @@ async fn an_agent_state_is_set_on_a_running_pane_once_per_change() {
         "",
         "the agent goes with its process"
     );
+    assert_eq!(panes.status(id).stopped, "", "and why it stopped");
 }
 
 /// An agent is in a pane from its SessionStart, before any state, and

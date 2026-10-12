@@ -271,15 +271,16 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* The offer after an unplanned stop: over the top of the panel's screen, in
    the waiting amber, out of the way of the prompt it would type into -- and
    under the panel's head (one 11.5px line and 8px of padding, ~23px), never
-   over it: at top 8px it hid the panel's state and its close. */
-.pn-offer { position: absolute; left: 12px; right: 12px; top: 30px; z-index: 3; display: flex; gap: 8px; align-items: center; padding: 6px 8px 6px 12px; font-size: 12px;
+   over it: at top 8px it hid the panel's state and its close. The switch
+   strip -- a switch of account that waits, a limit's way out -- wears it too. */
+:is(.pn-offer, .pn-switch) { position: absolute; left: 12px; right: 12px; top: 30px; z-index: 3; display: flex; gap: 8px; align-items: center; padding: 6px 8px 6px 12px; font-size: 12px;
   background: color-mix(in srgb, var(--warn) 12%, var(--bg-raise)); color: var(--fg); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius: var(--r-sm); box-shadow: var(--shadow); }
-.pn-offer[hidden] { display: none; }
-.pn-offer > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(.pn-offer, .pn-switch)[hidden] { display: none; }
+:is(.pn-offer, .pn-switch) > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pn-offer > span.why { color: var(--warn); }
-.pn-offer button { flex: none; padding: 3px 8px; border-radius: var(--r-xs); color: var(--fg-2); }
-.pn-offer [data-offer="go"] { color: var(--accent); font-weight: 600; }
-.pn-offer button:hover { background: var(--rule-2); color: var(--fg); }
+:is(.pn-offer, .pn-switch) button { flex: none; padding: 3px 8px; border-radius: var(--r-xs); color: var(--fg-2); }
+.pn-offer [data-offer="go"], .pn-switch [data-sw="as"] { color: var(--accent); font-weight: 600; }
+:is(.pn-offer, .pn-switch) button:hover { background: var(--rule-2); color: var(--fg); }
 .pn-offer button:disabled { opacity: .55; cursor: progress; }
 .pn-offer button:disabled:hover { background: none; }
 .pn-start { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 8px; align-items: center; padding: 8px; background: var(--bg-raise); border: 1px solid var(--rule-2); border-radius: var(--r-sm); box-shadow: var(--shadow); }

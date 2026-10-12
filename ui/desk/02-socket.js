@@ -91,7 +91,7 @@ function receive(f) {
     // A switch asked for mid-answer goes when the turn is over (`switchSoon`):
     // not at a question, whose answer a restart would lose;
     // a panel that stopped instead has nothing left to switch.
-    if (v.whenDone && f.s.agent !== "working" && f.s.agent !== "needs_you") { const k = v.whenDone; v.whenDone = null; if (f.s.running) k(); }
+    if (v.whenDone && f.s.agent !== "working" && f.s.agent !== "needs_you") { const k = v.whenDone; v.whenDone = null; v.pending = null; header(v); if (f.s.running) k(); }
     if (mark(f.s) !== was) rail();
     else { named(v); if (v.id === focused) meta(); }
   }

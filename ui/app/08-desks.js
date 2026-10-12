@@ -152,6 +152,10 @@
       // desk is a dot and an idle one is nothing; the tip carries the rest,
       // the count of panels with it: "4" beside "▣ 1" read as "1 4", so the
       // one figure on a row is what waits for the reader (1.34).
+      // That figure wears the rail's document icon -- a bare ▣ said nothing
+      // (#125) -- and stands before the dot, whose place is kept on every
+      // row, live or idle: a count coming in moves neither the dot nor any
+      // other row's.
       const working = d.panes.filter(p => p.status && (p.status.agent === "working" || p.status.running)).length;
       const fp = full == null ? null : d.panes.find(p => p.status && p.status.ctx_pct === full);
       // What its panels sent that waits to be read (#122): the corner card
@@ -162,7 +166,7 @@
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" draggable="false" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
         deskSaid && deskSaid.id === d.id ? `<span class="end"><span class="t-said" role="status" data-tip="${esc(deskSaid.text)}" data-tip-sub="${esc(deskSaid.why)}">${esc(deskSaid.text)}</span></span>` :
-        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : m === "●" ? `<span class="dot on"></span>` : m === "◦" ? `<span class="dot run"></span>` : ""}<span class="vh">${say}</span>${w ? `<span class="k">▣ ${w}</span>` : ""}</span>`,
+        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${w ? `<span class="k">${icon("doc", 12, "k-ico")}${w}</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : `<span class="dot${m === "●" ? " on" : m === "◦" ? " run" : ""}"></span>`}<span class="vh">${say}</span></span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row

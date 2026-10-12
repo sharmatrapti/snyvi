@@ -818,7 +818,23 @@ fn send_within(paths: &Paths, payload: &Payload, within: Duration) -> Result<Val
 /// runs inside a Claude Code hook, on every prompt and tool call, so it never
 /// starts a daemon, never waits more than half a second, and a daemon that is
 /// not there means no status, and nothing more.
-pub fn agent_state(paths: &Paths, pane: &str, state: Option<&str>, session: Option<&str>) {
+///
+/// `stopped` is why a turn ended without its answer (`StopFailure`), with
+/// `done`; a daemon from before it takes the `done` alone.
+pub fn agent_state(
+    paths: &Paths,
+    pane: &str,
+    state: Option<&str>,
+    session: Option<&str>,
+    stopped: Option<&str>,
+) {
+    let body = serde_json::json!({ "state": state, "session": session, "stopped": stopped });
+    tell_agent(paths, pane, body);
+}
+
+/// One word about a pane's agent to `/api/panes/{pane}/agent`, waited on
+/// for half a second at most: a hook runs inside Claude's turn.
+fn tell_agent(paths: &Paths, pane: &str, body: serde_json::Value) {
     let Some(token) = config::read_token(paths) else {
         return;
     };
@@ -829,7 +845,7 @@ pub fn agent_state(paths: &Paths, pane: &str, state: Option<&str>, session: Opti
         .timeout_global(Some(Duration::from_millis(500)))
         .http_status_as_error(false)
         .build()
-        .send_json(serde_json::json!({ "state": state, "session": session }));
+        .send_json(body);
 }
 
 /// What Claude's status line said, for the panel it runs in: the model, how

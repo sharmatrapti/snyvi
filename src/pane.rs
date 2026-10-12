@@ -119,6 +119,12 @@ const MARKS_AT_MOST: Duration = Duration::from_secs(24 * 3600);
 /// working: a Claude stopped with Esc says nothing more, while one that is
 /// working repaints its spinner every second.
 const WORKING_SILENT: Duration = Duration::from_secs(10 * 60);
+/// The same, for a switch of account (`is_answering`): a reader waiting to
+/// switch should not wait ten minutes on a turn whose end nobody heard -- a
+/// hook from before `StopFailure`, a crash. Claude repaints its spinner every
+/// second while it answers, a long tool call included, so half a minute of
+/// silence is a turn that is over.
+const ANSWER_SILENT: Duration = Duration::from_secs(30);
 /// A pane busy only because its program keeps printing -- a log tail, a
 /// watcher, a dev server -- counts for at most this long, or an update
 /// would wait on it forever.
@@ -186,6 +192,12 @@ pub struct Status {
     /// Empty for everything else, which keeps `blocked` as its only signal.
     pub agent: &'static str,
     pub agent_since: Option<i64>,
+    /// Why the agent's last turn ended without its answer: Claude Code's
+    /// `StopFailure` error (`STOP_REASONS`), `rate_limit` when the account
+    /// ran out. Set with `done` and cleared by whatever the agent says next.
+    /// A panel stopped at a limit is offered another account in its head.
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub stopped: &'static str,
     /// An agent's session is open in this pane: its SessionStart hook came
     /// and its SessionEnd has not. True from before the first prompt, which
     /// `agent` waits for. The page reads it to leave the picture on a plain
@@ -287,6 +299,23 @@ fn ctx_figure(used: Option<u64>) -> Option<u64> {
 /// The states an agent reports through its hooks. `needs_you` is Claude's
 /// precise version of `blocked`: a permission prompt, not a bell.
 pub const AGENT_STATES: [&str; 3] = ["working", "needs_you", "done"];
+
+/// Why a turn can end without its answer, as Claude Code's `StopFailure`
+/// hook names it. Anything else it may add later is `unknown`.
+pub const STOP_REASONS: [&str; 12] = [
+    "rate_limit",
+    "overloaded",
+    "authentication_failed",
+    "oauth_org_not_allowed",
+    "account_on_hold",
+    "billing_error",
+    "invalid_request",
+    "model_not_found",
+    "server_error",
+    "max_output_tokens",
+    "cloud_credential_error",
+    "unknown",
+];
 
 struct Proc {
     master: Box<dyn MasterPty + Send>,
@@ -741,6 +770,16 @@ impl Panes {
             })
     }
 
+    /// Whether Claude is writing an answer in this pane now, which a switch
+    /// of account would lose: see `is_answering`.
+    pub fn answering(&self, id: &str) -> bool {
+        let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
+            return false;
+        };
+        let i = l.inner.lock().unwrap();
+        is_answering(&i.status, Instant::now().saturating_duration_since(i.wrote))
+    }
+
     /// The panes a restart should wait for, and an update: see `is_busy`.
     pub fn busy(&self) -> Vec<String> {
         let now = Instant::now();
@@ -926,15 +965,33 @@ impl Panes {
     /// and nothing is woken or created for it. `state` is one of
     /// `AGENT_STATES`, or empty for an agent that has gone.
     pub fn set_agent(&self, id: &str, state: &str) -> bool {
+        self.set_agent_stopped(id, state, "")
+    }
+
+    /// `set_agent`, and why the turn ended without its answer (`Status::
+    /// stopped`): a `StopFailure` is `done` with its error. Only `done`
+    /// carries one; a reason not in `STOP_REASONS` is `unknown`.
+    pub fn set_agent_stopped(&self, id: &str, state: &str, why: &str) -> bool {
         let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
             return false;
         };
         let state = AGENT_STATES.into_iter().find(|s| *s == state).unwrap_or("");
+        let why = if state != "done" || why.is_empty() {
+            ""
+        } else {
+            STOP_REASONS
+                .into_iter()
+                .find(|s| *s == why)
+                .unwrap_or("unknown")
+        };
         let mut i = l.inner.lock().unwrap();
         if !i.status.running {
             return false;
         }
-        if i.status.agent == state && i.status.agent_in == !state.is_empty() {
+        if i.status.agent == state
+            && i.status.agent_in == !state.is_empty()
+            && i.status.stopped == why
+        {
             return true;
         }
         // `needs_you` is also `blocked`, so everything that already shows a
@@ -949,6 +1006,7 @@ impl Panes {
         }
         i.status.agent = state;
         i.status.agent_since = (!state.is_empty()).then(crate::store::now);
+        i.status.stopped = why;
         i.status.agent_in = !state.is_empty();
         if state.is_empty() {
             clear_context(&mut i.status);
@@ -1262,6 +1320,12 @@ pub fn is_busy(s: &Status, since_output: Duration, printing_for: Duration) -> bo
         "working" => since_output < WORKING_SILENT,
         _ => since_output < busy_output() && printing_for < PRINTING_AT_MOST,
     }
+}
+
+/// Whether a pane's agent is mid-answer: it said `working` and has printed
+/// within `ANSWER_SILENT`. The rule on its own, like `is_busy`.
+pub fn is_answering(s: &Status, since_output: Duration) -> bool {
+    s.running && s.agent == "working" && since_output < ANSWER_SILENT
 }
 
 /// The panes the last daemon marked, and their clocks. A resume mark holds
@@ -1633,6 +1697,7 @@ impl Live {
             i.status.blocked_since = None;
             i.status.agent = "";
             i.status.agent_since = None;
+            i.status.stopped = "";
             i.status.agent_in = false;
             i.unsaved = false;
             i.unsaved_lines = false;
