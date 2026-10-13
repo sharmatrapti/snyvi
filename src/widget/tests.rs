@@ -162,6 +162,13 @@ fn nothing_clears() {
     assert_eq!(Body::parse("  \n").unwrap(), Sent::Clear);
     assert_eq!(Body::parse(r#"{"body":"  "}"#).unwrap(), Sent::Clear);
     assert_eq!(Body::parse(r#"{"tone":"ok"}"#).unwrap(), Sent::Clear);
+    // Not a widget's JSON: said, not cleared, not drawn as braces.
+    assert!(Body::parse(r#"{"status":"ok"}"#)
+        .unwrap_err()
+        .contains("no \"body\""));
+    assert!(Body::parse(r#"{"body":5}"#)
+        .unwrap_err()
+        .contains("Markdown text"));
 }
 
 #[test]
@@ -591,4 +598,58 @@ fn a_removed_box_keeps_its_body_for_undo() {
     assert!(!remove_box(&c, 7, "backup", 8).unwrap());
     assert!(seat_of(&c, 7, "backup").unwrap().is_some());
     assert!(!remove_box(&c, 7, "nothing", 8).unwrap());
+}
+
+#[test]
+fn a_pushed_boxs_switch_is_its_desks() {
+    let c = db();
+    put(&c, 3, "deploy", &body("a"), "", &PUSH, 1).unwrap();
+    put(&c, 8, "deploy", &body("b"), "", &PUSH, 1).unwrap();
+    // Off on desk 3, keyed by its desk (1.36): desk 8's stays on.
+    let off = Change {
+        hidden: Some(true),
+        ..Default::default()
+    };
+    set_prefs(&c, 3, "deploy", &off, 2).unwrap();
+    assert!(seat_of(&c, 3, "deploy").unwrap().unwrap().hidden);
+    assert!(!seat_of(&c, 8, "deploy").unwrap().unwrap().hidden);
+    // One switched off before 1.36, under the name alone, stays off.
+    set_prefs(&c, 0, "deploy", &off, 3).unwrap();
+    assert!(seat_of(&c, 8, "deploy").unwrap().unwrap().hidden);
+    let on = Change {
+        hidden: Some(false),
+        ..Default::default()
+    };
+    set_prefs(&c, 8, "deploy", &on, 4).unwrap();
+    assert!(!seat_of(&c, 8, "deploy").unwrap().unwrap().hidden);
+}
+
+#[test]
+fn a_no_is_the_readers_to_take_back() {
+    let c = db();
+    ask_wait(&c, 1, "deploy", "p1", "panel 1", "x", 1).unwrap();
+    ask_answer(&c, 1, "deploy", "no", 0, "", 2).unwrap();
+    ask_wait(&c, 2, "ci", "p2", "panel 2", "y", 1).unwrap();
+    ask_answer(&c, 2, "ci", "yes", 0, "", 2).unwrap();
+    let refused: Vec<_> = asks_refused(&c)
+        .unwrap()
+        .into_iter()
+        .map(|a| (a.desk_id, a.name))
+        .collect();
+    assert_eq!(refused, vec![(1, "deploy".to_string())]);
+    assert!(ask_again(&c, 1, "deploy", 3).unwrap());
+    assert_eq!(ask_of(&c, 1, "deploy").unwrap().unwrap().answer, "again");
+    assert!(asks_refused(&c).unwrap().is_empty());
+    assert!(!ask_again(&c, 2, "ci", 3).unwrap(), "a yes is not a no");
+}
+
+#[test]
+fn an_agent_brings_a_widget_only_to_a_desk_with_room() {
+    let c = db();
+    for i in 0..DESK_MAX {
+        assert!(desk_has_room(&c, 4).unwrap());
+        put(&c, 4, &format!("w{i}"), &body("x"), "", &PUSH, 1).unwrap();
+    }
+    assert!(!desk_has_room(&c, 4).unwrap());
+    assert!(desk_has_room(&c, 5).unwrap());
 }

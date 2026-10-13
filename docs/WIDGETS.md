@@ -20,7 +20,7 @@ widget file snyvi runs on a timer.
   as you make it, and the sidebars move with it, in every window.
 - A switch turns a section off. Off is not gone: it stays on the list, and
   the same switch brings it back. **Reset to default** brings back today's.
-- Your turn and Suggested aren't on the right since 1.32: they wait in the
+- On you (Your turn, before 1.36) and Suggested aren't on the right since 1.32: they wait in the
   desk's bottom-right corner, behind its **On you** pill, so an agent's
   card to allow a box or add a widget is there.
 - Every section folds from its head, and a folded head keeps its count.
@@ -30,14 +30,14 @@ widget file snyvi runs on a timer.
 
 | Way | Who | Lives |
 |---|---|---|
-| MCP `set_widget` | an agent in a desk's panel, **after your yes** on Your turn | on that desk until cleared, or for as long as you said on the card; dims after `stale_after` (30 min), and says "panel 2 closed" when its panel closes |
+| MCP `set_widget` | an agent in a desk's panel, **after your yes** on On you | on that desk until cleared, or for as long as you said on the card; dims after `stale_after` (30 min), and says "panel 2 closed" when its panel closes |
 | `snyvi widget set` | scripts, git hooks, cron, CI | until cleared; on a desk with `--desk ID`, global otherwise (or the panel's desk, run inside one) |
 | a widget file | you, or an agent through `propose_widget` (a card, Add) | while it is switched on, on its desk (or the desks you shared it with), for as long as you chose; run while it is in view |
 
 **What an agent may make one for** (1.32): only when you asked, and only for
 a figure that changes by itself and that you'd otherwise go and check (CI
 3/5 green, a deploy running, a dev server up), as a count and one short
-line. Not a to-do of yours (that's `hand_over`, on Your turn), not how to do
+line. Not a to-do of yours (that's `hand_over`, on On you), not how to do
 something (the agent's reply), not news (a document), and not what changes
 only when you act.
 
@@ -123,7 +123,9 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
 - `snyvi widget new git` writes a starter: inside a panel it is that desk's
   own, anywhere else shared (`--desk ID` for a desk's own from anywhere,
   `--shared` or `--global` to say). `snyvi widget check git` runs it once in
-  your terminal and prints what snyvi would draw, or why it wouldn't.
+  your terminal and prints what snyvi would draw, or why it wouldn't;
+  `--dir FOLDER` runs a draft from anywhere, before it is in the widgets
+  folder, which is how an agent tries one before proposing it.
 - **scope** `desk` runs it in the folder of each desk it is on, on that
   desk's rail; `global` runs it in its own folder, on the left. A desk's own
   widget can't be global.
@@ -137,19 +139,21 @@ printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
 - **settings** are drawn by snyvi on `/sidebars` as rows: `string`,
   `number`, `choice` (with `choices`) or `boolean`. The run gets them on
   stdin. A widget never draws its own settings.
-- Its box's head is its **title**, and under it how often it runs and when
+- Its box's head is its **title**; its tip says how often it runs and when
   it last did ("every 2 min · now"). A shared one says where else it runs
   first: "every desk · every 2 min", "3 desks · every 2 min".
 - A failure (a non-zero exit, a timeout, more than 4 KB, a body snyvi
   refuses) is a line in its seat, over the last good body, and the rest of
-  the sidebar draws as ever. The line keeps two lines with **more** to
-  open it whole (600 characters at most, ending in "…" when cut), and
-  **Tell the agent**, which hands the whole reason to the agent that
-  proposed it, with its next prompt. A widget that has never printed keeps
-  no room for a body. **Three in a row for the same reason stop it
+  the sidebar draws as ever. The line is one line laid over the top of the
+  box, with **more** to open it whole (600 characters at most, ending in
+  "…" when cut), and, on an agent's widget, **Tell the agent**, which hands
+  the whole reason to the agent that proposed it, with its next prompt. A
+  box keeps its room (`lines` × 20 px) whether it has printed or not, so a
+  run that fails, or works again, never moves what is below it (1.36).
+  **Three in a row for the same reason stop it
   on that desk**: the seat says why and where it ran, with **Try again** and
-  **Turn off here**, and the agent that proposed it is told. An edit or an
-  Allow runs it again too.
+  **Turn off here**, and the agent that proposed it is told. Try again
+  gives it three tries anew; an edit or an Allow runs it again too.
 - A widget that keeps a file between runs keeps it outside its folder
   (`$TMPDIR`): a change to the folder asks for Allow again.
 
@@ -213,12 +217,17 @@ flowchart LR
 
 Nothing in a widget file runs until you **Allow** it. The seat asks
 ("*Git wants to run run.sh every 30 s · Allow*"), and so does `/sidebars`.
-Allow takes the **whole folder** as it is now; a change to any file in it
-asks again ("changed"), unless you switch **Rerun my edits** on for that
-widget, which is for one you are writing yourself.
+Allow takes the **whole folder** as it is now -- every file, and every
+link by where it points, 96 KB at most; a change to any of it, a rename or
+a link dropped in asks again ("changed"), unless you switch **Rerun my
+edits** on for that widget, which is for one you are writing yourself.
+**Open its folder** (its box's menu, or **Open** on `/sidebars`) shows you
+what Allow takes before you allow it.
 
-Only the snyvi window can allow. The token an agent holds can't, and
-neither can a browser tab.
+Only the snyvi window can allow, and only the window can widen what it
+allowed: switch a widget on again, share it, tick more desks, make it last
+longer or change its settings (1.36). The token an agent holds can't, and
+neither can a browser tab; either can still turn a widget off.
 
 **This is consent, not a sandbox.** A widget runs as you, with your PATH,
 like anything in your shell. Agents in a desk's panels have a shell as you
@@ -227,11 +236,11 @@ file needs Allow whoever wrote it, and why a changed one asks again.
 
 ### An agent asks first
 
-**An agent never puts anything in your sidebars without a yes on Your turn.**
+**An agent never puts anything in your sidebars without a yes on On you.**
 
 `propose_widget` is checked first (a command that can't reach its script
 goes back to the agent with the fix), then written where proposals wait
-(`widgets/.proposed/`, where nothing runs), and a card on Your turn shows
+(`widgets/.proposed/`, where nothing runs), and a card on On you shows
 **where it runs, how often, the command and the script**. **Try once** runs
 it here, as it would run, and shows what it printed in the card. You pick
 how long it lasts (the agent may suggest one). **Add** moves it into this
@@ -239,12 +248,49 @@ desk's own folder, `widgets/@<desk id>/`, and allows it as it is. **Not
 now** leaves it be. An agent can't propose a widget for every desk, or a
 global one: sharing is yours.
 
+A proposal can carry the widget's **settings** (the rows you change on
+`/sidebars`, checked to be ones it can draw) and up to four **files**
+beside the script, 16 KB each, named apart in any case (a Mac's disk
+takes `Run.sh` for `run.sh`); every file is on the card, folded, as the
+script is, with each setting's label and default, since Add allows the
+whole folder. The card is the folder as it was proposed: **Try once** and
+**Add** refuse a folder that changed after it ("ask the agent to propose
+it again"). An agent can't add a seventh widget to a desk. The same panel proposing the
+same name again, its script fixed, **replaces** its card rather than adding
+a second; the old proposal stays in `widgets/.proposed/`, where nothing
+runs.
+
 `set_widget` asks the same way, once per desk and name: the panel's first
 push is a card, *"A box on this desk: deploy"* with what it would show,
 **Allow** or **Not now**. Its updates wait behind the card; after Allow they
 go straight in. After Not now, a push of that name on that desk is refused,
 and the agent is told why. `snyvi widget set` run inside a panel asks the
-same; from a plain shell, a hook or cron it doesn't -- those are yours.
+same; from a plain shell, a hook or cron it doesn't -- those are yours. That
+includes an agent in a terminal outside snyvi, which has a shell as you:
+the card is a promise inside a desk's panels, where snyvi knows who is
+asking, not a wall around the CLI. What you said no to holds everywhere,
+though: a box you said Not now to, or removed, on a desk is refused there
+to the CLI too, until you take it back. `/sidebars` lists them under **You
+said no**, each with **Ask again**: its next push brings a card.
+
+A pushed box's switch is its desk's: turning off desk 3's `deploy` leaves
+desk 8's on (1.36).
+
+### What an agent knows
+
+- **When**: the MCP server's instructions to a panel name the widget tools in
+  a sentence, beside "never unasked". The `snyvi` skill `init-claude`
+  installs has the rest -- this contract, the stdin, three worked scripts --
+  and Claude reads it when a widget is asked for. `/snyvi:widget <what>` is
+  the same ask as a slash command, in a desk's panel.
+- **Where it stands**: `read_widgets` reads the desk's widgets -- what each
+  shows, in the Markdown it was sent or printed in; each box waiting,
+  allowed, not now or removed; each widget file allowed, changed since, off
+  or stopped, with its error (or why it can't be read); the cards still
+  waiting; the proposals you said Not now to and the widget files you
+  removed -- so an agent updates its own box, picks a free name, and leaves
+  alone what you said no to. A read, with the token, of its panel's desk:
+  a courtesy, not a wall, since the token reads `/api/widgets` too.
 
 ```mermaid
 sequenceDiagram
@@ -253,7 +299,7 @@ sequenceDiagram
   participant D as snyvi
   U->>A: make me a widget for the worker's error rate
   A->>D: propose_widget (widget.json, the script)
-  D-->>U: Your turn card · errors · this desk · every 1 min · the script · Try once · Add or Not now
+  D-->>U: On you card · errors · this desk · every 1 min · the script · Try once · Add or Not now
   U->>D: Add (the window)
   D->>D: moves it into widgets/@7/errors/, allows it as it is
   D-->>U: Errors appears on the desk's rail at the next run

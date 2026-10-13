@@ -246,12 +246,15 @@ enum WidgetCmd {
         #[arg(long)]
         global: bool,
     },
-    /// Run a widget file once, here, as snyvi would, and print what it would draw -- or why it refuses. A desk's own is found by --desk, or the panel's desk.
+    /// Run a widget file once, here, as snyvi would, and print what it would draw -- or why it refuses. A desk's own is found by --desk, or the panel's desk; --dir runs one from any folder, before it is proposed or added.
     Check {
         name: String,
         /// The desk whose own widget it is.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "dir")]
         desk: Option<i64>,
+        /// A folder with its widget.json, anywhere: a draft not yet in snyvi's widgets folder.
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
     },
 }
 
@@ -761,9 +764,9 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
             };
             return widget_new(paths, &name, owner, global);
         }
-        WidgetCmd::Check { name, desk } => {
+        WidgetCmd::Check { name, desk, dir } => {
             let owner = desk.or_else(|| panel_desk(paths)).unwrap_or(0);
-            return widget_check(paths, &name, owner);
+            return widget_check(paths, &name, owner, dir);
         }
         WidgetCmd::Set {
             name,
@@ -801,7 +804,7 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
     let v = client::widget(paths, &name, body, desk, global)?;
     if v.get("waiting").and_then(serde_json::Value::as_bool) == Some(true) {
         eprintln!(
-            "snyvi: {name} waits for your yes on this desk's Your turn; it shows once you allow it"
+            "snyvi: {name} waits for your yes on this desk's On you list; it shows once you allow it"
         );
     } else if v.get("cleared").and_then(serde_json::Value::as_bool) == Some(false) {
         eprintln!("snyvi: there was no widget called {name} there");
@@ -865,12 +868,27 @@ fn widget_new(paths: &config::Paths, name: &str, owner: i64, global: bool) -> Re
 /// run, with what it would be given; then the body it would draw, or why
 /// it would not. Run here and now, in this shell's environment -- so a
 /// command that works here and not in snyvi is a PATH to look at.
-fn widget_check(paths: &config::Paths, name: &str, desk: i64) -> Result<()> {
+fn widget_check(
+    paths: &config::Paths,
+    name: &str,
+    desk: i64,
+    dir: Option<std::path::PathBuf>,
+) -> Result<()> {
     use crate::widget::{self, files};
-    // The desk's own when it has one by the name, the shared one if not.
-    let owned = files::folder_of(&paths.config_dir, desk, name);
-    let owner = if desk != 0 && owned.is_dir() { desk } else { 0 };
-    let folder = files::folder_of(&paths.config_dir, owner, name);
+    // A draft by its folder (an agent's, before propose_widget); else the
+    // desk's own when it has one by the name, the shared one if not.
+    // A draft has no owner: nothing is allowed until it is proposed.
+    let (folder, owner) = match dir {
+        Some(d) => (std::path::absolute(&d).unwrap_or(d), None),
+        None => {
+            let owned = files::folder_of(&paths.config_dir, desk, name);
+            let owner = if desk != 0 && owned.is_dir() { desk } else { 0 };
+            (
+                files::folder_of(&paths.config_dir, owner, name),
+                Some(owner),
+            )
+        }
+    };
     let spec =
         files::read(&folder, name).map_err(|why| anyhow::anyhow!("{}: {why}", folder.display()))?;
     let hash = files::hash(&folder).map_err(|why| anyhow::anyhow!(why))?;
@@ -965,16 +983,20 @@ fn widget_check(paths: &config::Paths, name: &str, desk: i64) -> Result<()> {
     }
     // Read only: the daemon owns the database, and opening it as the store
     // does would tidy what the daemon is in the middle of.
-    let allowed = rusqlite::Connection::open_with_flags(
-        &paths.db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .ok()
-    .and_then(|c| widget::prefs(&c, owner, name).ok())
-    .is_some_and(|p| p.trusted_hash == hash);
+    let allowed = owner.is_some_and(|owner| {
+        rusqlite::Connection::open_with_flags(
+            &paths.db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .ok()
+        .and_then(|c| widget::prefs(&c, owner, name).ok())
+        .is_some_and(|p| p.trusted_hash == hash)
+    });
     eprintln!(
         "{}",
-        if allowed {
+        if owner.is_none() {
+            "A draft: propose it (propose_widget) for the reader to add."
+        } else if allowed {
             "Allowed as it is: snyvi runs it while it is in view."
         } else {
             "Not allowed as it is: Allow it in the window, in its seat or on /sidebars."

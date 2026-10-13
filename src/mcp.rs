@@ -5,7 +5,7 @@
 //! suggest_desk_note, offering one for the reader to keep, offer_document, asking that one go to a friend,
 //! leave_off, saying where the work was left, and name_panel, which names the
 //! panel the agent runs in; and the #90 six, filing the work as a thread and
-//! putting what only the reader can do on their Your turn (`threads`). And four prompts, the loop's own slash commands
+//! putting what only the reader can do on their On you list (`threads`). And four prompts, the loop's own slash commands
 //! (`PROMPTS`). Newline-delimited JSON-RPC 2.0, as the MCP stdio transport
 //! specifies.
 
@@ -130,13 +130,15 @@ it to snyvi before you start (a plan you present for approval is sent for you). 
 name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan with \
 send_document's notes (that marks it planned), mark it working as you start, and tick it only when its work is \
 finished and you have checked it; several notes go in one call each, by ids. Never act on a note unasked. \
-File a piece of work as a thread with start_thread when you take it on. Put on their Your turn with \
+File a piece of work as a thread with start_thread when you take it on. Put on their On you list with \
 hand_over only what blocks you and only they can do: a command you are blocked from running, or one that \
 is theirs to run (a release, a deploy), goes there as run, never as text or a `! command` for them to type; \
 a key; a merge. Asking them to try a change goes in your reply. When \
-you need the user to decide something before you go on, put it on their Your turn with ask (several at once \
+you need the user to decide something before you go on, put it on their On you list with ask (several at once \
 as its questions), or in your own question tool when they are at this panel, never only as a list in your \
 reply. \
+A figure the user asks to keep in view (CI, a deploy): read_widgets, then set_widget, or propose_widget \
+for one snyvi runs on its own; never unasked. \
 An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
 away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
@@ -181,8 +183,10 @@ const TOOLS: &[(&str, Tool)] = &[
     ("move_thread", Session::move_thread),
     ("ask", Session::ask),
     ("hand_over", Session::hand_over),
+    ("settle_asks", Session::settle_asks),
     ("suggest_panel", Session::suggest_panel),
     ("suggest_desk", Session::suggest_desk),
+    ("read_widgets", Session::read_widgets),
     ("set_widget", Session::set_widget),
     ("propose_widget", Session::propose_widget),
 ];
@@ -788,7 +792,7 @@ struct Prompt {
     text: &'static str,
 }
 
-const PROMPTS: [Prompt; 4] = [
+const PROMPTS: [Prompt; 5] = [
     Prompt {
         name: "wrap-up",
         title: "Wrap up",
@@ -831,6 +835,21 @@ need it. In at most five lines: where we are, what is open, and the next step. D
         text: "Explain back to me, in plain words and at most eight lines: what you just did and why, what you \
 checked and how, and anything you are unsure of. If a diagram would make it clearer, send it with send_document \
 as Markdown with Mermaid, and say where it is.",
+    },
+    Prompt {
+        name: "widget",
+        title: "Make a widget",
+        description: "Keep a figure in view on this desk's rail: a box you update, or a widget file snyvi runs.",
+        panel: true,
+        arg: Some(("what", "The figure to keep in view: CI, a deploy, a dev server, a queue.")),
+        text: "Make me a widget on this desk for this. First read_widgets: update a box of yours rather than \
+make a second, pick a name that is free, and leave alone what I said not now to or removed. A widget is a count \
+of at most 8 characters and one short line, for a figure that changes by itself and I would otherwise go and \
+check -- not a to-do, not instructions. If it only matters while you work here, use set_widget and keep it up \
+to date as the work goes. If it should keep going after this session, write a script that prints the widget's \
+JSON ({\"body\",\"tone\",\"count\"}) or Markdown, run it once here with the stdin snyvi gives it to check it \
+works, then propose_widget with the script, any settings I would want to change, and why. Tell me in one line \
+which you did; the card on my On you list is where I allow it.",
     },
 ];
 
@@ -1284,14 +1303,18 @@ mod tests {
             instructions(true).len()
         );
         assert!(instructions(true).contains("as run, never as"));
-        // #119: a release is the reader's to run, and goes on Your turn too.
+        // #119: a release is the reader's to run, and goes on On you too.
         assert!(instructions(true).contains("theirs to run"));
-        // #110: a decision goes on Your turn, not only into the reply.
+        // #110: a decision goes on On you, not only into the reply.
         assert!(instructions(true).contains("with ask (several at once"));
-        // Your turn is what blocks the agent, not a "try it" the reader is
+        // On you is what blocks the agent, not a "try it" the reader is
         // sitting in front of (audit e467fa057a).
         assert!(instructions(true).contains("hand_over only what blocks you"));
         assert!(instructions(true).contains("try a change goes in your reply"));
+        // Widgets are named, so an agent asked to watch CI reaches for one,
+        // and the rule that it is only on asking is beside them.
+        assert!(instructions(true).contains("read_widgets, then set_widget"));
+        assert!(instructions(true).contains("never unasked"));
     }
 
     /// What the agent is told to say matches what the user will see: the
@@ -1327,12 +1350,18 @@ mod tests {
         }
     }
 
-    /// Four prompts; the two that use a desk's tools only in a panel, and an
-    /// argument only where one helps.
+    /// Five prompts; the three that use a desk's tools only in a panel, and
+    /// an argument only where one helps.
     #[test]
-    fn the_loop_kit_is_four_prompts() {
+    fn the_loop_kit_is_five_prompts() {
         let names: Vec<&str> = PROMPTS.iter().map(|p| p.name).collect();
-        assert_eq!(names, ["wrap-up", "plan", "catch-up", "explain-back"]);
+        assert_eq!(
+            names,
+            ["wrap-up", "plan", "catch-up", "explain-back", "widget"]
+        );
+        assert!(PROMPTS[4]
+            .text
+            .starts_with("Make me a widget on this desk for this. First read_widgets"));
         let outside: Vec<&str> = PROMPTS
             .iter()
             .filter(|p| !p.panel)

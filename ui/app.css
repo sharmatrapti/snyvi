@@ -639,17 +639,20 @@ button.sec-fold:hover { color: var(--fg-2); }
    under it. Who writes it is its name's tip (app.js `patchSeat`). A longer one is cut, and opens where it is
    on a click (that is the reader moving the page, not the widget). Past its
    time the whole seat steps back. */
-.wg-ask { display: flex; align-items: center; gap: 8px; margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-2); }
+.sec.wg, .wg > .sec-body { position: relative; }
+.wg-ask, .wg-err { position: absolute; inset: 0 0 auto; z-index: 1; margin: 0; padding: 2px 8px; background: var(--bg-side); }
+.wg-ask { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-2); }
+.wg-ask > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wg-allow { flex: none; padding: 2px 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); color: var(--accent); font-size: var(--fs-micro); font-weight: 600; }
 .wg-allow:hover:not(:disabled) { background: var(--accent-bg); }
-.wg-ask.wg-stop { flex-wrap: wrap; color: var(--warn); }
+.wg-ask.wg-stop { color: var(--warn); }
 .wg-ask.wg-stop .wg-allow { color: var(--accent); }
 /* A failed run (#112): why, in two lines that open whole, and the button
    that tells the agent. A cut body or line says so with its "more", over a
    fade on its last line, and keeps its room: the click opens it. */
-.wg-err { margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--warn); overflow-wrap: anywhere; }
-.wg-err > .wg-allow { margin-top: 4px; }
-.wg-why { position: relative; max-height: 32px; overflow: hidden; }
+.wg-err { display: flex; align-items: flex-start; gap: 8px; font-size: var(--fs-micro); line-height: 16px; color: var(--warn); overflow-wrap: anywhere; }
+.wg-err:has(> .open) { position: static; }
+.wg-why { position: relative; flex: 1; min-width: 0; max-height: 16px; overflow: hidden; }
 .wg-body { position: relative; height: calc(var(--lines, 3) * 20px); overflow: hidden; padding: 2px 8px 0; font-size: var(--fs-small); line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; cursor: default; }
 .wg-body.open, .wg-why.open { height: auto; max-height: none; }
 .wg-more { display: none; position: absolute; right: 0; bottom: 0; padding-left: 24px; background: linear-gradient(90deg, transparent, var(--bg-side) 20px); color: var(--accent); }

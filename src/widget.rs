@@ -378,6 +378,23 @@ impl Body {
             stale_after: STALE_DEFAULT,
         };
         if t.starts_with('{') {
+            // An object that is not a widget's says so, rather than clear
+            // the box or show its braces: `{"status":"ok"}`, `{"body":5}`.
+            if let Ok(serde_json::Value::Object(o)) = serde_json::from_str::<serde_json::Value>(t) {
+                const KNOWN: [&str; 5] = ["body", "tone", "count", "lines", "stale_after"];
+                if let Some(k) = o
+                    .keys()
+                    .find(|k| !KNOWN.contains(&k.as_str()))
+                    .filter(|_| !o.contains_key("body"))
+                {
+                    return Err(format!("JSON with \"{k}\" and no \"body\": a widget prints {{\"body\": …}}, or Markdown"));
+                }
+                if o.get("body")
+                    .is_some_and(|b| !b.is_string() && !b.is_null())
+                {
+                    return Err("\"body\" is Markdown text".into());
+                }
+            }
             if let Ok(w) = serde_json::from_str::<Wire>(t) {
                 let body = w.body.unwrap_or_default();
                 if body.trim().is_empty() {
@@ -474,7 +491,9 @@ pub struct Writer<'a> {
 const SEAT_COLS: &str =
     "b.desk_id, b.name, b.source, b.body_html, b.tone, b.count, b.lines, b.stale_after,
      b.writer, b.pane, b.error, b.updated_at,
-     COALESCE((SELECT p.hidden FROM widget_prefs p WHERE p.name = b.name AND p.owner = b.owner), 0),
+     COALESCE((SELECT p.hidden FROM widget_prefs p WHERE p.name = b.name AND p.owner = b.owner AND b.source = 'file'),
+       (SELECT p.hidden FROM widget_prefs p WHERE p.name = b.name AND p.owner = b.desk_id AND b.source = 'push' AND b.desk_id != 0),
+       (SELECT p.hidden FROM widget_prefs p WHERE p.name = b.name AND p.owner = 0 AND b.source = 'push'), 0),
      b.title, b.owner,
      CASE WHEN b.source = 'file' THEN b.owner != 0 ELSE b.pane != '' OR EXISTS
        (SELECT 1 FROM widget_asks a WHERE a.desk_id = b.desk_id AND a.name = b.name) END";
@@ -617,6 +636,18 @@ pub fn fail(
         params![desk_id, name, w.writer, why, now, w.title, w.owner],
     )?;
     Ok(())
+}
+
+/// Whether desk `desk_id` has a seat free for a widget an agent brings: the
+/// reader's own widget files take seats as they please, an agent's take
+/// one only while there is one.
+pub fn desk_has_room(conn: &Connection, desk_id: i64) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM widget_bodies WHERE desk_id = ?1",
+        [desk_id],
+        |r| r.get(0),
+    )?;
+    Ok((n as usize) < DESK_MAX)
 }
 
 /// `s` kept to `max` characters, ending in "…" when it was longer.
@@ -927,26 +958,99 @@ pub struct Ask {
     pub until_pane: String,
 }
 
+const ASK_COLS: &str = "desk_id, name, answer, pane, writer, body, until, until_pane";
+
+fn ask_row(r: &rusqlite::Row) -> rusqlite::Result<Ask> {
+    Ok(Ask {
+        desk_id: r.get(0)?,
+        name: r.get(1)?,
+        answer: r.get(2)?,
+        pane: r.get(3)?,
+        writer: r.get(4)?,
+        body: r.get(5)?,
+        until: r.get(6)?,
+        until_pane: r.get(7)?,
+    })
+}
+
 pub fn ask_of(conn: &Connection, desk_id: i64, name: &str) -> Result<Option<Ask>> {
     Ok(conn
         .query_row(
-            "SELECT desk_id, name, answer, pane, writer, body, until, until_pane FROM widget_asks
-             WHERE desk_id = ?1 AND name = ?2",
+            &format!("SELECT {ASK_COLS} FROM widget_asks WHERE desk_id = ?1 AND name = ?2"),
             params![desk_id, name],
-            |r| {
-                Ok(Ask {
-                    desk_id: r.get(0)?,
-                    name: r.get(1)?,
-                    answer: r.get(2)?,
-                    pane: r.get(3)?,
-                    writer: r.get(4)?,
-                    body: r.get(5)?,
-                    until: r.get(6)?,
-                    until_pane: r.get(7)?,
-                })
-            },
+            ask_row,
         )
         .optional()?)
+}
+
+/// Every box asked for on desk `desk_id`, whatever the reader answered, for
+/// the agents in its panels to read (`read_widgets`).
+pub fn asks(conn: &Connection, desk_id: i64) -> Result<Vec<Ask>> {
+    let mut st = conn.prepare(&format!(
+        "SELECT {ASK_COLS} FROM widget_asks WHERE desk_id = ?1 ORDER BY name"
+    ))?;
+    let rows = st.query_map([desk_id], ask_row)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// The widget files proposed on desk `desk_id` whose newest card the
+/// reader answered Not now, for the agents in its panels to leave alone
+/// (`read_widgets`). The cards are the thread's (`desk_suggestions`); a
+/// name proposed again and added since is not among them.
+pub fn proposals_declined(conn: &Connection, desk_id: i64) -> Result<Vec<String>> {
+    let mut st = conn.prepare(
+        "SELECT s.name FROM desk_suggestions s
+         WHERE s.desk_id = ?1 AND s.kind = 'widget' AND s.outcome = 'dismissed'
+           AND s.id = (SELECT MAX(t.id) FROM desk_suggestions t
+                       WHERE t.desk_id = s.desk_id AND t.kind = 'widget' AND t.name = s.name
+                         AND t.outcome IN ('dismissed', 'opened'))
+         ORDER BY s.name",
+    )?;
+    let rows = st.query_map([desk_id], |r| r.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// The reader undid a widget file's Remove: the word queued for the agent
+/// that proposed it ("Leave it removed", `thread::tell_widget`) is taken
+/// back while it has not been heard, so the agent is not told of a Remove
+/// that did not stand. The cards are the thread's (`desk_suggestions`).
+pub fn untell_removed(conn: &Connection, owner: i64, name: &str, now: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE desk_suggestions SET note = '', told_at = ?3
+         WHERE kind = 'widget' AND name = ?1 AND outcome = 'opened' AND told_at = 0
+           AND (?2 = 0 OR desk_id = ?2) AND note LIKE 'The user removed your widget %'",
+        params![name, owner, now],
+    )? > 0)
+}
+
+/// Every box the reader said Not now to, or removed, on any desk, for
+/// /sidebars to list with Ask again: a no is the reader's to take back.
+pub fn asks_refused(conn: &Connection) -> Result<Vec<Ask>> {
+    let mut st = conn.prepare(&format!(
+        "SELECT {ASK_COLS} FROM widget_asks WHERE answer IN ('no', 'removed') ORDER BY desk_id, name"
+    ))?;
+    let rows = st.query_map([], ask_row)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// The reader took back a Not now, or a Remove, of box `name` on desk
+/// `desk_id`: the next push of it asks again with a card, from any panel.
+/// What it last showed stays on its ask. Whether there was a no to take.
+pub fn ask_again(conn: &Connection, desk_id: i64, name: &str, now: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE widget_asks SET answer = 'again', updated_at = ?3
+         WHERE desk_id = ?1 AND name = ?2 AND answer IN ('no', 'removed')",
+        params![desk_id, name, now],
+    )? > 0)
+}
+
+/// The Markdown each widget on desk `desk_id` shows, as it was sent or
+/// printed, by name: an agent reads what it wrote, not the page's HTML.
+pub fn bodies_md(conn: &Connection, desk_id: i64) -> Result<Vec<(String, String)>> {
+    let mut st =
+        conn.prepare("SELECT name, body_md FROM widget_bodies WHERE desk_id = ?1 ORDER BY rowid")?;
+    let rows = st.query_map([desk_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 /// A panel's body waits behind its card: the newest one sent is the one

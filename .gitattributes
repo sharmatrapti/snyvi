@@ -2,3 +2,6 @@
 # Windows does, by default) would break every signature over them.
 packaging/minisign.pub -text
 tests/fixtures/update/** -text
+# The skill init-claude writes is compared and written byte for byte; its
+# frontmatter must start "---\n" wherever it was checked out.
+src/skill/** text eol=lf

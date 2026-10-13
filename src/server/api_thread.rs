@@ -157,6 +157,8 @@ pub(crate) struct AskBody {
     via: String,
     by: String,
     cmd: String,
+    /// `key` only: the key's name, so adding it settles the turn.
+    key: String,
     /// `ask` with several questions, as one card (#110): each one's text,
     /// options and recommended, in place of the body's own.
     questions: Vec<QuestionBody>,
@@ -207,7 +209,7 @@ fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
         Ok(Asked::Full) => refused(
             StatusCode::CONFLICT,
             format!(
-                "{} things are already waiting on the user on this desk; wait for an answer",
+                "{} things asked in the last half hour are already waiting on the user on this desk; wait for an answer",
                 thread::TURNS_PER_DESK
             ),
         ),
@@ -259,10 +261,14 @@ async fn pane_turn(
         options: b.options,
         recommended: b.recommended.unwrap_or(-1),
         link: b.link,
-        via: b.via,
+        // Only a question can be the mod's mirror of Claude's own: a
+        // hand-over said to be a dialog would be kept out of On you, where
+        // the reader is the only one who can settle it (B7).
+        via: if decide { b.via } else { String::new() },
         by: b.by,
         pane: id,
         cmd: b.cmd,
+        key_name: b.key,
     };
     let desk = placed.desk_id;
     // Several questions are one card; a hand-over has no questions to put.
@@ -287,6 +293,32 @@ async fn pane_turn(
     }
     let r = app.store.clocked(|c, now| thread::ask(c, desk, &a, now));
     asked(&app, desk, r)
+}
+
+/// `settle_asks`: the agent says the questions it put on On you were
+/// answered in the conversation (B1). Only its own, only questions.
+pub(crate) async fn pane_settle(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    let desk = placed.desk_id;
+    match app
+        .store
+        .clocked(|c, now| thread::settle_asks(c, desk, &id, now))
+    {
+        Ok(n) => {
+            if n > 0 {
+                threads_moved(&app, desk);
+            }
+            Json(json!({ "settled": n })).into_response()
+        }
+        Err(e) => err(e),
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -442,7 +474,7 @@ pub(crate) fn band_line(t: Option<&thread::Thread>, waiting: &[thread::Turn]) ->
         } else {
             String::new()
         };
-        parts.push(format!("your turn: {what}{more}"));
+        parts.push(format!("on you: {what}{more}"));
     }
     parts.join(" · ")
 }
@@ -475,10 +507,13 @@ pub(crate) async fn pane_band(
 
 /// The band's JSON and its tag.
 fn band_now(app: &App, desk: i64, pane: &str) -> anyhow::Result<(serde_json::Value, String)> {
-    let (t, waiting) = app.store.clocked(|c, _| {
+    let (t, waiting) = app.store.clocked(|c, now| {
         let t = thread::of_pane(c, desk, pane)?;
-        // The mod's own dialog is on screen already; the band names the rest.
-        let waiting = thread::waiting_on(c, desk, false)?;
+        // The mod's own dialog is on screen already; the band names the
+        // rest, while it is fresh: a turn that went quiet is not "on you"
+        // above every prompt for days.
+        let mut waiting = thread::waiting_on(c, desk, false, now)?;
+        waiting.retain(|w| !w.stale);
         Ok((t, waiting))
     })?;
     let body = json!({
@@ -741,9 +776,13 @@ pub(crate) async fn desk_threads(
     }
     merges_unseen(&app, id).await;
     let r = app.store.clocked(|c, now| {
+        // What has waited three days is put away first (`thread::retire`).
+        if thread::retire(c, now)? > 0 {
+            threads_moved(&app, id);
+        }
         Ok((
             thread::for_desk(c, id)?,
-            thread::turns(c, id, now - ANSWERED_SHOWN)?,
+            thread::turns(c, id, now - ANSWERED_SHOWN, now)?,
             thread::suggestions(c, id)?,
         ))
     });
@@ -797,6 +836,8 @@ fn row_act(app: &Arc<App>, id: i64, what: &str, row: i64, act: &str, body: &[u8]
             ("threads", "restore") => thread::restore(c, id, row)?,
             ("turns", "remove") => thread::remove_turn(c, id, row, now)?,
             ("turns", "restore") => thread::restore_turn(c, id, row)?,
+            // Send now typed it into the panel: told there, not again.
+            ("turns", "sent") => thread::sent_turn(c, id, row, now)?,
             // Not now on a panel's box is the reader's answer: later pushes
             // of it are refused, until its Undo takes the answer back.
             ("suggestions", "dismiss") => match thread::settle(c, id, row, "dismissed", now)? {
@@ -971,7 +1012,7 @@ mod tests {
         };
         assert_eq!(
             band_line(Some(&t), &[w.clone(), w]),
-            "▸ Home + friends · building · claude/asides · 3 commits · your turn: Try it on 7871 (+1)"
+            "▸ Home + friends · building · claude/asides · 3 commits · on you: Try it on 7871 (+1)"
         );
         assert_eq!(band_line(None, &[]), "");
     }

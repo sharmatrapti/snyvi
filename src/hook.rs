@@ -453,7 +453,7 @@ fn prompt_output(event: &Event, context: &str, title: &str, desk: &str) -> Optio
 
 /// What a Stop hook in a panel prints: once, when the reply that ended the
 /// turn asked the reader to type a `! command` themselves (#119). In a panel
-/// that command belongs on their Your turn, where Run types it for them on
+/// that command belongs on their On you list, where Run types it for them on
 /// one click; printed in the reply, they copy it out by hand. The agent is
 /// told so and carries on, and it is the agent that hands it over -- snyvi
 /// makes no card of what an agent wrote. Not again on the turn this one
@@ -485,7 +485,7 @@ fn stop_output(event: &Event) -> Option<String> {
         ),
         None => format!(
             "Your reply asks the user to type `! {cmd}` themselves. In a snyvi panel a command \
-             that is theirs to run goes on their Your turn: call hand_over with kind run and cmd \
+             that is theirs to run goes on their On you list: call hand_over with kind run and cmd \
              set to that command, so they can press Run, then end your turn. If you already \
              handed it over, end your turn without repeating it."
         ),

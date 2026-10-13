@@ -2596,7 +2596,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     // a friend… is in the foot with the version and Check for updates.
     const side = await p.ev(`(() => { const s = document.querySelector(".hm .hm-side"); const first = [...(s?.children || [])].find(x => !x.hidden); const foot = document.querySelector(".hm .hm-foot")?.textContent || ""; return { date: !!document.querySelector(".hm-head .hm-v")?.textContent.trim(), clock: !!document.querySelector(".hm-time, .hm-cal, [data-w=today], [data-w=snyvi]"), first: first?.dataset.w || first?.className || "", hide: !!document.querySelector(".hm-arrived .hm-hide"), friends: !!document.querySelector("[data-w=friends]"), foot: /snyvi \\S+ · Check for updates · Pair with a friend…/.test(foot), footText: foot, gone: [...document.querySelectorAll(".hm-keys, [data-w=keys], [data-w=threads], .hm-side .hm-upd, .hm-you")].map(x => x.dataset.w || x.className), bar: !!document.querySelector("#queue-bar:not([hidden])") }; })()`);
     // 1.32 (audit 67d008cb6f): seven blocks. No Keys or Threads section, the
-    // update's card under the foot, Your turn shut until its button, and no
+    // update's card under the foot, On you shut until its button, and no
     // waiting bar over Home's own sticky bar.
     rows.push(["Home: the date in the head, Arrived first and not hideable, no Friends without a friend, Pair… in the foot, no Keys, Threads or waiting bar", side.date && !side.clock && side.first === "arrived" && !side.hide && !side.friends && side.foot && !side.gone.length && !side.bar,
       !side.date ? "no date in the head" : side.clock ? "Today or the snyvi widget is still there" : side.first !== "arrived" ? `the side column starts with ${side.first}` : side.hide ? "Arrived has a Hide" : side.friends ? "a Friends widget with no friend" : !side.foot ? `the foot does not carry the version, Check for updates and Pair…: "${side.footText}"` : side.gone.length ? `still on Home: ${side.gone.join(", ")}` : side.bar ? "the waiting bar is over Home" : "date, Arrived, Claude; Pair… in the foot; no Keys, Threads or waiting bar"]);
@@ -2932,8 +2932,9 @@ async function keysSheetRows(cdp, base) {
  *  the daemon says no, and says which thing failed, in that thing's row. In
  *  a tab of its own, with the capability, as `deskRows` is. */
 /** A widget's box (#112): its own title, how often it runs, a failure
- *  in two lines with more and Tell the agent, no room kept for a body
- *  it never printed, and a body past its room that says so with "more". */
+ *  in a line with more and Tell the agent, laid over the box's room, which
+ *  is kept whether it printed or not (1.36: no layout shift), and a body
+ *  past its room that says so with "more". */
 async function widgetBoxRows(cdp, base, tmp) {
   if (process.platform === "win32") return [["a widget's box (its scripts are sh here)", true, "not on Windows"]];
   const rows = [];
@@ -2969,7 +2970,8 @@ async function widgetBoxRows(cdp, base, tmp) {
     const came = await until(`!!document.querySelector("${box} .wg-why")`);
     const b = came && await p.ev(`(() => { const el = document.querySelector("${box}");
       return { head: el.querySelector(".sec-head").textContent, by: el.querySelector(".sec-fold").dataset.tipSub,
-        body: !!el.querySelector(".wg-body"), tell: !!el.querySelector("[data-wtell]"),
+        body: !!el.querySelector(".wg-body"), over: getComputedStyle(el.querySelector(".wg-err")).position === "absolute",
+        tell: !!el.querySelector("[data-wtell]"),
         cut: el.querySelector(".wg-why").classList.contains("cut"), more: __ui.vis("${box} .wg-why > .wg-more"),
         whole: el.querySelector(".wg-why").textContent.includes("runs by itself") }; })()`);
     // Shared, on every desk: its by-line, the name's tip, says so, ahead of how often.
@@ -3009,19 +3011,17 @@ async function widgetBoxRows(cdp, base, tmp) {
       await p.press("Escape");
       rows.push(["a shared widget, the reader's own, has no Remove", !shared, shared ? "Remove offered on a shared widget" : "Turn off alone"]);
     }
-    rows.push(["a failed one keeps no room for a body it never printed", !!b && !b.body, !b ? "no box" : b.body ? "an empty body still holds its lines under the line" : "the line, and nothing under it"]);
-    rows.push(["its reason is kept whole, two lines of it shown with more", !!b && b.whole && b.cut && b.more,
-      !b ? "no box" : !b.whole ? "the reason is cut short" : !b.cut ? "the line is not cut to two lines" : !b.more ? "no more on a cut line" : "two lines, and more"]);
+    rows.push(["a failed one keeps its room, its line laid over it", !!b && b.body && b.over, !b ? "no box" : !b.body ? "no room kept: its first print will move the rail" : !b.over ? "the line is in flow: a failure moves the rail" : "the room, and the line over it"]);
+    rows.push(["its reason is kept whole, a line of it shown with more", !!b && b.whole && b.cut && b.more,
+      !b ? "no box" : !b.whole ? "the reason is cut short" : !b.cut ? "the line is not cut to its one line" : !b.more ? "no more on a cut line" : "a line, and more"]);
     if (b && b.more) {
       await p.clickOn(`${box} .wg-why > .wg-more`);
       const open = await until(`document.querySelector("${box} .wg-why").classList.contains("open") && document.querySelector("${box} .wg-why > .wg-more").textContent === "less"`, 20);
       rows.push(["more opens the reason where it is", open, open ? "open, and its button says less" : "the click did not open it"]);
     }
-    if (b && b.tell) {
-      await p.clickOn(`${box} [data-wtell]`);
-      const said = await until(`/No agent proposed it|Told/.test(document.querySelector("${box} [data-wtell]")?.textContent || "")`, 30);
-      rows.push(["Tell the agent answers in its button", said, said ? `"${await p.ev(`document.querySelector("${box} [data-wtell]").textContent`)}"` : "the button said nothing"]);
-    } else rows.push(["Tell the agent answers in its button", false, "no Tell the agent on a failed widget file"]);
+    // The reader's own widget (shared, written by hand) has no agent to
+    // tell: no Tell the agent on its failure (1.36).
+    rows.push(["a widget the reader wrote has no Tell the agent", !!b && !b.tell, !b ? "no box" : b.tell ? "Tell the agent on a widget no agent proposed" : "its failure, and no agent to tell"]);
 
     // The long one, allowed: its body is cut at one line, says more, and
     // opens where it is.
@@ -3213,7 +3213,11 @@ async function panelRows(cdp, base, token) {
   const desk = d.desk ? d.desk.id : d.id;
   const pa = (await post(`/api/desks/${desk}/panes`)).pane.id, pb = (await post(`/api/desks/${desk}/panes`)).pane.id;
   const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
-  await post(`/api/panes/${pa}/start`, { cmd: `printf 'see https://example.com/snyvi-bench. then\\n'; while :; do ${sleepBin} 1; done` });
+  // Bracketed paste on while `paste` exists, as at Claude's prompt (S1 below);
+  // the mode is printed only when it changes, so the screen is otherwise still.
+  const paste = join(tmpdir(), `snyvi-bench-paste-${process.pid}`);
+  rmSync(paste, { force: true });
+  await post(`/api/panes/${pa}/start`, { cmd: `printf 'see https://example.com/snyvi-bench. then\\n'; b=0; while :; do if [ -e ${paste} ]; then [ $b = 1 ] || { printf '\\033[?2004h'; b=1; }; else [ $b = 0 ] || { printf '\\033[?2004l'; b=0; }; fi; ${sleepBin} 1; done` });
   await post(`/api/panes/${pb}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
   const n1 = (await post(`/api/desks/${desk}/notes`, { text: "a line for the menu" })).note.id;
   const n2 = (await post(`/api/desks/${desk}/notes`, { text: "a line for an agent" })).note.id;
@@ -3430,6 +3434,11 @@ async function panelRows(cdp, base, token) {
       gCard && gRec === 2 && /3 of 3/.test(steps[0] || "") && /1 of 3/.test(steps[2] || "") && !!gFoot,
       gIds.length !== 3 ? `ask with questions answered ${JSON.stringify(grouped).slice(0, 120)}` : !gCard ? "no card with three rows" : gRec !== 2 ? `${gRec} recommended options marked, not 2` :
         !gFoot ? `the foot never offered to send: ${steps.join(" / ")}` : `${steps.join(" → ")} → send`]);
+    // S1 (audit e0a854b732): with no Claude in the panel -- a shell -- Send
+    // answers is not offered: what it typed there ran as a command.
+    const noSend = gCard && await q.ev(`!document.querySelector('.dk-turn.grp[data-g="${gIds[0]}"] [data-a="tn-gsend"]')`);
+    rows.push(["with no Claude in the panel, Send answers is not offered", !!noSend,
+      !gCard ? "no card to look at" : noSend ? "the answers go with the next message" : "Send answers is offered into a shell"]);
     if (gCard) await q.ev(`document.querySelector('[data-a="tn-gunsend"][data-g="${gIds[0]}"]')?.click(); 1`);
     await q.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
     const trayShut = await until(`!document.querySelector('#onyou .oy-tray')`, 20);
@@ -3456,7 +3465,7 @@ async function panelRows(cdp, base, token) {
     const rose = await until(`!!document.querySelector('#onyou .oy-card .tn-cmd')`, 60);
     const railAfter = await q.ev(railAt);
     rows.push(["a hand-over rises in the corner, and the rail does not move", rose && !!railBefore && railBefore === railAfter && !(await q.ev(`!!document.querySelector('[data-part="rail.turns"]')`)),
-      !rose ? "no card rose in the corner" : railBefore !== railAfter ? `Panels moved: ${railBefore} → ${railAfter}` : "a Your turn section is still on the rail"]);
+      !rose ? "no card rose in the corner" : railBefore !== railAfter ? `Panels moved: ${railBefore} → ${railAfter}` : "an On you section is still on the rail"]);
     await agent("agent", { session: "0b1c2d3e-4f50-4617-8899-aabbccddeeff" });
     const card = await until(`document.querySelector('.dk-turn .tn-cmd')?.textContent === "echo bench-run-ok" && !!document.querySelector('[data-a="tn-run"]')`, 60);
     await q.ev(`window.__typed = []; const send = WebSocket.prototype.send; WebSocket.prototype.send = function (d) { try { const j = JSON.parse(d); if (j.t === "in") window.__typed.push(j.d); } catch {} return send.call(this, d); }; 1`);
@@ -3468,6 +3477,68 @@ async function panelRows(cdp, base, token) {
       refusedCmd.status === 400 && handed.status === 201 && card && pasted === "! echo bench-run-ok" && typed[1] === "\r" && ranGone,
       refusedCmd.status !== 400 ? `an escape in the command answered ${refusedCmd.status}` : handed.status !== 201 ? `the hand-over answered ${handed.status}` :
         !card ? "no card with the command and Run" : !typed.length ? "Run typed nothing" : `typed ${JSON.stringify(typed)}${ranGone ? "" : ", and the card stayed"}`]);
+
+    // S1: into a Claude at its prompt, Send now types the reader's answer
+    // alone -- never the agent's question, which is text an agent sent.
+    // A Claude at its prompt has bracketed paste on; panel a's loop turns
+    // it on while the flag file is there, and off again after the row. The
+    // loop wakes once a second, and the card is drawn as Yes is pressed, so
+    // the mode is in before the question is.
+    writeFileSync(paste, "");
+    await sleep(1500);
+    const one = await (await agent("ask", { text: "bench: $(echo never typed)?", options: ["Yes", "No"], by: "bench-agent" })).json().catch(() => ({}));
+    const oneId = one.turn?.id;
+    const oneUp = !!oneId && await until(`!!document.querySelector('#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]')`, 60);
+    if (oneUp) await q.clickOn(`#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]`);
+    const sendUp = oneUp && await until(`!!document.querySelector('#onyou [data-a="tn-send"][data-w="${oneId}"]')`, 30);
+    await q.ev(`window.__typed = []; 1`);
+    if (sendUp) await q.clickOn(`#onyou [data-a="tn-send"][data-w="${oneId}"]`);
+    const sentTyped = sendUp && await until(`window.__typed.length >= 2`, 30) ? await q.ev("window.__typed") : [];
+    const said1 = (sentTyped[0] || "").replace("\u001b[200~", "").replace("\u001b[201~", "");
+    rows.push(["Send now types only the reader's answer, into a Claude", said1 === "Answered in snyvi: Yes" && sentTyped[1] === "\r",
+      !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : !sendUp ? "no Send now with a Claude at its prompt" : `typed ${JSON.stringify(sentTyped)}`]);
+    rmSync(paste, { force: true });
+
+    // U1, U2: the corner is the rail's column, over no panel, and above the
+    // rail's foot line (the panel's pid and age).
+    const placed = await q.ev(`(() => { const e = document.querySelector('#onyou'), o = e?.getBoundingClientRect(), r = document.querySelector('#rail')?.getBoundingClientRect(), pl = document.querySelector('.dk-pl')?.getBoundingClientRect();
+      return o && r ? { inRail: e.classList.contains("in-rail") && o.left >= r.left - 1 && o.right <= r.right + 1, overFoot: !!pl && pl.height > 0 && o.height > 0 && o.bottom > pl.top + 1 } : null; })()`);
+    rows.push(["the corner sits in the rail's column, above its foot line", !!placed && placed.inRail && !placed.overFoot,
+      !placed ? "no corner, or no rail" : JSON.stringify(placed)]);
+
+    // U7: hand-overs in a burst ring once, and the card says the rest.
+    const bs = [];
+    for (const t of ["bench: burst one", "bench: burst two"]) bs.push(await agent("handover", { kind: "try", text: t, by: "bench-agent" }));
+    const bIds = (await Promise.all(bs.map(r => r.json().catch(() => ({}))))).map(j => j.turn?.id).filter(Boolean);
+    const burst = bIds.length === 2 && await until(`/\\+1 more/.test(document.querySelector('#onyou .oy-more')?.textContent || "")`, 60);
+    rows.push(["two hand-overs at once rise as one card that says +1 more", !!burst,
+      bIds.length !== 2 ? "the hand-overs were refused" : `the corner: ${await q.ev(`document.querySelector('#onyou')?.textContent.slice(0, 120) || ""`)}`]);
+
+    // B1: a card of questions answered elsewhere goes with one ✕, and its
+    // one Undo brings every question back.
+    const g2 = await (await agent("ask", { by: "bench-agent", questions: [
+      { question: "bench: all one?", options: ["A", "B"] }, { question: "bench: all two?", options: ["A", "B"] }] })).json().catch(() => ({}));
+    const g2Id = g2.turns?.[0]?.id;
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#onyou .oy-pill");
+    const gx = !!g2Id && await until(`!!document.querySelector('#onyou [data-a="tn-gx"][data-g="${g2Id}"]')`, 40);
+    if (gx) await q.clickOn(`#onyou [data-a="tn-gx"][data-g="${g2Id}"]`);
+    const gxGone = gx && await until(`!document.querySelector('.dk-turn.grp[data-g="${g2Id}"]') && !!document.querySelector('#onyou [data-a="fd-back"][data-k="g"]')`, 30);
+    if (gxGone) await q.clickOn('#onyou [data-a="fd-back"][data-k="g"]');
+    const gxBack = gxGone && await until(`document.querySelectorAll('.dk-turn.grp[data-g="${g2Id}"] .tn-gq').length === 2`, 40);
+    rows.push(["a card of questions goes with one ✕, and one Undo brings it all back", !!gxBack,
+      !g2Id ? `ask answered ${JSON.stringify(g2).slice(0, 80)}` : !gx ? "no ✕ for the whole card" : !gxGone ? "the card stayed, or no Undo" : "the Undo did not bring both back"]);
+
+    // U8: Ctrl+Alt+Y opens and closes the tray from anywhere on the desk.
+    const trayOpen = `!!document.querySelector('#onyou .oy-tray')`;
+    const yKey = `document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyY", key: "y", ctrlKey: true, altKey: true, bubbles: true })); 1`;
+    const wasOpen = await q.ev(trayOpen);
+    await q.ev(yKey);
+    const yFlip = await until(`${trayOpen} === ${!wasOpen}`, 20);
+    await q.ev(yKey);
+    const yBack = yFlip && await until(`${trayOpen} === ${wasOpen}`, 20);
+    rows.push(["Ctrl+Alt+Y opens and closes On you", !!yBack, !yFlip ? "the key did nothing" : "it opened but did not close"]);
+    await q.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
+    for (const id of [...bIds, ...(g2.turns || []).map(t => t.id)]) await post(`/api/desks/${desk}/turns/${id}/remove`, {}).catch(() => {});
 
     // #114: a key handed over rises whole -- it was cut at two lines, "...then"
     // and no way on -- says where its link goes, and offers Add key..., which

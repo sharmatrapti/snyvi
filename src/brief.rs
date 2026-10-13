@@ -271,16 +271,34 @@ fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) ->
     if !moving.is_empty() {
         lines.push(format!("Threads on this desk: {}.", moving.join("; ")));
     }
+    // What is fresh, said; what went quiet -- its panel closed, or asked over
+    // half an hour ago -- only counted, so a new Claude knows it is there
+    // without taking a four-day-old key as its next step (audit e0a854b732).
     let on_user: Vec<String> = waiting
         .iter()
+        .filter(|w| !w.stale)
         .take(TURNS_SHOWN)
         .map(|w| format!("{}: {}", w.kind, cut(&w.text, LINE_CHARS)))
         .collect();
-    if !on_user.is_empty() {
-        lines.push(format!(
-            "On the user (their Your turn in snyvi): {}.",
+    let older = waiting.iter().filter(|w| w.stale).count();
+    let older = match older {
+        0 => String::new(),
+        1 => "1 older".to_string(),
+        n => format!("{n} older"),
+    };
+    match (on_user.is_empty(), older.is_empty()) {
+        (true, true) => {}
+        (false, true) => lines.push(format!(
+            "On the user (their On you list in snyvi): {}.",
             on_user.join("; ")
-        ));
+        )),
+        (false, false) => lines.push(format!(
+            "On the user (their On you list in snyvi): {}; and {older}.",
+            on_user.join("; ")
+        )),
+        (true, false) => lines.push(format!(
+            "On the user's On you list in snyvi: {older}, from panels since closed or asked over half an hour ago."
+        )),
     }
     lines
 }
@@ -288,20 +306,39 @@ fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) ->
 /// The reader's answers, as a panel is told them: first in the changes,
 /// because an answer matters more than a filed document.
 pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
-    answers
+    let mut lines: Vec<String> = answers
         .iter()
+        .filter(|t| t.answered_at != 0)
         .map(|t| {
             let q = cut(&t.text, LINE_CHARS);
             let a = cut(&t.answer, LINE_CHARS);
             match t.kind.as_str() {
                 "decide" => format!("You answered \"{q}\": {a}."),
                 "try" => format!("You tried \"{q}\": {}.", a.to_lowercase()),
+                // Settled by what snyvi saw, not by a click (`thread::settle_merge`).
+                "merge" if t.answered_in == "snyvi" && a.ends_with("seen by snyvi)") => {
+                    format!("snyvi saw the merge for \"{q}\": {a}.")
+                }
                 "merge" => format!("You merged: \"{q}\"."),
                 "key" => format!("You added the key: \"{q}\"."),
                 _ => format!("You answered \"{q}\": {a}."),
             }
         })
-        .collect()
+        .collect();
+    // Questions this panel asked that are still open as its prompt comes
+    // (`thread::quiet_asks`): the message may be their answer.
+    let open: Vec<String> = answers
+        .iter()
+        .filter(|t| t.answered_at == 0)
+        .map(|t| format!("\"{}\"", cut(&t.text, LINE_CHARS)))
+        .collect();
+    if !open.is_empty() {
+        lines.push(format!(
+            "Still open on the user's On you list, from you: {}. If their message answers them, call settle_asks; if not, leave them, they wait there.",
+            open.join("; ")
+        ));
+    }
+    lines
 }
 
 /// The header the changes start with, and the answers alone under it: what a
@@ -919,12 +956,14 @@ mod tests {
             kind: "decide".into(),
             text: "Search box after how many docs?".into(),
             answer: "After 10".into(),
+            answered_at: 150,
             ..Turn::default()
         };
         let tried = Turn {
             kind: "try".into(),
             text: "Try it on 7871".into(),
             answer: "Needs changes: the box jumps".into(),
+            answered_at: 150,
             ..Turn::default()
         };
         let parked = Thread {
@@ -1012,7 +1051,7 @@ mod tests {
         assert!(b.contains(
             "Threads on this desk: Home + friends (building, #87 #91, claude/asides; this panel's)."
         ));
-        assert!(b.contains("On the user (their Your turn in snyvi): try: Try it on 7871."));
+        assert!(b.contains("On the user (their On you list in snyvi): try: Try it on 7871."));
         assert!(!b.contains("Old"));
     }
 }

@@ -499,15 +499,19 @@ lines a plan is for as planned, so a batch of notes is a few calls and not a
 few per note -- `suggest_desk_note` offers a line you
 can keep or not, `leave_off` says in a sentence where the work stands,
 `name_panel` names the panel it runs in, and six more file the work itself
-([Threads and Your turn](#threads-and-your-turn) below): `start_thread` and
+([Threads and On you](#threads-and-on-you) below): `start_thread` and
 `move_thread`, `ask` and `hand_over`, `suggest_panel` and `suggest_desk`.
 The tool descriptions tell Claude
 when to use each; a line in your global `CLAUDE.md` helps it remember:
 
 > When you produce a document for me to read (plan, review, summary),
-> send it to snyvi with send_document and give me the link.
+> send it to snyvi with send_document and tell me where it went, as its
+> result says.
 
-`snyvi init-claude --claude-md` writes that line for you, once. The
+`snyvi init-claude --claude-md` writes that line for you, once. Through
+1.35 it ended "and give me the link", which in a desk's panel sent you to a
+browser beside the window; `init-claude`, and the update that runs it,
+rewords that line wherever it is still as it was written. The
 command is safe to run as often as you like: it reads what Claude Code
 already has before touching anything, says "already registered" when
 there is nothing to do, and when the binary has moved -- an update, a
@@ -595,12 +599,19 @@ connectors or Remote Control, which want the `/login` account. snyvi never
 switches an account on its own, and *Remove from every desk* puts its desks
 and panels back on your login and forgets the token, with Undo first.
 
-The server also offers four prompts, the loop's own commands, listed in the
+The server also offers five prompts, the loop's own commands, listed in the
 `/` menu as `/snyvi:wrap-up (MCP)` and so on: `wrap-up` ticks what is
 finished and checked and says where the work was left, `plan` writes the
 plan as a document and waits, `catch-up` says where the desk stands in five
-lines, and `explain-back` says what was just done and why. Nothing is
+lines, `explain-back` says what was just done and why, and `widget` keeps a
+figure you name in view on the desk's rail (`docs/WIDGETS.md`). Nothing is
 written into your `CLAUDE.md` for them.
+
+It writes a skill too, `~/.claude/skills/snyvi/`: how to send a document in
+the form you'll read it in, how a desk's notes and On you work, and how
+to write a widget, which Claude reads when the work calls for it. An update
+keeps it in step with the binary; a `snyvi` skill of your own is left alone;
+`uninstall-claude` takes it out.
 
 It also sets Claude Code's status line to `snyvi statusline`, which prints
 nothing and tells a desk panel which model it runs and how full its context
@@ -1024,15 +1035,14 @@ code, diffs, tables, images, and previewed pages and PDFs.
 `w` overrides the cap for prose too. Combined with `\` and `t`, which
 hide the sidebar and the rail, it gives the document the whole window.
 
-## Threads and Your turn
+## Threads and On you
 
 What wears a maker down is rarely the work; it is the bookkeeping around it.
 Which notes are one piece of work, which folder and branch it lives in, what
 was decided in a chat last Tuesday, and what is waiting on *you*. A Claude in
 a desk's panel files that for you, and the desk shows it only when there is
-something to show: a thread on its panel's row, and Your turn and
-Suggested in the desk's bottom-right corner, where nothing they do moves
-the page.
+something to show: a thread on its panel's row, and On you and
+Suggested in the rail's corner, where nothing they do moves the page.
 
 - **A thread** is one arc of work: a name, the notes it answers, the folder
   it lives in, and a stage -- idea, planned, building, review, waiting,
@@ -1062,36 +1072,53 @@ the page.
   done**, which shows them, with **Clear** beside it and its Undo in the
   same row. A ticked line keeps its number and pictures; its commit and PR
   are in its tip and its menu (**Copy commit**, **Open PR #n**).
-- **Your turn** is what only you can do: a decision (`ask`, with two to four
-  options and the one Claude recommends -- several asked at once are one
-  card, a row each, with **Send answers** once all are answered), or a hand-over (`hand_over`): try
-  it, merge it, add a key, or **run** a command Claude was blocked from
-  running. A run card shows the whole command; **Run in panel N** types it
+- **On you** is what only you can do: a decision (`ask`, with two to four
+  options and the one Claude recommends, marked ★ -- several asked at once
+  are one card, a row each, with one ✕ for all of them and **Send answers**
+  once all are answered), or a hand-over (`hand_over`): try it, merge it,
+  add a key, or **run** a command Claude was blocked from running. A run card shows the whole command; **Run in panel N** types it
   into the panel that asked as a `!` command, so its output lands in that
   conversation and Claude carries on (mid-turn, Claude Code holds it until
   the turn ends). **New panel** runs it in a shell of its own, and **Copy**
   copies it. A command with a newline or an escape in it is refused, so what
   Run types is exactly what the card shows. Your answer goes
-  with your next message to the panel that asked; while that panel is idle,
-  **Send now** types it in and presses Enter for you. snyvi never starts a
-  turn by itself.
+  with your next message to the panel that asked; while Claude in that
+  panel is at its prompt, **Send now** types your answer in -- only your
+  answer, numbered as Claude asked when it was a card -- and presses Enter
+  for you. Into a panel with no Claude in it, a shell, nothing is typed.
+  snyvi never starts a turn by itself.
 
-  A new one rises in the bottom-right corner as a small card, with a soft
-  chime (none in quiet mode), and you can answer it there. Left alone, it
-  settles after a few seconds into the **On you** pill, which opens the
-  tray: every turn in the order asked, then Suggested. Esc or a click
-  elsewhere closes it. A turn goes quiet once the panel that asked has
-  closed, or after half an hour: it no longer rises or rings, the pill's
-  count leaves it out, and the tray folds it under *older*. Claude's own
-  question dialog is on screen in its panel already, so it neither rises
-  nor waits in the corner; Home lists it.
+  Some settle by themselves. A key asked for by its name is answered when
+  you add a key of that name on the desk; a merge on a thread is answered
+  when snyvi sees the thread's branch merged. If you answer a question in
+  the conversation instead, your next message there quiets it, and Claude
+  is told it is still open, and takes it off with `settle_asks` when your
+  message answered it.
+
+  A new one rises in the rail's corner, above the panel's line at the
+  rail's foot, as a small card, with a soft chime (none in quiet mode), and
+  you can answer it there; several at once ring once, and the card says
+  **+N more**. Left alone, it settles after a few seconds into the **On
+  you** pill, which opens the tray: newest first, then Suggested.
+  **Ctrl+Alt+Y** opens and closes it from anywhere on the desk; Esc or a
+  click elsewhere closes it. A turn goes quiet once the panel that asked
+  has closed, after half an hour, or once you have written to that panel
+  since: it no longer rises or rings, counts nowhere -- not the pill, not
+  Home, not the desk brief, not the six an agent may have waiting -- and
+  the tray folds it under *older*. After three days it is put away by
+  itself, as ✕ would. With the rail folded or hidden, nothing rises over a
+  panel: the pill lights in the window's corner. Claude's own question
+  dialog is on screen in its panel already, so it neither rises nor waits
+  in the corner; Home lists it.
 - **Suggested** is a panel or a desk Claude thinks the work wants, with the
   exact command it would run. **Open panel** opens it on this desk and runs
   that command; **Open desk** makes a desk for the folder. Nothing opens
   until you click, and three wait at most.
 
-Home's status line says how many things are on you; click it for **Your
-turn · across desks**, a sheet over the page, answerable in place. Each
+Home's status line says how many things are on you now, in amber, or how
+many older ones wait, in its own ink; click it for **On you · across
+desks**, a sheet over the page, answerable in place, each row with its ✕
+(and its Undo in the row) and **Open ↗** for a link. Each
 desk on Home lists its moving threads, a line each under its notes, with
 the PR and its checks. The desk brief names the threads
 panels are moving and the parked ones, and
@@ -1108,9 +1135,9 @@ into `~/.claude`, a `claude` in a plain terminal has no mod, and it is
 always the version of the snyvi that started the panel. In a panel with it:
 
 - One dim line above the prompt says the panel's thread and what is on you:
-  `▸ Home + friends · building · claude/asides · 3 commits · your turn: try it`.
+  `▸ Home + friends · building · claude/asides · 3 commits · on you: try it`.
 - Claude's own questions (its multiple-choice dialog) are listed on Home's
-  Your turn too, never in the desk's corner, which would only repeat the
+  On you too, never in the desk's corner, which would only repeat the
   panel. Answer in the terminal or in snyvi; the first answer is the one
   Claude gets, and the other side closes.
 - The branch, the commits and the PR are *seen* from what git and gh did in

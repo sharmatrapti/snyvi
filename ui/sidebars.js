@@ -59,6 +59,9 @@ const STYLE = `
 .sb-set { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; align-items: center; margin-top: 6px; font-size: var(--fs-small); color: var(--fg-2); }
 .sb-set input:not([type="checkbox"]), .sb-set select { min-width: 0; font: inherit; padding: 2px 6px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
 .sb-folder { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); overflow-wrap: anywhere; }
+.sb-open { margin-left: 6px; font-family: inherit; font-size: var(--fs-micro); color: var(--accent); }
+.sb-open:hover { text-decoration: underline; }
+.sb-sub { margin: 12px 0 4px; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-2); }
 .sb-empty { margin: 4px 8px 8px; font-size: var(--fs-small); color: var(--fg-3); }
 .sb-empty code { font-family: var(--mono); font-size: var(--fs-micro); }
 .sb-note { margin: 8px 8px 0; font-size: var(--fs-small); color: var(--fg-3); }
@@ -131,8 +134,8 @@ function filesBox() {
   const files = data.files || [];
   const one = f => {
     if (!f.command) return `<div class="sb-w" data-own="${f.owner || 0}"><div class="sb-w-head"><b>${esc(f.name)}</b><span class="sb-w-meta"></span></div><p class="sb-w-err">${esc(f.error || "")}</p>` +
-      (f.owner ? `<div class="sb-w-acts">${rmBtn(f.name, f.owner, f.owner)}</div>` : "") + `<p class="sb-folder">${esc(f.folder)}</p></div>`;
-    const now = Date.now() / 1000, ended = f.hidden && ((f.until > 0 && f.until <= now) || !!f.until_pane);
+      (f.owner ? `<div class="sb-w-acts">${rmBtn(f.name, f.owner, f.owner)}</div>` : "") + `<p class="sb-folder">${esc(f.folder)} <button type="button" class="sb-open" data-wopen="${esc(f.name)}" data-tip="Open its folder">Open</button></p></div>`;
+    const now = Date.now() / 1000, ended = !!f.ended;
     const state = ended ? [`Ended ${f.until ? new Date(f.until * 1000).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) : "with its panel"}`, ""]
       : f.allowed ? ["Allowed", "ok"] : f.changed ? ["Changed · needs Allow", "warn"] : ["Needs Allow", "warn"];
     const ds = data.desks || [], every = !(f.desks || []).length, mine = f.owner ? esc(f.owner_desk || `desk ${f.owner}`) : "";
@@ -163,7 +166,7 @@ function filesBox() {
         if (d.type === "choice" && d.choices?.length) return lab + `<select ${at}>${d.choices.map(o => `<option${o === v ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
         return lab + `<input ${at} type="${d.type === "number" ? "number" : "text"}" value="${esc(v ?? "")}" spellcheck="false">`;
       }).join("") + `</div>` : "") +
-      `<p class="sb-folder">${esc(f.folder)}</p></div>`;
+      `<p class="sb-folder">${esc(f.folder)} <button type="button" class="sb-open" data-wopen="${esc(f.name)}" data-tip="Open its folder" data-tip-sub="Read what Allow takes: every file in it">Open</button></p></div>`;
   };
   return `<section class="sb-box">${c.secHead("sb-files", "Widget files", { fixed: true, count: files.length || "" })}` +
     (files.length ? files.map(one).join("") : `<p class="sb-empty">None yet. <code>snyvi widget new git</code> writes a starter; an agent can propose one.</p>`) +
@@ -179,8 +182,18 @@ function pushedBox() {
     (ps.length ? `<ul class="sb-list">` + ps.map(p => `<li class="sb-row${p.hidden ? " off" : ""}"><span class="sb-nm">${esc(p.name)}</span>` +
       `<span class="sb-what">${p.desk_id ? esc(p.desk || `desk ${p.desk_id}`) : "global"} · ${esc(p.writer)}</span>` +
       (p.agent && p.desk_id ? rmBtn(p.name, p.desk_id, 0) : "") +
-      `<button type="button" class="sb-sw" role="switch" aria-checked="${!p.hidden}" data-wsw="${esc(p.name)}" aria-label="${p.hidden ? "Off" : "On"}: ${esc(p.name)}"></button></li>`).join("") + `</ul>`
-      : `<p class="sb-empty">None. An agent's <code>set_widget</code>, or <code>snyvi widget set</code> from a script.</p>`) + `</section>`;
+      `<button type="button" class="sb-sw" role="switch" aria-checked="${!p.hidden}" data-wsw="${esc(p.name)}" data-wown="${p.desk_id}" aria-label="${p.hidden ? "Off" : "On"}: ${esc(p.name)}"></button></li>`).join("") + `</ul>`
+      : `<p class="sb-empty">None. An agent's <code>set_widget</code>, or <code>snyvi widget set</code> from a script.</p>`) + saidNo() + `</section>`;
+}
+
+/** The boxes the reader said Not now to, or removed: a no is theirs to
+ *  take back. Ask again lets the next push ask with a card. */
+function saidNo() {
+  const { esc } = c, ns = data.said_no || [];
+  if (!ns.length) return "";
+  return `<h4 class="sb-sub">You said no</h4><ul class="sb-list">` + ns.map(n => `<li class="sb-row"><span class="sb-nm">${esc(n.name)}</span>` +
+    `<span class="sb-what">${esc(n.desk)} · ${n.answer === "removed" ? "removed" : "not now"} · ${esc(n.writer)}</span>` +
+    `<button type="button" class="sb-open" data-wagain="${esc(n.name)}" data-wd="${n.desk_id}" data-tip="Ask again" data-tip-sub="Its next push brings a card to Allow, from any panel">Ask again</button></li>`).join("") + `</ul>`;
 }
 
 /** Save the layout, and draw what the daemon kept. */
@@ -215,7 +228,7 @@ async function click(e) {
   const wsw = e.target.closest("[data-wsw]");
   if (wsw) {
     const on = wsw.getAttribute("aria-checked") === "true";
-    return prefs(wsw.dataset.wsw, { hidden: on }, true, own(wsw));
+    return prefs(wsw.dataset.wsw, { hidden: on }, true, wsw.dataset.wown != null ? +wsw.dataset.wown : own(wsw));
   }
   const sh = e.target.closest("[data-wshare]");
   if (sh) return prefs(sh.dataset.wshare, { share: true }, true, own(sh));
@@ -232,12 +245,37 @@ async function click(e) {
   if (rm) return removeRow(rm);
   const un = e.target.closest("[data-wun]");
   if (un) return undoRow(un);
+  const ag = e.target.closest("[data-wagain]");
+  if (ag) {
+    ag.disabled = true;
+    try { await c.deskApi(`/api/widgets/${ag.dataset.wagain}/prefs`, { ask_again: +ag.dataset.wd }); ag.textContent = "Asks on its next push"; }
+    catch (e) { ag.disabled = false; allowRefused(e); }
+    return;
+  }
+  const op = e.target.closest("[data-wopen]");
+  if (op) return openWidget(op.dataset.wopen, own(op));
   const al = e.target.closest("[data-allow]");
   if (al) {
     al.disabled = true;
     try { await c.deskApi(`/api/widgets/${al.dataset.allow}/allow`, { owner: own(al) }); await again(); }
-    catch { al.disabled = false; c.toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" }); }
+    catch (e) { al.disabled = false; allowRefused(e); }
   }
+}
+
+/** Why Allow, or turning a widget on or wider, did not happen: a tab's
+ *  missing capability (403), or the daemon's own reason, said as it is. */
+function allowRefused(e) {
+  if (e?.status === 403) c.toast("That works in the snyvi window", { sub: "A tab cannot let a command run" });
+  else c.toast("Not allowed", { sub: e?.message || e });
+}
+
+/** A widget file's folder, in the file manager: what Allow takes, read
+ *  before it is allowed. By name and desk; the daemon finds the folder. */
+async function openWidget(widget, owner) {
+  try {
+    const r = await fetch("/api/reveal", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ widget, owner }) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+  } catch (e) { c.toast("Could not open the folder", { sub: e?.message || e }); }
 }
 
 /** A setting, Rerun my edits: saved as it changes. */
@@ -253,8 +291,9 @@ async function changed(e) {
     const name = t.dataset.wdesks;
     if (t.dataset.d === "all") return prefs(name, { desks: t.checked ? [] : (data.desks || []).map(d => d.id) });
     const ids = [...c.docEl.querySelectorAll(`input[data-wdesks="${CSS.escape(name)}"]:not([data-d="all"]):checked`)].map(x => +x.dataset.d);
-    // Off every desk is off: the switch says so, and the ticks stay.
-    return prefs(name, ids.length ? { desks: ids } : { hidden: true });
+    // Off every desk is off: the switch says so, and the ticks stay. A desk
+    // ticked is a yes to it there: on again, if it was off.
+    return prefs(name, ids.length ? { desks: ids, ...(t.checked ? { hidden: false } : {}) } : { hidden: true });
   }
   if (t.dataset.set) {
     const f = (data.files || []).find(x => x.name === t.dataset.set && (x.owner || 0) === own(t));
@@ -293,10 +332,12 @@ const own = el => +(el.closest(".sb-w")?.dataset.own || 0);
 
 async function prefs(name, body, redraw = true, owner = 0) {
   try {
-    const r = await fetch(`/api/widgets/${name}/prefs`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ owner, ...body }) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    await c.deskApi(`/api/widgets/${name}/prefs`, { owner, ...body });
     if (redraw) await again();
-  } catch (e) { c.toast("Could not save that", { sub: e }); }
+  } catch (e) {
+    if (e?.status === 403) allowRefused(e);
+    else c.toast("Could not save that", { sub: e?.message || e });
+  }
 }
 
 /** Read everything again: after an Allow, a switch. */

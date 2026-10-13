@@ -431,6 +431,46 @@ pub fn line_add(path: &Path) -> Result<bool> {
     Ok(true)
 }
 
+/// The line an older snyvi wrote, put right where it stands exactly as it
+/// was written; a line the reader reworded is theirs. Whether it was.
+pub fn line_upgrade(path: &Path) -> Result<bool> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(false);
+    };
+    let mut fixed = String::with_capacity(text.len());
+    let mut changed = false;
+    for l in text.split_inclusive('\n') {
+        let words = l.trim_end_matches(['\n', '\r']);
+        if words == setup::CLAUDE_MD_LINE_1_35 {
+            // The new words, and the line's own ending.
+            fixed.push_str(LINE);
+            fixed.push_str(&l[words.len()..]);
+            changed = true;
+        } else {
+            fixed.push_str(l);
+        }
+    }
+    if changed {
+        std::fs::write(path, fixed)?;
+    }
+    Ok(changed)
+}
+
+/// The line through 1.35, put right wherever it is as it was written, and
+/// said so.
+fn reword_old_line(agent: &Agent) -> Result<()> {
+    if let Some(Where::File(path)) = &agent.instructions {
+        if line_upgrade(path)? {
+            println!(
+                "Reworded the snyvi line in {}: {} says where a document went, not a link.",
+                tilde(path),
+                agent.name
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Take out exactly the line `init` wrote, and a reworded one only if it
 /// still names the tool on a line of its own.
 pub fn line_remove(path: &Path) -> Result<bool> {
@@ -654,6 +694,7 @@ pub fn init(agent: &Agent, instructions: bool) -> Result<()> {
         }
     }
 
+    reword_old_line(agent)?;
     match &agent.instructions {
         Some(Where::File(path)) if instructions => {
             if line_add(path)? {
@@ -1178,5 +1219,33 @@ mod tests {
             rows.iter().filter(|r| r.id.starts_with("sender:")).count(),
             2
         );
+    }
+
+    /// The line through 1.35 asked for a link; it is put right where it
+    /// stands, its ending kept, and a line the reader reworded is left be.
+    #[test]
+    fn the_old_line_is_reworded_in_place() {
+        let dir = std::env::temp_dir().join(format!("snyvi-agents-line-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("CLAUDE.md");
+        let old = setup::CLAUDE_MD_LINE_1_35;
+        std::fs::write(&path, format!("# mine\r\n{old}\r\nafter")).unwrap();
+        assert!(line_upgrade(&path).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("# mine\r\n{LINE}\r\nafter")
+        );
+        assert!(!line_upgrade(&path).unwrap(), "once");
+        let reworded = format!("{old} Thanks!\n");
+        std::fs::write(&path, &reworded).unwrap();
+        assert!(!line_upgrade(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), reworded);
+        assert!(!line_upgrade(&dir.join("none.md")).unwrap());
+        // Both wordings are taken out by uninstall.
+        std::fs::write(&path, format!("{old}\n{LINE}\n")).unwrap();
+        assert!(line_remove(&path).unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
+        assert!(!LINE.contains("link") && LINE.contains("send_document") && LINE.contains("snyvi"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -32,7 +32,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/thread.rs` | 1151 | threads, turns (Your turn) and suggested panels: the tables, the stages, who is told what (#90) |
 | `src/server/api_thread.rs` | 734 | threads over HTTP: the agent's and the mod's on `/api/panes/{id}/…`, the page's on `/api/desks/{id}/…`, the held question's long-poll |
 | `src/claude_mod.rs` | 144 | the snyvi mod (`mod/`) built in, written to the data folder, named in a panel's `CLAUDE_CODE_PLUGIN_DIRS` |
-| `src/mcp/threads.rs` | 247 | the six #90 MCP tools: start_thread, move_thread, ask, hand_over, suggest_panel, suggest_desk |
+| `src/mcp/threads.rs` | 247 | the seven #90 MCP tools: start_thread, move_thread, ask, hand_over, settle_asks, suggest_panel, suggest_desk |
 | `src/project.rs` | 168 | cwd → project (git root) |
 | `src/git.rs` | 251 | branch, dirt, unpushed, recent commits for Home |
 | `src/resolve.rs` | 211 | a Ctrl-clicked word → a path |
@@ -60,7 +60,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/mcp.rs` | 1040 | the stdio MCP server, nine tools |
 | `src/agents.rs` | 1157 | the registry: claude, codex, cursor, gemini; what each has |
 | `src/client.rs` | 1153 | CLI/MCP → daemon over HTTP with the token; starts the daemon if needed |
-| `src/setup.rs` | 901 | `init-claude`, undo, PATH |
+| `src/setup.rs` | 1,049 | `init-claude`, undo, PATH, the skill in `src/skill/` |
 
 ## Lifecycle
 

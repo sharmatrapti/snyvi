@@ -36,7 +36,7 @@
  * Friends shows once there is a friend, and the version, Check for updates
  * and Pair with a friend… are the foot's, with an update's card under it.
  * Nothing here moves when something arrives: the status line is one line
- * whatever it says, Your turn opens over the page from it, and a widget
+ * whatever it says, On you opens over the page from it, and a widget
  * with nothing to say says so rather than going away (audit 67d008cb6f).
  */
 
@@ -49,7 +49,7 @@ const CSS = `
 .hm-status a { color: var(--fg-2); text-decoration: none; }
 .hm-status a:hover { color: var(--fg); text-decoration: underline; }
 .hm-status.ring .hm-ring { color: var(--warn); font-weight: 600; }
-/* Your turn: a button in the status line, and a sheet over the page under
+/* On you: a button in the status line, and a sheet over the page under
    it -- the desk's "On you" corner's, so its coming moves nothing. */
 .hm-st { position: relative; }
 .hm-gs { margin: 14px 0 20px; max-width: 420px; }   /* past the note bar's -8px, which sits over what is above it */
@@ -58,6 +58,11 @@ const CSS = `
 .hm-ask .w-btns { display: flex; flex-wrap: wrap; gap: 10px; }
 .hm-onyou { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--warn); cursor: pointer; }
 .hm-onyou:hover, .hm-onyou[aria-expanded="true"] { text-decoration: underline; }
+.hm-onyou.old { font-weight: 400; color: var(--fg-2); }
+.hm-tx { padding: 0 4px; border: 0; background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-3); cursor: pointer; }
+.hm-tx:hover { color: var(--fg); }
+.hm-star { margin-right: 3px; color: var(--accent); }
+.hm-told { padding: 6px 0; list-style: none; }
 .hm-you { position: absolute; top: 24px; left: 0; z-index: var(--z-pop); width: min(640px, 100%); max-height: 60vh; overflow: auto; padding: 6px 16px 8px; background: var(--bg-raise, var(--bg)); border: 1px solid var(--rule); border-radius: var(--r-md); box-shadow: var(--shadow); }
 .hm-you .hm-turn:last-child { border-bottom: 0; }
 /* A desk's moving threads, a line each under its notes. */
@@ -590,7 +595,7 @@ function draw(j) {
   // Friends only once there is one, or one removed to bring back.
   const anyFriend = !!(peers?.friends || []).length, fr = friendsOf();
   // Seven blocks, none that comes and goes above another (audit 67d008cb6f):
-  // Your turn is a sheet from the status line, a thread is a line on its
+  // On you is a sheet from the status line, a thread is a line on its
   // desk, the update card is under the foot, and keys are the desks' own.
   const side = arrived(j) + w("claude", "Claude", claude(j)) +
     (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "");
@@ -642,16 +647,22 @@ function status(j) {
   if (j.desks) {
     const asking = [];
     for (const d of j.desks) for (const p of d.panes) if (p.blocked || p.agent === "needs_you") asking.push([d, p]);
-    const on = (j.turns || []).length;
+    // Only what is fresh counts, and in amber: an older turn -- its panel
+    // closed, asked over half an hour ago, or its panel prompted since --
+    // is said apart, in the line's own ink (src/thread.rs `mark_stale`). Six
+    // turns days old read "6 things are on you" in amber, while every desk's
+    // pill called them older (audit e0a854b732, X2).
+    const ts = (j.turns || []).filter(w => !putHere.has(w.id)), on = ts.filter(w => !w.stale).length, old = ts.length - on;
     if (asking.length) {
       ring = true;
       const [d, p] = asking[0];
       bits.push(`<a class="hm-ring" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${esc(d.name)} · ${esc(p.name || `panel ${p.slot}`)} needs you${asking.length > 1 ? `, and ${asking.length - 1} more` : ""}</a>`);
     }
-    // Your turn opens over the page from here, so its coming moves nothing
-    // (audit 67d008cb6f): the same sheet as a desk's "On you" corner.
+    // On you opens over the page from here, so its coming moves nothing
+    // (audit 67d008cb6f): the same sheet as a desk's corner.
     if (on) bits.push(`<button type="button" class="hm-onyou" data-hm="turns" aria-haspopup="dialog" aria-expanded="${turnsOpen}">${on === 1 ? "One thing is" : `${on} things are`} on you ›</button>`);
     if (!asking.length && !on) bits.push("Nothing needs you");
+    if (!on && old) bits.push(`<button type="button" class="hm-onyou old" data-hm="turns" aria-haspopup="dialog" aria-expanded="${turnsOpen}" data-tip="Older" data-tip-sub="Panels since closed, or asked over half an hour ago. They go by themselves after three days, and can come back">${old} older ›</button>`);
   }
   bits.push(j.waiting ? `<a href="/inbox" data-nav="inbox">${j.waiting} waiting</a>` : bits.length ? "nothing waiting" : "Nothing waiting");
   if (j.desks) {
@@ -664,7 +675,7 @@ function status(j) {
   return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.join(" · ")}</p>`;
 }
 
-/* ---------- Your turn and Threads (#90) ----------
+/* ---------- On you and Threads (#90) ----------
  *
  * What agents filed on the desks (src/thread.rs): what only the reader can
  * do, across every desk, answered here; and the threads by stage. The answer
@@ -673,14 +684,20 @@ function status(j) {
 
 /** Answers given here, kept in their row for SAID_MS: id -> { desk, text, answer, err }. */
 const answeredHere = new Map();
+/** Turns put away here, their Undo in the row for SAID_MS: id -> { desk, text, err }.
+ *  Home could answer but not tidy: a key asked four days ago could only be
+ *  cleared from its own desk (X3). */
+const putHere = new Map();
+/** Whether the sheet's older turns are unfolded. */
+let olderOpen = false;
 const TURN_ANSWERS = { try: ["Looks good"], merge: ["Merged"], key: ["Added"] };
 
-/** Whether Your turn's sheet is open: the status line's button opens it,
+/** Whether On you's sheet is open: the status line's button opens it,
  *  Esc, a click outside it or its last answer closes it. */
 let turnsOpen = false;
 function onYou(j) {
-  const { esc } = c, turns = (j.turns || []).filter(w => !answeredHere.has(w.id));
-  if (!turns.length && !answeredHere.size) turnsOpen = false;
+  const { esc } = c, turns = (j.turns || []).filter(w => !answeredHere.has(w.id) && !putHere.has(w.id));
+  if (!turns.length && !answeredHere.size && !putHere.size) turnsOpen = false;
   if (!turnsOpen) return "";
   const name = id => j.desks?.find(d => d.id === id)?.name || "a desk";
   const slot = (desk, pane) => j.desks?.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot;
@@ -701,13 +718,53 @@ function onYou(j) {
     return `<li class="hm-turn"><span class="hm-pw"><span class="hm-t hm-tq" data-tip="${esc(w.text)}" data-tip-overflow>${esc(w.text)}</span>` +
       (w.kind === "run" ? `<code class="hm-t hm-cmd">${esc(w.cmd)}</code>` : "") +
       `<span class="hm-t"><a class="hm-pn" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""}>${esc(name(w.desk_id))}</a>${n ? ` · panel ${n}` : ""} · ${esc(w.kind)}${ofGroup(w)}</span></span>` +
-      `<span class="hm-tacts">${opts.map((o, i) => `<button type="button" class="hm-opt${i === w.recommended ? " rec" : ""}" data-hm="answer" data-k="${w.id}" data-d="${w.desk_id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
-      (more ? `<a class="hm-link" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""} data-tip="${esc(more)}" data-tip-sub="${w.kind === "run" ? `Run types it into ${n ? `panel ${n}` : "the panel that asked"}, on its desk` : "answer in your own words on the desk"}">${esc(more)}</a>` : "") + `</span></li>`;
+      `<span class="hm-tacts">${opts.map((o, i) => `<button type="button" class="hm-opt${i === w.recommended ? " rec" : ""}" data-hm="answer" data-k="${w.id}" data-d="${w.desk_id}" data-v="${esc(o)}"${i === w.recommended ? ` aria-label="${esc(o)}, recommended" data-tip="Recommended"><span class="hm-star" aria-hidden="true">★</span>` : ">"}${esc(o)}</button>`).join("")}` +
+      (more ? `<a class="hm-link" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""} data-tip="${esc(more)}" data-tip-sub="${w.kind === "run" ? `Run types it into ${n ? `panel ${n}` : "the panel that asked"}, on its desk` : "answer in your own words on the desk"}">${esc(more)}</a>` : "") +
+      (/^https?:\/\//.test(w.link || "") ? `<a class="hm-link" href="${esc(w.link)}" target="_blank" rel="noopener" data-tip="${esc(w.link)}">Open ↗</a>` : "") +
+      `<button type="button" class="hm-tx" data-hm="tx" data-k="${w.id}" data-d="${w.desk_id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">✕</button></span></li>`;
   };
   const said = [...answeredHere].map(([, a]) => `<li class="hm-turn said"><span class="hm-pw"><span class="hm-t hm-tq">${esc(a.text)}</span>` +
     `<span class="hm-t">${a.err ? esc(a.err) : `You said <b>${esc(a.answer)}</b> · it goes with your next message on ${esc(name(a.desk))}`}</span></span></li>`).join("");
-  return `<section class="hm-you" role="dialog" data-part="home.turns" aria-label="Your turn, across desks"><div class="hm-wh"><h2>Your turn · across desks</h2></div>` +
-    `<ul class="hm-list">${turns.map(row).join("")}${said}</ul></section>`;
+  const put = [...putHere].map(([id, a]) => `<li class="hm-turn said"><span class="hm-pw"><span class="hm-t hm-tq">${esc(a.text)}</span>` +
+    `<span class="hm-t">${a.err ? esc(a.err) : "Not now"}</span></span><span class="hm-tacts"><button type="button" class="hm-opt" data-hm="tback" data-k="${id}" data-d="${a.desk}">Undo</button></span></li>`).join("");
+  // What is fresh first; the older ones folded under a line of their own,
+  // or open when there is nothing fresh above them, as on a desk.
+  const fresh = turns.filter(w => !w.stale), old = turns.filter(w => w.stale);
+  const fold = !old.length ? "" : !fresh.length ? old.map(row).join("")
+    : `<li class="hm-told"><button type="button" class="hm-link" data-hm="told" aria-expanded="${olderOpen}">${old.length} older</button></li>` + (olderOpen ? old.map(row).join("") : "");
+  return `<section class="hm-you" role="dialog" data-part="home.turns" aria-label="On you, across desks"><div class="hm-wh"><h2>On you · across desks</h2></div>` +
+    `<ul class="hm-list">${put}${fresh.map(row).join("")}${said}${fold}</ul></section>`;
+}
+
+/** Not now, from Home: the turn put away on its desk, its Undo in the row. */
+async function putTurn(id, desk) {
+  const w = (last?.turns || []).find(x => x.id === id);
+  if (!w) return;
+  const rec = { desk, text: w.text, err: "" };
+  putHere.set(id, rec);
+  draw(last);
+  try { await c.deskApi(`/api/desks/${desk}/turns/${id}/remove`, {}); }
+  catch { rec.err = "Could not put it away; try again on the desk"; }
+  setTimeout(() => { if (putHere.get(id) === rec) { putHere.delete(id); if (last && c.view() === "home") draw(last); } }, SAID_MS);
+  if (last && c.view() === "home") draw(last);
+  soonRefresh();
+}
+
+/** On you's buttons on Home, by `data-hm`: answer, Not now, its Undo, and
+ *  the older ones' fold. */
+const TURN_KEYS = {
+  answer: (id, desk, v) => answerTurn(id, desk, v),
+  tx: (id, desk) => putTurn(id, desk),
+  tback: (id, desk) => backTurn(id, desk),
+  told: () => { olderOpen = !olderOpen; draw(last); },
+};
+
+/** Its Undo: back on its desk, and back in the list. */
+async function backTurn(id, desk) {
+  putHere.delete(id);
+  draw(last);
+  try { await c.deskApi(`/api/desks/${desk}/turns/${id}/restore`, {}); } catch {}
+  soonRefresh();
 }
 
 /** A thread a panel is moving: not shipped. One no panel is moving --
@@ -1390,7 +1447,7 @@ async function park(id, next) {
   return true;
 }
 
-/** Esc closes Your turn and puts the hand back on what opened it. */
+/** Esc closes On you and puts the hand back on what opened it. */
 function turnsKeys(el) {
   el.addEventListener("keydown", e => {
     if (e.key !== "Escape" || !turnsOpen) return;
@@ -1405,7 +1462,7 @@ function wire() {
   if (!el || el.dataset.wired) return;
   el.dataset.wired = "1";
   el.addEventListener("click", async e => {
-    // A click anywhere else closes an Add to a desk… list, or Your turn.
+    // A click anywhere else closes an Add to a desk… list, or On you.
     if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }
     if (turnsOpen && !e.target.closest(".hm-st")) { turnsOpen = false; draw(last); }
     const g = e.target.closest("button[data-gs]");
@@ -1422,7 +1479,7 @@ function wire() {
     else if (k === "keep") { keep(kept() === id ? 0 : id); draw(last); c.docEl.querySelector("[data-hm=keep]")?.focus({ preventScroll: true }); }
     else if (k === "week") sendWeek(b);
     else if (k === "tick") tickNote(id, +b.dataset.n);
-    else if (k === "answer") answerTurn(id, +b.dataset.d, b.dataset.v);
+    else if (TURN_KEYS[k]) TURN_KEYS[k](id, +b.dataset.d, b.dataset.v);
     // A card's +: its desk on the chip, and the hand in the bar, which is in
     // view wherever the page is; the bar lights for a moment to say where.
     else if (k === "addopen") { barTo = id; menu = null; draw(last); focusBar(); lit(); }

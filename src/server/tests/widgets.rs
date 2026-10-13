@@ -1,0 +1,143 @@
+//! A widget's card says what Add allows, the token cannot widen what the
+//! reader allowed, and a no holds on the CLI too (1.36).
+
+use super::*;
+use crate::widget;
+
+/// What a request answered, its body read whatever its status.
+async fn said(
+    router: &Router,
+    path: &str,
+    body: &str,
+    headers: &[(&str, &str)],
+) -> (StatusCode, String) {
+    let mut req = axum::http::Request::builder().method("POST").uri(path);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    let req = req
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Add allows the folder the card showed and nothing else: an agent that
+/// edits its proposal after the card is up -- it has a shell as the reader
+/// -- gets nothing allowed, and is asked to propose it again.
+#[tokio::test]
+async fn add_allows_only_what_the_card_showed() {
+    let (_tmp, app, _router, _leaves) = gated_app_with("snyvi-widget-card", |_| {});
+    let desk = app
+        .store
+        .create_desk("/tmp/cardwatch", Some("cardwatch"))
+        .unwrap()
+        .id;
+    let stage = widget::files::dir(&app.paths.config_dir)
+        .join(".proposed")
+        .join("100-ci");
+    std::fs::create_dir_all(&stage).unwrap();
+    std::fs::write(
+        stage.join("widget.json"),
+        r#"{"name":"ci","scope":"desk","run":{"command":"sh \"$SNYVI_WIDGET_DIR/run.sh\""}}"#,
+    )
+    .unwrap();
+    std::fs::write(stage.join("run.sh"), "echo shown").unwrap();
+    let card = crate::thread::Suggestion {
+        desk_id: desk,
+        kind: "widget".into(),
+        name: "ci".into(),
+        folder: stage.to_string_lossy().into(),
+        detail: serde_json::json!({ "where": "here", "hash": widget::files::hash(&stage).unwrap() }),
+        ..Default::default()
+    };
+    let lasts = super::super::api_widget::Lasts::default();
+    std::fs::write(stage.join("run.sh"), "echo swapped").unwrap();
+    let why = super::super::api_widget::install_proposed(&app, &card, &lasts).unwrap_err();
+    assert!(why.contains("changed after it was proposed"), "{why}");
+    assert!(stage.is_dir(), "nothing moved in");
+    // A card from before 1.36 kept no hash: asked again too.
+    let old = crate::thread::Suggestion {
+        detail: serde_json::json!({ "where": "here" }),
+        ..card.clone()
+    };
+    assert!(super::super::api_widget::install_proposed(&app, &old, &lasts).is_err());
+    // As shown: added, this desk's own, allowed as it is.
+    std::fs::write(stage.join("run.sh"), "echo shown").unwrap();
+    super::super::api_widget::install_proposed(&app, &card, &lasts).unwrap();
+    let own = widget::files::folder_of(&app.paths.config_dir, desk, "ci");
+    let p = app
+        .store
+        .clocked(|c, _| widget::prefs(c, desk, "ci"))
+        .unwrap();
+    assert_eq!(p.trusted_hash, widget::files::hash(&own).unwrap());
+}
+
+/// The token turns a widget off, as any reader may; widening it -- on
+/// again, shared, more desks, longer, other settings -- is the window's.
+#[tokio::test]
+async fn the_token_turns_a_widget_off_and_widens_nothing() {
+    let (_tmp, router, l) = gated_router("snyvi-widget-widen");
+    let agent = [
+        ("host", l.host.as_str()),
+        ("authorization", l.bearer.as_str()),
+    ];
+    let window = [
+        ("host", l.host.as_str()),
+        ("origin", l.origin.as_str()),
+        ("x-snyvi-capability", l.cap.as_str()),
+    ];
+    let path = "/api/widgets/git/prefs";
+    for body in [
+        r#"{"owner":7,"share":true}"#,
+        r#"{"owner":0,"desks":[]}"#,
+        r#"{"owner":0,"hidden":false}"#,
+        r#"{"owner":0,"until":0}"#,
+        r#"{"owner":0,"settings":{"base":"x"}}"#,
+        r#"{"owner":0,"ask_again":1}"#,
+    ] {
+        let (code, _) = said(&router, path, body, &agent).await;
+        assert_eq!(code, StatusCode::FORBIDDEN, "the token widened: {body}");
+        let (code, _) = said(&router, path, body, &window).await;
+        assert_ne!(code, StatusCode::FORBIDDEN, "the window may: {body}");
+    }
+    let (code, _) = said(&router, path, r#"{"owner":0,"hidden":true}"#, &agent).await;
+    assert_ne!(code, StatusCode::FORBIDDEN, "off is anyone's");
+}
+
+/// A box the reader said Not now to on a desk is refused there to the
+/// token as to a panel -- `snyvi widget set --desk` from a panel's shell
+/// is no way round it -- and comes back only when they take the no back.
+#[tokio::test]
+async fn a_no_holds_on_the_cli_until_the_reader_takes_it_back() {
+    let (_tmp, app, router, l) = gated_app_with("snyvi-widget-no", |_| {});
+    let desk = app
+        .store
+        .create_desk("/tmp/nohold", Some("nohold"))
+        .unwrap()
+        .id;
+    app.store
+        .clocked(|c, now| {
+            widget::ask_wait(c, desk, "deploy", "p1", "panel 1", "x", now)?;
+            widget::ask_answer(c, desk, "deploy", "no", 0, "", now).map(|_| ())
+        })
+        .unwrap();
+    let agent = [
+        ("host", l.host.as_str()),
+        ("authorization", l.bearer.as_str()),
+    ];
+    let push = |body: &str| format!(r#"{{"name":"deploy","desk":{desk},"body":"{body}"}}"#);
+    let (code, why) = said(&router, "/api/widgets", &push("**3/5**"), &agent).await;
+    assert_eq!(code, StatusCode::CONFLICT, "{why}");
+    assert!(why.contains("not now"), "{why}");
+    let (code, _) = said(&router, "/api/widgets", &push(""), &agent).await;
+    assert!(code.is_success(), "clearing is still anyone's");
+    app.store
+        .clocked(|c, now| widget::ask_again(c, desk, "deploy", now))
+        .unwrap();
+    let (code, _) = said(&router, "/api/widgets", &push("**3/5**"), &agent).await;
+    assert!(code.is_success(), "taken back: a script's push goes in");
+}
