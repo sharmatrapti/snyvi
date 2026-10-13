@@ -215,7 +215,7 @@ function rail() {
       countTip: blocked ? `${ctx.plural(blocked, "panel")} ${blocked === 1 ? "needs" : "need"} you` : "",
     }, `<ul class="dk-panes">` + vs.map(paneRow).join("") + (closedRow && closedRow.desk === d.id
       ? `<li class="dk-note gone" role="status"><span class="nm">${esc(closedRow.name)} · ${closedRow.said || "Closed"}</span><button type="button" class="dk-undo" data-a="pane-back" data-p="${closedRow.id}">Undo</button></li>` + errLine("closed", esc) : "") + `</ul>` +
-    `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && gsOn() && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
+    `<div class="dk-foot"><button type="button" class="dk-new${why ? ` dim" aria-disabled="true" aria-describedby="dk-new-why" data-tip="New panel" data-tip-sub="${esc(why)}` : ""}" data-a="new">+ New panel</button>${!why && !d.panes.length ? "" : !why && j.desks.length === 1 && !fresh ? `<span class="dk-why">any agent, or a shell</span>` : ""}${why ? `<span id="dk-new-why" class="vh">${esc(why)}</span>` : ""}` +
     (stopped > 1 ? `<button type="button" class="dk-new" data-a="all" data-tip="Start all" data-tip-sub="Every stopped panel, again">Start all</button>` : "") + `</div>`),
     points: () => pointSec(vs),
     // The documents. The count is how many, in the accent while some wait
@@ -278,11 +278,6 @@ function pageChips(vs, dl) {
     a.textContent = say;
   }
 }
-
-/** Still in the first run: Getting started (about.js `started`, R11) not
- *  yet put away on Home. The card itself is Home's alone; on a desk the
- *  panel's own card says what to do, and the rail stays the desk's. */
-const gsOn = () => { try { return localStorage.getItem("snyvi.own.gs") !== '"done"'; } catch { return false; } };
 
 /* The rail folded on a desk is a strip, 44 px, as the sidebar folds to its
  * rail (#101): each section's mark and the count that matters while it is

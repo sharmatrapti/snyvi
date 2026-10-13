@@ -3561,7 +3561,7 @@ async function panelRows(cdp, base, token) {
 
     // #115: pinned, the tray stays open while the reader works elsewhere --
     // a click on the desk, an Esc there -- and is pinned again on the next
-    // visit; the pill closes it, and unpins.
+    // visit; its head's ✕ closes it, and unpins.
     if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#onyou .oy-pill");
     const trayUp = await until(`!!document.querySelector('#onyou .oy-tray [data-a="oy-pin"]')`, 20);
     if (trayUp) await q.clickOn('#onyou .oy-tray [data-a="oy-pin"]');
@@ -3571,12 +3571,12 @@ async function panelRows(cdp, base, token) {
     await sleep(300);
     const pinHeld = pinOn && await q.ev(`!!document.querySelector('#onyou .oy-tray')`);
     const pinKept = await q.ev(`(() => { try { return JSON.parse(localStorage.getItem("snyvi.onyou.pin") || "[]").length === 1; } catch { return false; } })()`);
-    if (pinHeld) await q.clickOn("#onyou .oy-pill");
+    if (pinHeld) await q.clickOn("#onyou .oy-tray .oy-x");
     const pinOff = pinHeld && await until(`!document.querySelector('#onyou .oy-tray')`, 20)
       && await q.ev(`JSON.parse(localStorage.getItem("snyvi.onyou.pin") || "[]").length === 0`);
-    rows.push(["a pinned tray stays open through a click and an Esc on the desk; the pill closes it and unpins",
+    rows.push(["a pinned tray stays open through a click and an Esc on the desk; its ✕ closes it and unpins",
       pinHeld && pinKept && pinOff,
-      !trayUp ? "no tray with a pin" : !pinOn ? "the pin did not press" : !pinHeld ? "the tray closed under the pin" : !pinKept ? "the pin was not remembered" : !pinOff ? "the pill left it open, or pinned" : "held open, remembered, then closed and unpinned"]);
+      !trayUp ? "no tray with a pin" : !pinOn ? "the pin did not press" : !pinHeld ? "the tray closed under the pin" : !pinKept ? "the pin was not remembered" : !pinOff ? "the ✕ left it open, or pinned" : "held open, remembered, then closed and unpinned"]);
 
     // #118: with nothing fresh, the pill says "N older", and its tray opens
     // onto them -- not onto one more "N older" to press in an empty box. An

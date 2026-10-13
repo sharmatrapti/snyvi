@@ -182,8 +182,6 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                 "visited_at": d.visited_at, "parked": d.parked, "touched": touched,
                 "panes": panes, "open": open, "done": notes_done, "suggested": suggested, "next": next,
                 "last": last, "git": git.as_deref(), "pulse": pulse,
-                // Getting started's "Its first document" (ui/about.js `started`).
-                "has_doc": last_doc.is_some(),
                 // By name, for Home's Keys widget; never a value.
                 "keys": d.keys,
             })
