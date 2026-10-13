@@ -86,6 +86,9 @@ struct Event {
     error: Str,
     /// Stop: the text of the reply that just ended the turn.
     last_assistant_message: Str,
+    /// Every event: the session's transcript, which Stop reads back to the
+    /// reader's last prompt for a `send_document` (`sent_this_turn`).
+    transcript_path: Str,
     /// Stop: true when Claude Code is already going on because a Stop hook
     /// asked it to. Taken as any value, so a shape nobody expected is only
     /// this field missing.
@@ -464,6 +467,11 @@ fn prompt_output(event: &Event, context: &str, title: &str, desk: &str) -> Optio
 /// to look at, and that goes to snyvi, not to a Run that opens a browser
 /// beside it (#153: a page of clips was left as `! xdg-open`, and once
 /// nudged to hand it over the agent opened it in the browser itself).
+///
+/// And when the reply is a document (`document_shaped`) and the turn sent
+/// nothing to snyvi (`sent_this_turn`): the instructions say to send one, and
+/// a long turn forgets them -- three replies with Mermaid and tables stayed in
+/// the chat in one session. Both words in one message when both apply.
 fn stop_output(event: &Event) -> Option<String> {
     if event.stop_hook_active.as_ref().and_then(Value::as_bool) == Some(true)
         || !event
@@ -473,8 +481,8 @@ fn stop_output(event: &Event) -> Option<String> {
     {
         return None;
     }
-    let cmd = bang_line(event.last_assistant_message.get()?)?;
-    let context = match opened_file(cmd) {
+    let reply = event.last_assistant_message.get()?;
+    let bang = bang_line(reply).map(|cmd| match opened_file(cmd) {
         Some(file) => format!(
             "Your reply asks the user to open `{file}` themselves (`! {cmd}`). In a snyvi panel \
              a page, a picture, a clip or a document for them to look at goes to snyvi: send it \
@@ -489,11 +497,125 @@ fn stop_output(event: &Event) -> Option<String> {
              set to that command, so they can press Run, then end your turn. If you already \
              handed it over, end your turn without repeating it."
         ),
-    };
+    });
+    let doc = (document_shaped(reply) && !event.transcript_path.get().is_some_and(sent_this_turn))
+        .then_some(
+            "Your reply is a document -- a Mermaid diagram, tables, sections -- and nothing went \
+         to snyvi this turn. In a snyvi panel a document goes to snyvi: send it with \
+         send_document (Markdown; Mermaid is drawn), then say in a line that it is waiting in \
+         snyvi. If you already sent it, end your turn without repeating it.",
+        );
+    let context = [bang.as_deref(), doc]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(
+            "
+
+",
+        );
+    if context.is_empty() {
+        return None;
+    }
     Some(
         json!({ "hookSpecificOutput": { "hookEventName": "Stop", "additionalContext": context } })
             .to_string(),
     )
+}
+
+/// How long a reply with headings is before it is a document on its length
+/// alone: a page, not an answer.
+const DOC_CHARS: usize = 2500;
+
+/// Whether a reply is a document left in the chat: a Mermaid diagram, which
+/// only snyvi draws; sections with a table; or sections at a page's length.
+/// An answer, a code block, a list of what changed, is not.
+fn document_shaped(reply: &str) -> bool {
+    let lines = || reply.lines().map(str::trim_start);
+    let mut fenced = false;
+    let (mut heads, mut table) = (0, false);
+    for l in lines() {
+        if l.starts_with("```") {
+            if !fenced
+                && l.trim_start_matches('`')
+                    .trim()
+                    .eq_ignore_ascii_case("mermaid")
+            {
+                return true;
+            }
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        if l.starts_with("## ") || l.starts_with("# ") || l.starts_with("### ") {
+            heads += 1;
+        }
+        if l.starts_with('|') && l.contains("---") {
+            table = true;
+        }
+    }
+    heads >= 2 && (table || reply.chars().count() >= DOC_CHARS)
+}
+
+/// How much of a transcript's end is read back for this turn: a turn's tool
+/// calls, not a day's conversation.
+const TURN_TAIL: u64 = 4 << 20;
+
+/// Whether the agent called `send_document` since the reader's last prompt,
+/// read back from the end of the session's transcript (JSON lines). A tool's
+/// result comes back as a `user` line too, and a hook's context as a meta
+/// one; only a line the reader typed ends the turn. A transcript that cannot
+/// be read is a turn that sent nothing: the word to send says to end the
+/// turn if it already went.
+fn sent_this_turn(path: &str) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    // From a byte offset, which may fall inside a character: lossily, and
+    // the line it cut is skipped as not JSON.
+    let mut bytes = Vec::new();
+    if f.seek(SeekFrom::Start(len.saturating_sub(TURN_TAIL)))
+        .is_err()
+        || f.read_to_end(&mut bytes).is_err()
+    {
+        return false;
+    }
+    for line in String::from_utf8_lossy(&bytes).lines().rev() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let content = &v["message"]["content"];
+        match v["type"].as_str() {
+            Some("assistant") => {
+                let sent = content.as_array().is_some_and(|c| {
+                    c.iter().any(|b| {
+                        b["type"] == "tool_use"
+                            && b["name"]
+                                .as_str()
+                                .is_some_and(|n| n.ends_with("send_document"))
+                    })
+                });
+                if sent {
+                    return true;
+                }
+            }
+            Some("user") if v["isMeta"] != true => {
+                let typed = content.is_string()
+                    || content
+                        .as_array()
+                        .is_some_and(|c| c.iter().any(|b| b["type"] == "text"));
+                if typed {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// A `! command` for the reader to type, as Claude Code's shell mode takes
@@ -1594,6 +1716,145 @@ mod tests {
         let codex = event(json!({ "hook_event_name": "Stop", "session_id": "codex-1",
             "last_assistant_message": reply }));
         assert!(stop_output(&codex).is_none());
+    }
+
+    /// A reply that is a document -- Mermaid, or sections with a table or at a
+    /// page's length -- is sent back to go to snyvi, unless the turn already
+    /// sent one; an answer is left alone, and a reply that also leaves a
+    /// `! command` gets both words at once.
+    #[test]
+    fn a_document_left_in_the_chat_is_sent_back_to_snyvi() {
+        let sid = "0a1b2c3d-4e5f-4061-8728-394a5b6c7d8e";
+        let dir = crate::store::tempdir::Dir::new("snyvi-stop-doc");
+        let transcript = |name: &str, lines: &[Value]| {
+            let p = dir.path.join(name);
+            let body: Vec<String> = lines.iter().map(Value::to_string).collect();
+            std::fs::write(
+                &p,
+                body.join(
+                    "
+",
+                ),
+            )
+            .unwrap();
+            p.to_string_lossy().to_string()
+        };
+        let typed =
+            |t: &str| json!({ "type": "user", "message": { "role": "user", "content": t } });
+        let tool = |name: &str| {
+            json!({ "type": "assistant", "message": { "content": [
+            { "type": "tool_use", "name": name, "input": {} } ] } })
+        };
+        let result = json!({ "type": "user", "message": { "content": [ { "type": "tool_result", "content": "ok" } ] } });
+        let meta = json!({ "type": "user", "isMeta": true, "message": { "content": [ { "type": "text", "text": "reminder" } ] } });
+        let stop = |msg: &str, path: &str| {
+            event(json!({ "hook_event_name": "Stop", "session_id": sid,
+                "last_assistant_message": msg, "transcript_path": path, "stop_hook_active": false }))
+        };
+        let said = |msg: &str, path: &str| -> Option<String> {
+            let out: Value = serde_json::from_str(&stop_output(&stop(msg, path))?).unwrap();
+            Some(
+                out["hookSpecificOutput"]["additionalContext"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            )
+        };
+
+        let mermaid = "Found it.
+
+```mermaid
+flowchart LR
+  A --> B
+```
+
+That is why.";
+        let tables = "## Why
+
+Because.
+
+| a | b |
+|---|---|
+| 1 | 2 |
+
+## Fix
+
+This.";
+        let none = transcript(
+            "none.jsonl",
+            &[typed("check this"), tool("Bash"), result.clone()],
+        );
+        for doc in [mermaid, tables] {
+            let s = said(doc, &none).expect(doc);
+            assert!(s.contains("send it with send_document"), "{s}");
+        }
+        assert!(document_shaped(&format!(
+            "# One
+
+## Two
+
+{}",
+            "word ".repeat(DOC_CHARS / 5)
+        )));
+
+        // Sent this turn, with tool results and a hook's word after it: quiet.
+        let sent = transcript(
+            "sent.jsonl",
+            &[
+                typed("check this"),
+                tool("mcp__snyvi__send_document"),
+                result.clone(),
+                meta.clone(),
+            ],
+        );
+        assert_eq!(said(mermaid, &sent), None);
+        // Sent last turn, not this one: the reader's prompt ends the look back.
+        let before = transcript(
+            "before.jsonl",
+            &[
+                tool("mcp__snyvi__send_document"),
+                result,
+                typed("and this?"),
+                meta,
+            ],
+        );
+        assert!(said(mermaid, &before).is_some());
+        // No transcript is a turn that sent nothing.
+        assert!(said(mermaid, "/nowhere/t.jsonl").is_some());
+
+        // An answer, code, a list of changes: not documents.
+        for answer in [
+            "Done. 447 tests pass.",
+            "## Changed
+
+- one
+- two",
+            "```rust
+fn main() {}
+```",
+            "```
+## not a head
+| x |---|
+## nor this
+```",
+        ] {
+            assert_eq!(said(answer, &none), None, "{answer}");
+        }
+
+        // Both at once.
+        let s = said(
+            &format!(
+                "{mermaid}
+
+! cargo test"
+            ),
+            &none,
+        )
+        .unwrap();
+        assert!(
+            s.contains("hand_over with kind run") && s.contains("send_document"),
+            "{s}"
+        );
     }
 
     /// A resume or a fork is handed this binary's rules ahead of the brief,
