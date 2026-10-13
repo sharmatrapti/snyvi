@@ -203,6 +203,8 @@ const CSS = `
 .hm-stage.planned:hover { color: var(--accent); }
 .hm-stage svg { width: 10px; height: 10px; }
 .hm-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.hm-stage.landed::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.hm-stage.reopened::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 .hm-stage.working.busy::before { animation: hm-breathe calc(var(--dur-moment) * 2) ease-in-out infinite; }
 @keyframes hm-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .hm-stage.working::before { animation: none; } }
@@ -880,7 +882,7 @@ function notesOf(d, max) {
   if (!rows.length) return d.done ? `<p class="hm-s hm-done">Notes done · ${d.done} of ${d.done}</p>` : "";
   return `<ul class="hm-next" aria-label="Open notes on ${esc(d.name)}">` + rows.map(r =>
     `<li class="hm-nt${r.done ? " done" : ""}"><button type="button" class="hm-tick" role="checkbox" aria-checked="${r.done}" data-hm="tick" data-k="${d.id}" data-n="${r.id}" aria-label="${r.done ? "Done" : "Not done"}: ${esc(r.text)}">${r.done ? TICK : ""}</button>${stageMark(r)}` +
-    `<span class="hm-nt-t" data-tip="${esc(r.text)}" data-tip-overflow>${esc(r.text)}</span>${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
+    `<span class="hm-nt-t" data-tip="${esc(r.text)}"${r.reply ? ` data-tip-sub="${esc(`${r.reply_by || "you"}: ${r.reply}`)}"` : " data-tip-overflow"}>${esc(r.text)}</span>${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
     (more > 0 ? `<li class="hm-s hm-nt-more"><a href="/desk/${d.id}" data-desk="${d.id}">and ${more} more</a></li>` : "") + `</ul>`;
 }
 /** A line's stage, in the slot every line keeps: the server has already
@@ -888,6 +890,11 @@ function notesOf(d, max) {
 function stageMark(r) {
   const { esc } = c, by = esc(r.stage_by || "an agent");
   const st = r.done ? "" : r.stage || "";
+  // Out on main by a commit that names it, waiting for the reader's check
+  // on its desk; or reopened, the reader having said it is still broken.
+  if (!r.done && r.landed_commit)
+    return `<span class="hm-stage landed" role="img" data-tip="Shipped in ${esc(r.landed_commit.slice(0, 7))}" data-tip-sub="check it on its desk: works, or not yet" aria-label="Shipped, waiting for your check"></span>`;
+  if (st === "reopened") return `<span class="hm-stage reopened" role="img" data-tip="Reopened" data-tip-sub="you said it is still broken" aria-label="Reopened"></span>`;
   if (st === "planned" && r.stage_doc)
     return `<a class="hm-stage planned" href="/d/${esc(r.stage_doc)}" data-id="${esc(r.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(r.text)}">${DOC}</a>`;
   if (st === "working") {

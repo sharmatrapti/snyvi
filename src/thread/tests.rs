@@ -7,6 +7,7 @@ fn db() -> Connection {
     conn.execute_batch(crate::desk::POS_COLUMN).unwrap();
     conn.execute_batch(crate::desk::HELD_COLUMN).unwrap();
     conn.execute_batch(crate::desk::SENT_BY_COLUMN).unwrap();
+    conn.execute_batch(crate::desk::LOOP_COLUMNS_1_37).unwrap();
     conn.execute_batch(THREAD_COLUMN).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     conn.execute_batch(CMD_COLUMN).unwrap();

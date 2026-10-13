@@ -589,7 +589,8 @@ function noteRow(x, esc) {
   // A line is two lines at most; the whole of it is its tip, and rewriting
   // it opens a card over the list, as tall as the text, while the row keeps
   // its own two lines underneath: nothing below it moves either way.
-  const editing = noteField && noteField.kind === "edit" && noteField.id === x.id;
+  const editing = noteField && (noteField.kind === "edit" || noteField.kind === "broken") && noteField.id === x.id;
+  const broken = editing && noteField.kind === "broken";
   // On the left the circle, on the text's first line. Under the text, one
   // quiet line: the line's number -- the one the reader and the agents call
   // it by, so a click copies it, ready to paste into a panel -- and its small
@@ -610,13 +611,14 @@ function noteRow(x, esc) {
     `<button type="button" class="nm" data-a="note-edit" data-n="${x.id}" data-tip="${esc(x.text)}" data-tip-sub="${esc([...about, "click to rewrite"].join(" · "))}"${about.length ? "" : " data-tip-overflow"}><span class="nm-t" data-tip-cut>${esc(x.text)}</span></button>` +
     `<span class="dk-tail">` +
     `<span class="dk-tools"><button type="button" data-a="note-x" data-n="${x.id}" data-tip="Take it off the list" data-tip-sub="nothing is deleted" aria-label="Take ${esc(x.text)} off the list">${ico("x")}</button></span></span>` +
+    replyLine(x, esc) +
     `<span class="dk-meta"><button type="button" class="dk-num" data-a="note-num" data-c="#${x.id}" data-tip="Copy #${x.id}" data-tip-sub="to tell a panel which note" aria-label="Copy note number ${x.id}">#${x.id}</button>` +
     `<span class="dk-marks">${marks}</span></span>` +
     // A friend's open line says whose it is, on a line of its own; ticked,
     // its "Tell Trapti ✓" is one of the marks above.
     // Their initial, in their colour, as everywhere a friend shows (#123).
     (!x.done && x.sent_by ? `<span class="dk-by">${ctx.who(x.sent_by)}<span>from ${esc(x.sent_by)}</span></span>` : "") +
-    (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="This note" spellcheck="false"></textarea>${noteSays(esc)}` : "") +
+    (editing ? `<textarea class="dk-note-in dk-note-over" rows="1" aria-label="${broken ? "What is still wrong" : "This note"}"${broken ? ` placeholder="What is still wrong? Enter reopens it"` : ""} spellcheck="false"></textarea>${noteSays(esc)}` : "") +
     `</li>` + errLine(`n${x.id}`, esc);
 }
 
@@ -663,11 +665,16 @@ function stageMark(x, esc) {
   // by git (thread.rs `landed`) -- or the thread says shipped, and the line
   // not ticked: the work is out and waits on the reader's check (#112).
   // Over "working" too, which would read as if it were not out.
+  // Its check is on the line itself, in the marks' own room (1.37): Works
+  // ticks it as yours, Not yet... opens a field for what is still wrong and
+  // reopens it. A tick from the circle still works as it always did.
   const sh = !x.done ? shippedOf(x) : null;
   if (sh) {
-    const pr = sh.pr ? ` in PR #${esc(sh.pr)}` : "";
-    return `<span class="dk-stage shipped" role="img" data-tip="Shipped${pr}" data-tip-sub="tick it once you have checked it" aria-label="Shipped${pr}, waiting for your check"><span class="w">check it</span></span>`;
+    const where = sh.commit ? ` in ${esc(sh.commit.slice(0, 7))}` : sh.pr ? ` in PR #${esc(sh.pr)}` : "";
+    return `<button type="button" class="dk-stage dk-chk ok" data-a="note-works" data-n="${x.id}" data-tip="Shipped${where}: it works" data-tip-sub="ticks it as yours" aria-label="It works: ${esc(x.text)}">✓ works</button>` +
+      `<button type="button" class="dk-stage dk-chk" data-a="note-broken" data-n="${x.id}" data-tip="Not yet" data-tip-sub="say what is still wrong; it reopens, and the next agent's brief leads with it" aria-label="Still broken: ${esc(x.text)}">not yet…</button>`;
   }
+  if (st === "reopened") return `<span class="dk-stage reopened" role="img" data-tip="Reopened" data-tip-sub="you said it is still broken; the next agent's brief leads with it" aria-label="Reopened"><span class="w">reopened</span></span>`;
   // In review: past its plan, so the PR says where it is -- unless its agent
   // is still there, working at it. Its checks colour it and are said in the
   // tip. The merge ticks it (thread.rs `seen`).
@@ -677,8 +684,12 @@ function stageMark(x, esc) {
     const sub = `${t.ci ? `checks ${esc(t.ci)} · ` : ""}merging it ticks this note`;
     return `<span class="dk-stage pr${tone}" role="img" data-tip="In PR #${esc(t.pr)}" data-tip-sub="${sub}" aria-label="In PR #${esc(t.pr)}${t.ci ? `, checks ${esc(t.ci)}` : ""}"><span class="w">PR #${esc(t.pr)}</span></span>`;
   }
+  // A plan or a read with nothing since, a day on: its age beside its word,
+  // quieter, so a line nobody followed up does not look under way.
+  const old = (st === "planned" || st === "read") && x.stage_at && Date.now() / 1000 - x.stage_at > STALE_S;
+  const age = old ? ` · ${ctx.relShort(x.stage_at)}` : "", dim = old ? " stale" : "";
   if (st === "planned" && x.stage_doc) {
-    return `<button type="button" class="dk-stage planned" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned</span></button>`;
+    return `<button type="button" class="dk-stage planned${dim}" data-a="note-doc" data-d="${esc(x.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="${old ? "nothing since · " : ""}click to open the plan" aria-label="Open the plan for ${esc(x.text)}">${ico("doc")}<span class="w">planned${age}</span></button>`;
   }
   if (st === "working") {
     // The dot breathes only while that agent is at it; between its turns
@@ -688,23 +699,40 @@ function stageMark(x, esc) {
     const agent = views.get(x.stage_pane)?.status?.agent, busy = agent === "working";
     const say = busy ? `${by} is working on it${at}` : agent ? `${by} has it${at}` : `${by} worked on it${at}`;
     const sub = busy ? "" : agent ? "between turns" : "that chat has ended; the work is not out yet";
-    return `<span class="dk-stage working${busy ? " busy" : agent ? "" : " ended"}" role="img" data-tip="${say}"${sub ? ` data-tip-sub="${sub}"` : ""} aria-label="${say}"><span class="w">${agent ? "working" : "in progress"}</span></span>`;
+    // "on it", not "working": a panel's dot says working, and two meanings
+    // of one word on one rail read as one (brainstorm b55419f304).
+    return `<span class="dk-stage working${busy ? " busy" : agent ? "" : " ended"}" role="img" data-tip="${say}"${sub ? ` data-tip-sub="${sub}"` : ""} aria-label="${say}"><span class="w">${agent ? "on it" : "in progress"}</span></span>`;
   }
-  if (st === "read" || st === "planned") return `<span class="dk-stage read" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet" aria-label="Read by ${by}"><span class="w">read</span></span>`;
+  if (st === "read" || st === "planned") return `<span class="dk-stage read${dim}" role="img" data-tip="Read by ${by}" data-tip-sub="picked up, not planned yet${old ? " · nothing since" : ""}" aria-label="Read by ${by}"><span class="w">read${age}</span></span>`;
   return "";
 }
 
-/** The thread of a line whose work is out: its PR merged, or the thread
- *  moved to shipped. */
+/** How long a plan or a read stands with nothing since before it says so. */
+const STALE_S = 24 * 3600;
+
+/** Where a line's work went out, when it did: a commit on main that names
+ *  it (`landed_commit`, 1.37), or its thread -- its PR merged, or moved to
+ *  shipped. Null while the work is not out. */
 function shippedOf(x) {
+  if (x.landed_commit) return { commit: x.landed_commit };
   const t = threadOf(x);
   return t && (t.merged || t.stage === "shipped") ? t : null;
+}
+
+/** The one line said about a line (1.37): what an agent said with its tick
+ *  or its plan, or the reader's own words when they said it is still
+ *  broken. One quiet line under the text, whole in its tip. */
+function replyLine(x, esc) {
+  if (!x.reply) return "";
+  const who = x.reply_by ? x.reply_by : "you";
+  return `<span class="dk-reply${x.reply_by ? "" : " mine"}" data-tip="${esc(who)} said" data-tip-sub="${esc(x.reply)}${x.reply_at ? ` · ${esc(ctx.relShort(x.reply_at))}` : ""}">${x.reply_by ? "" : "you: "}${esc(x.reply)}</span>`;
 }
 
 /** The stage in words, for the line's tip: who has it and where. */
 function stageWords(x) {
   const sh = !x.done ? shippedOf(x) : null;
-  if (sh) return `shipped${sh.pr ? ` in PR #${sh.pr}` : ""}, waiting for your check`;
+  if (sh) return `shipped${sh.commit ? ` in ${sh.commit.slice(0, 7)}` : sh.pr ? ` in PR #${sh.pr}` : ""}, waiting for your check`;
+  if (stageOf(x) === "reopened") return "reopened: you said it is still broken";
   const st = stageOf(x), by = x.stage_by || "an agent", t = !x.done && !liveOn(x) ? threadOf(x) : null;
   if (t && t.pr && !t.merged) return `in PR #${t.pr}`;
   if (st === "working") {
@@ -854,7 +882,7 @@ function dropped(e) {
   e.preventDefault();
   if (!fs.length) return;
   if (row.classList.contains("new")) {
-    if (noteField && noteField.kind === "edit") return;
+    if (noteField && noteField.kind !== "new") return;
     if (!noteField) { noteField = { kind: "new" }; noteDraft = ""; noteCaret = 0; }
     pending = [...pending, ...fs]; rail(); return;
   }
@@ -1025,7 +1053,7 @@ function noteFocus() {
 /** Pictures pasted into the open field: onto the line being rewritten at
  *  once, or held for the new line until Enter makes it. */
 function pasted(fs) {
-  if (noteField && noteField.kind === "edit") putImages(noteField.id, fs);
+  if (noteField && (noteField.kind === "edit" || noteField.kind === "broken")) putImages(noteField.id, fs);
   else { pending = [...pending, ...fs]; rail(); }
 }
 
@@ -1063,6 +1091,20 @@ async function saveNote(again) {
   noteDraft = ""; noteCaret = 0; noteErr = ""; if (f.kind === "new") pending = [];
   rail();
   if (f.kind === "new" && !text) return;
+  // Not yet... with nothing said and the field left: nothing changes.
+  if (f.kind === "broken") {
+    if (!text) return;
+    try {
+      await ctx.api(`/api/desks/${d.id}/notes/${f.id}/check`, { works: false, say: text });
+      await getNotes(d.id, true);
+    } catch (e) {
+      const why = `Could not reopen it · ${ctx.sayErr(e).why}`;
+      if (d !== current()) return ctx.toast(why, text);
+      noteField = f; noteDraft = text; noteCaret = text.length; noteErr = why;
+      rail();
+    }
+    return;
+  }
   // A line rewritten to nothing is a line taken off, which is what the ✕
   // does: it goes the ✕'s way, so it leaves its ghost and its Undo, and the
   // Undo brings back the text it had.

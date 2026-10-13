@@ -916,21 +916,11 @@ fn pane_read(paths: &Paths, pane: &str, what: &str) -> Result<Value> {
 }
 
 /// Tick a line on the list of the desk this pane is on, as `by`, with the
-/// commit the work went into and a document about it when there are those.
-pub fn tick_desk_note(
-    paths: &Paths,
-    pane: &str,
-    note: i64,
-    by: &str,
-    commit: &str,
-    about: &str,
-    evidence: &str,
-) -> Result<Value> {
-    let mut resp = pane_post(
-        paths,
-        &format!("{pane}/notes/{note}/tick"),
-        serde_json::json!({ "by": by, "commit": commit, "about": about, "evidence": evidence }),
-    )?;
+/// commit the work went into, a document about it, where it can be seen, and
+/// one line about what changed, when there are those: `{ by, commit, about,
+/// evidence, say }`.
+pub fn tick_desk_note(paths: &Paths, pane: &str, note: i64, body: &Value) -> Result<Value> {
+    let mut resp = pane_post(paths, &format!("{pane}/notes/{note}/tick"), body.clone())?;
     match resp.status().as_u16() {
         200 => Ok(resp.body_mut().read_json()?),
         409 => bail!("there is no open note with id {note} on this desk -- read_desk_notes lists them, and a note already done stays done"),
@@ -943,7 +933,8 @@ pub fn tick_desk_note(
 }
 
 /// Say how far this agent has got with a note on its pane's desk:
-/// `mark_desk_note`. `about` is the plan's document id, needed with `planned`.
+/// `mark_desk_note`. `about` is the plan's document id, needed with
+/// `planned`; `say` its one line about the note, or empty.
 pub fn mark_desk_note(
     paths: &Paths,
     pane: &str,
@@ -951,11 +942,12 @@ pub fn mark_desk_note(
     stage: &str,
     by: &str,
     about: &str,
+    say: &str,
 ) -> Result<Value> {
     let mut resp = pane_post(
         paths,
         &format!("{pane}/notes/{note}/mark"),
-        serde_json::json!({ "stage": stage, "by": by, "about": about }),
+        serde_json::json!({ "stage": stage, "by": by, "about": about, "say": say }),
     )?;
     match resp.status().as_u16() {
         200 => Ok(resp.body_mut().read_json()?),

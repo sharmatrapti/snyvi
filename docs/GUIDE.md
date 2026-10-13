@@ -1439,7 +1439,13 @@ with its number, and `tick_desk_note`, which marks one open line done when
 the work it names is finished. A line an agent ticked carries the agent's
 name at its end, and, when the agent passed them, the commit the work went
 into (click it to copy the hash) and a ↗ that opens the document it sent
-about the work; untick it and it is yours again, with none of those. The
+about the work; untick it and it is yours again, with none of those. With
+its plan and its tick the agent can leave one line about the note, which
+shows under it: what it will do, or what changed. When a commit on main
+names a note -- "(#129)", "(#129-#131)" -- the note reads **✓ works · not
+yet…** whatever branch carried the work: **works** ticks it as yours, and
+**not yet…** asks what is still wrong, reopens it with your words, and the
+next agent's brief starts with it. A commit never ticks a note by itself. The
 same Claude can name its panel with `name_panel`, a few words for what it
 is doing there, which you can rename like any other. There is no way for an
 agent to add, untick, change or remove a line. It is found by the pane: the panel puts its id in

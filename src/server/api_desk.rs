@@ -106,6 +106,7 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                 .take(HOME_NOTES)
                 .map(|n| json!({ "id": n.id, "text": n.text, "stage": n.stage, "stage_by": n.stage_by,
                     "stage_doc": n.stage_doc, "stage_panel": n.stage_panel,
+                    "landed_commit": n.landed_commit, "reply": n.reply, "reply_by": n.reply_by,
                     // Its dot breathes only while the agent is at it.
                     "stage_busy": n.stage == "working" && app.panes.status(&n.stage_pane).agent == "working" }))
                 .collect();
@@ -629,6 +630,43 @@ pub(crate) async fn set_desk_note(
         return no;
     }
     match app.store.set_desk_note(id, note, b.text.as_deref(), b.done) {
+        Ok(true) => {
+            notes_moved(&app, id);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct CheckBody {
+    /// It works, or it is still broken.
+    #[serde(default)]
+    pub(crate) works: bool,
+    /// What is still wrong, in the reader's words: the line's reply.
+    #[serde(default)]
+    pub(crate) say: String,
+}
+
+/// The reader's check of a line whose work is out (`desk::check_note`):
+/// Works ticks it, theirs; Still broken reopens it with what they said, for
+/// the next agent's brief. The page's, under the capability, as every write
+/// on the list is.
+pub(crate) async fn check_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(i64, i64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<CheckBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app
+        .store
+        .clocked(|c, now| crate::desk::check_note(c, id, note, b.works, &b.say, now))
+    {
         Ok(true) => {
             notes_moved(&app, id);
             Json(json!({ "ok": true })).into_response()
