@@ -17,8 +17,9 @@
 const SHIPPED_SHOWN = 12 * 3600;
 
 let filed = { threads: [], turns: [], suggestions: [] }, filedAt = null, filedGet = null, filedOff = null;
-/** A row just put away, holding its Undo: { k: "t" | "w" | "s", id, text,
- *  pane }, a thread's pane when it was that panel's, so its Undo stays there. */
+/** A row just put away, holding its Undo: { k: "t" | "w" | "g" | "s", id,
+ *  text, pane, ids }, a thread's pane when it was that panel's, so its Undo
+ *  stays there; for "g", a card's open questions put away as one, by `ids`. */
 let filedGone = null, filedTimer = 0;
 /** The field open on a thread or a turn: { kind: "rename" | "other" | "change", id }. */
 let thField = null, thDraft = "";
@@ -41,11 +42,14 @@ function filedNow(d) {
  *  band above the prompt leaves it out, and so does this. */
 const shown = w => w.via !== "dialog";
 /** How long a turn waits before it goes quiet: no rising, no sound, no
- *  accent, folded under "older". */
+ *  accent, folded under "older". The daemon's `thread::OLDER_S` too. */
 const OLDER_S = 30 * 60;
-/** A waiting turn still worth saying: its panel open (or none named), and
- *  asked within the half hour. */
-const fresh = (d, w) => !w.answered_at && (!w.pane || !!slotOf(d, w.pane)) && Date.now() / 1000 - w.created_at < OLDER_S;
+/** A waiting turn still worth saying. The daemon marks the rest `stale` --
+ *  its panel gone, over the half hour, or its panel prompted since, the
+ *  question maybe answered there (src/thread.rs `mark_stale`) -- so Home,
+ *  the brief and this agree; the page still sees a panel closed or the
+ *  half hour pass between two reads. */
+const fresh = (d, w) => !w.answered_at && !w.stale && (!w.pane || !!slotOf(d, w.pane)) && Date.now() / 1000 - w.created_at < OLDER_S;
 
 /** Which panel a pane is, as the reader counts them. */
 const slotOf = (d, pane) => d.panes.find(p => p.id === pane)?.slot;
@@ -70,7 +74,8 @@ function paneThread(d, pane) {
 /** A thread in its tip: where it lives, what git and gh were seen to do, its
  *  next step, and what was decided in it. */
 function threadSub(t) {
-  const decided = filed.turns.filter(w => w.thread_id === t.id && w.kind === "decide" && w.answered_at).slice(-2);
+  // Answered rows come newest first (src/thread.rs `turns`): its last two.
+  const decided = filed.turns.filter(w => w.thread_id === t.id && w.kind === "decide" && w.answered_at).slice(0, 2);
   return [
     t.folder ? tilde(t.folder) : "",
     t.branch ? `${t.branch}${t.commits ? `, ${ctx.plural(t.commits, "commit")}` : ""}${t.seen ? " (seen)" : ""}` : "",
@@ -128,13 +133,15 @@ function turnCard(d, f, w, esc) {
   return groupCard(d, w.ask_group, f.turns.filter(x => x.ask_group === w.ask_group && (!x.answered_at || sendable.has(x.id))), esc);
 }
 
-/** The fresh turns, or the older ones, as the tray lists them: in the order
- *  they were asked, so an answer keeps its card's place and nothing moves
- *  under the hand. An answer still to be sent stays with the fresh. */
+/** The fresh turns, or the older ones, as the tray lists them: newest
+ *  first, so the one that just rang is at the top rather than a scroll
+ *  down (audit e0a854b732, U6); by when each was asked, so an answer keeps
+ *  its card's place and nothing moves under the hand. An answer still to be
+ *  sent stays with the fresh. */
 function turnRows(d, f, esc, older) {
   const drawn = new Set();
   return f.turns.filter(w => shown(w) && (w.answered_at ? !older && sendable.has(w.id) : fresh(d, w) !== older))
-    .sort((a, b) => a.id - b.id)
+    .sort((a, b) => b.id - a.id)
     .map(w => {
       if (!w.ask_group) return turnCard(d, f, w, esc);
       if (drawn.has(w.ask_group)) return "";
@@ -143,8 +150,10 @@ function turnRows(d, f, esc, older) {
     }).join("");
 }
 
-/** A decide's options, the recommended one marked, and Other…. */
-const picks = (w, esc) => w.options.map((o, i) => `<button type="button" class="tn-opt${i === w.recommended ? " rec" : ""}" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended" data-tip-sub="by ${esc(w.by || "the agent")}"` : ""}>${esc(o)}</button>`).join("") +
+/** A decide's options, the recommended one marked -- with a star, in
+ *  words for a reader of the screen, not only an accent border a hover
+ *  also draws (U5) -- and Other…. */
+const picks = (w, esc) => w.options.map((o, i) => `<button type="button" class="tn-opt${i === w.recommended ? " rec" : ""}" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` aria-label="${esc(o)}, recommended" data-tip="Recommended" data-tip-sub="by ${esc(w.by || "the agent")}"><span class="tn-star" aria-hidden="true">★</span>` : ">"}${esc(o)}</button>`).join("") +
   `<button type="button" class="tn-opt quiet" data-a="tn-other" data-w="${w.id}">Other…</button>`;
 /** The field Other… or Needs changes… opens under a turn. */
 const otherIn = w => thField && thField.id === w.id && (thField.kind === "other" || thField.kind === "change")
@@ -168,11 +177,14 @@ function groupCard(d, g, ms, esc) {
       `<div class="tn-acts">${picks(w, esc)}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="this question; nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>${otherIn(w)}</div>` + errLine(`w${w.id}`, esc)).join("");
   const foot = open
     ? `<span class="tn-wait">${open} of ${ms.length} to answer</span>`
-    : (idle(v)
+    : (sendsHere(v)
       ? `<button type="button" class="tn-opt rec" data-a="tn-gsend" data-g="${g}" data-tip="Send answers" data-tip-sub="Types all ${ms.length} into panel ${n} as one message and presses Enter">Send answers</button>`
       : `<span class="tn-wait">${n ? `they go with your next message to panel ${n}` : "they go to the next panel that asks"}</span>`) +
       `<button type="button" class="tn-x" data-a="tn-gunsend" data-g="${g}" data-tip="Leave them for the next message" aria-label="Leave them for the next message">${ico("x")}</button>`;
-  return `<li class="dk-turn grp${open ? "" : " said"}" data-g="${g}"><p class="tn-by">${ms.length} decisions · ${esc(fromOf(d, ms[0]))}</p>${rows}` +
+  // One ✕ for the card's open questions (B1): four questions answered in
+  // the conversation were four ✕ to clear.
+  const all = open ? `<button type="button" class="tn-x tn-gx" data-a="tn-gx" data-g="${g}" data-tip="Not now, all" data-tip-sub="every question still open on this card; nothing is deleted" aria-label="Not now: all ${open} open questions">${ico("x")}</button>` : "";
+  return `<li class="dk-turn grp${open ? "" : " said"}" data-g="${g}"><p class="tn-by">${ms.length} decisions · ${esc(fromOf(d, ms[0]))}</p>${all}${rows}` +
     `<div class="tn-acts tn-gfoot">${foot}</div></li>`;
 }
 
@@ -220,15 +232,18 @@ function runRow(d, w, n, from, esc) {
     `</li>` + errLine(`w${w.id}`, esc);
 }
 
-/** Whether a panel is at its prompt with nothing under way: the only time
- *  Send now types into it. */
+/** Whether a panel is at its prompt with nothing under way. */
 const idle = v => v && v.status.running && v.mode && v.mode[1] && v.status.agent !== "working" && Date.now() - (v.typed || 0) > TYPED_MS;
+/** Whether Send now may type into a panel: idle, and a Claude session in
+ *  it, as Run asks. Idle alone let it type into a shell whose Claude had
+ *  exited, where what it typed ran as a command (audit e0a854b732, S1). */
+const sendsHere = v => idle(v) && runsHere(v);
 
 /** An answer given here: what was said, and Send now while the panel that
  *  asked is idle; otherwise it says where the answer will go. */
 function saidRow(d, w, esc) {
   const n = slotOf(d, w.pane), v = views.get(w.pane);
-  const now = idle(v)
+  const now = sendsHere(v)
     ? `<button type="button" class="tn-opt" data-a="tn-send" data-w="${w.id}" data-tip="Send now" data-tip-sub="Types it into panel ${n} and presses Enter">Send now</button>`
     : `<span class="tn-wait">${n ? `goes with your next message to panel ${n}` : "goes to the next panel that asks"}</span>`;
   return `<li class="dk-turn said"><p class="tn-q">${esc(w.text)}</p><p class="tn-by">You said <b>${esc(w.answer)}</b></p>` +
@@ -278,14 +293,26 @@ function sugRows(f, d) {
     const x = s.detail || {}, at = x.where === "global" ? "on the left, on every page, run in its own folder"
       : x.where === "every" ? "on every desk, each run in its desk's folder"
       : `this desk's own, run in <span class="mono">${esc(tilde(d.root || ""))}</span>`;
-    const lines = x.script ? x.script.split("\n").length : 0, open = sgScript.has(s.id), tried = sgTry.get(s.id);
+    // Every file the proposal brings is on the card, folded, as the script
+    // is: Add allows the whole folder, so the reader can read all of it.
+    const tried = sgTry.get(s.id);
+    const fold = (key, name, text, f) => {
+      const open = sgScript.has(key), n = text.split("\n").length;
+      return `<button type="button" class="sg-fold" data-a="sg-script" data-s="${s.id}"${f ? ` data-f="${esc(f)}"` : ""} aria-expanded="${open}">${open ? "Hide" : "Show"} ${esc(name)} (${n} line${n === 1 ? "" : "s"})</button>` +
+        (open ? `<pre class="sg-script">${esc(text)}</pre>` : "");
+    };
+    // A setting as the script gets it: its key, what /sidebars calls it,
+    // and the value it starts with.
+    const sets = Object.entries(x.settings || {}).map(([k, v]) => `<span class="mono">${esc(k)}</span>` +
+      (v?.label ? ` (${esc(v.label)})` : "") + (v?.default != null && v.default !== "" ? ` = <span class="mono">${esc(JSON.stringify(v.default))}</span>` : ""));
     return `<p class="tn-by">${at} · every ${every(x.every || 60)} while in view</p>` +
       `<code class="sg-cmd" data-tip="Runs this on a timer while the widget is in view" data-tip-sub="${esc(s.cmd)}" data-tip-overflow>${esc(s.cmd)}</code>` +
-      (x.script ? `<button type="button" class="sg-fold" data-a="sg-script" data-s="${s.id}" aria-expanded="${open}">${open ? "Hide" : "Show"} ${esc(x.script_name || "script")} (${lines} line${lines === 1 ? "" : "s"})</button>` +
-        (open ? `<pre class="sg-script">${esc(x.script)}</pre>` : "") : "") +
+      (x.script ? fold(s.id, x.script_name || "script", x.script, "") : "") +
+      (x.files || []).map(f => fold(`${s.id}/${f.name}`, f.name, f.text || "", f.name)).join("") +
+      (sets.length ? `<p class="tn-by">Settings on /sidebars: ${sets.join(", ")}</p>` : "") +
       (tried ? tried.busy ? `<p class="tn-by" role="status">Running it once…</p>`
         : tried.error ? `<p class="wg-err sg-tried" role="status">${esc(tried.error)}</p>`
-        : `<div class="wg-body sg-tried" role="status" style="--lines:3">${tried.html || "<p>(it printed nothing)</p>"}</div>` : "");
+        : `<div class="wg-body sg-tried" role="status" style="--lines:${Math.min(6, Math.max(1, +x.lines || 3))}">${tried.html || "<p>(it printed nothing)</p>"}</div>` : "");
   };
   const act = s => s.kind === "desk" ? "Open desk" : s.kind === "widget" ? "Add" : s.kind === "box" ? "Allow" : "Open panel";
   const rows = f.suggestions.map(s => `<li class="dk-sugcard"><p class="sg-what">${what(s)}</p>` +
@@ -296,7 +323,7 @@ function sugRows(f, d) {
     (s.kind === "widget" || s.kind === "box" ? lastsRow(s) : "") +
     `<div class="tn-acts"><button type="button" class="tn-opt" data-a="sg-open" data-s="${s.id}">${act(s)}</button>` +
     (s.kind === "widget" ? `<button type="button" class="tn-opt" data-a="sg-try" data-s="${s.id}" data-tip="Run it once, here" data-tip-sub="As it would run, and nothing kept"${sgTry.get(s.id)?.busy ? " disabled" : ""}>Try once</button>` : "") +
-    `<button type="button" class="tn-x" data-a="sg-x" data-s="${s.id}" data-tip="${s.kind === "box" ? "Not now" : "Not this one"}" data-tip-sub="${s.kind === "box" ? "the panel is told, and later pushes refused" : "nothing is deleted"}" aria-label="Not this one">${ico("x")}</button></div></li>` + errLine(`s${s.id}`, esc)).join("") +
+    `<button type="button" class="tn-x" data-a="sg-x" data-s="${s.id}" data-tip="${s.kind === "box" ? "Not now" : "Not this one"}" data-tip-sub="${s.kind === "box" ? "the panel is told, and later pushes refused" : "nothing is deleted"}" aria-label="${s.kind === "box" ? "Not now" : "Not this one"}">${ico("x")}</button></div></li>` + errLine(`s${s.id}`, esc)).join("") +
     (gone ? goneRow("s", gone.id, gone.text, esc) : "");
   return `<h3 class="oy-h" data-tip="Suggested" data-tip-sub="Panels, desks and widgets an agent thinks the work wants. Nothing opens or runs until you click">Suggested</h3><ul class="dk-turn-list" data-part="desk.suggested">${rows}</ul>`;
 }
@@ -349,13 +376,13 @@ function forgetFiled() {
 
 /** A ✕ here: the row goes at once and holds its Undo for as long as a
  *  note's does. */
-function putAway(k, id, text, pane = "") {
+function putAway(k, id, text, pane = "", ids = null) {
   clearTimeout(filedTimer);
-  filedGone = { k, id, text, pane };
+  filedGone = { k, id, text, pane, ids };
   filedTimer = setTimeout(() => { filedGone = null; if (current()) rail(); }, BACK_MS);
 }
 
-const PATH = { t: "threads", w: "turns", s: "suggestions" };
+const PATH = { t: "threads", w: "turns", g: "turns", s: "suggestions" };
 
 /** The menu on a thread, on its panel's row: right-click, or its ⋯. What a
  *  reader does to a thread, not the agent's stages: Done, for work that
@@ -405,41 +432,56 @@ async function answer(d, w, text, again = { a: "tn-pick", w: String(w.id), v: te
 
 /** Send now: the answer typed into the panel that asked, and Enter pressed
  *  apart from the text -- a bracketed paste with its Enter inside it is not
- *  submitted by every program. Only while that panel is idle, and only on
- *  the reader's click: snyvi never starts a turn by itself. */
-function sendNow(d, w) {
+ *  submitted by every program. Only into a Claude at its prompt, and only on
+ *  the reader's click: snyvi never starts a turn by itself. Only the
+ *  reader's answer is typed, never the agent's question: what is typed into
+ *  a terminal is input, and the question is text an agent sent (S1). The
+ *  agent has its question; the answer comes back numbered as it asked. */
+async function sendNow(d, w) {
+  if (!sendable.has(w.id)) return;
   const v = views.get(w.pane), n = slotOf(d, w.pane);
-  if (!idle(v)) {
-    clearTimeout(rowTimer);
-    rowSaid = { p: w.pane, text: `Panel ${n || "?"} is busy, so nothing is typed into it. Your answer goes with your next message.` };
-    rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
-    rail();
-    return;
-  }
-  input(v, bracket(v, `Answered in snyvi: "${w.text}" → ${w.answer}`));
-  setTimeout(() => input(v, "\r"), 120);
+  if (!sendsHere(v)) return notSent(w.pane, n, "Your answer goes");
+  // Out of `sendable` before the wait, so a second click types nothing.
   sendable.delete(w.id);
+  await sent(d, [w]);
+  input(v, bracket(v, `Answered in snyvi: ${oneLine(w.answer)}`));
+  setTimeout(() => input(v, "\r"), 120);
   rail();
 }
 
+/** Why nothing was typed, in the row, for a moment. */
+function notSent(pane, n, what) {
+  clearTimeout(rowTimer);
+  rowSaid = { p: pane, text: `Panel ${n || "?"} has no Claude at its prompt, so nothing is typed into it. ${what} with your next message.` };
+  rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
+  rail();
+}
+
+/** An answer on one line: the reader's Other… is a field, but a pasted line
+ *  break would submit half of it. */
+const oneLine = s => String(s).replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+
+/** What Send now types is how the panel hears these answers: each marked
+ *  told before it is typed, so the prompt it starts does not bring them a
+ *  second time among the changes. A mark that fails costs only that. */
+async function sent(d, ws) {
+  await Promise.all(ws.map(w => ctx.api(`/api/desks/${d.id}/turns/${w.id}/sent`, {}).catch(() => {})));
+}
+
 /** Send answers: a card's answers typed into the panel that asked as one
- *  message, a line each, and Enter apart -- on the click alone, while that
- *  panel is idle, as Send now. */
-function sendGroup(d, g) {
-  const ms = filed.turns.filter(w => w.ask_group === g && w.answered_at && sendable.has(w.id));
+ *  message, a line each, numbered as the agent asked them (the card's
+ *  questions are one after another from its first id), and Enter apart --
+ *  on the click alone, into a Claude at its prompt, as Send now. */
+async function sendGroup(d, g) {
+  const ms = filed.turns.filter(w => w.ask_group === g && w.answered_at && sendable.has(w.id)).sort((a, b) => a.id - b.id);
   if (!ms.length) return;
   const v = views.get(ms[0].pane), n = slotOf(d, ms[0].pane);
-  if (!idle(v)) {
-    clearTimeout(rowTimer);
-    rowSaid = { p: ms[0].pane, text: `Panel ${n || "?"} is busy, so nothing is typed into it. Your answers go with your next message.` };
-    rowTimer = setTimeout(() => { rowSaid = null; if (current()) rail(); }, 5000);
-    rail();
-    return;
-  }
-  const text = ["Answered in snyvi:", ...ms.map(w => `"${w.text}" → ${w.answer}`)].join("\r");
+  if (!sendsHere(v)) return notSent(ms[0].pane, n, "Your answers go");
+  const text = ["Answered in snyvi:", ...ms.map(w => `${w.id - g + 1}. ${oneLine(w.answer)}`)].join("\r");
+  for (const w of ms) sendable.delete(w.id);
+  await sent(d, ms);
   input(v, bracket(v, text));
   setTimeout(() => input(v, "\r"), 120);
-  for (const w of ms) sendable.delete(w.id);
   rail();
 }
 
@@ -505,8 +547,8 @@ async function filedAct(a, b, d) {
   } else if (a === "tn-pick" && w) await answer(d, w, b.dataset.v);
   else if ((a === "tn-other" || a === "tn-change") && w) { thField = { kind: a === "tn-other" ? "other" : "change", id: w.id }; thDraft = ""; rail(); }
   else if (a === "tn-link") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
-  else if (a === "tn-send" && w) sendNow(d, w);
-  else if (a === "tn-gsend") sendGroup(d, +b.dataset.g);
+  else if (a === "tn-send" && w) await sendNow(d, w);
+  else if (a === "tn-gsend") await sendGroup(d, +b.dataset.g);
   else if (a === "tn-gunsend") { for (const x of filed.turns) if (x.ask_group === +b.dataset.g) sendable.delete(x.id); rail(); }
   else if (a === "tn-run" && w) runHere(d, w);
   else if (a === "tn-newpanel" && w) await runNewPanel(d, w);
@@ -517,6 +559,14 @@ async function filedAct(a, b, d) {
     putAway("w", w.id, w.text); rail();
     await told({ ...b.dataset }, `w${w.id}`, "Could not put it away", () => { filed.turns.push(w); filedGone = null; },
       () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/remove`, {}));
+  } else if (a === "tn-gx") {
+    // A card's open questions, put away as one, with one Undo (B1).
+    const g = +b.dataset.g, ws = filed.turns.filter(x => x.ask_group === g && !x.answered_at);
+    if (!ws.length) return true;
+    filed.turns = filed.turns.filter(x => !ws.includes(x));
+    putAway("g", g, `${ws.length} question${ws.length === 1 ? "" : "s"}: ${ws[0].text}`, "", ws.map(x => x.id)); rail();
+    await told({ ...b.dataset }, `g${g}`, "Could not put them away", () => { filed.turns.push(...ws); filedGone = null; },
+      () => Promise.all(ws.map(x => ctx.api(`/api/desks/${d.id}/turns/${x.id}/remove`, {}))));
   } else if (a === "sg-x" && s) {
     filed.suggestions = filed.suggestions.filter(x => x !== s);
     putAway("s", s.id, s.kind === "desk" ? s.folder : s.name || s.cmd); rail();
@@ -525,12 +575,14 @@ async function filedAct(a, b, d) {
   } else if (a === "sg-open" && s) await openSuggested(d, s);
   else if (a === "sg-try" && s) await trySuggested(d, s);
   else if (a === "sg-for" && s) { sgFor.set(s.id, b.dataset.v); rail(); }
-  else if (a === "sg-script" && s) { if (!sgScript.delete(s.id)) sgScript.add(s.id); rail(); }
+  else if (a === "sg-script" && s) { const k = b.dataset.f ? `${s.id}/${b.dataset.f}` : s.id; if (!sgScript.delete(k)) sgScript.add(k); rail(); }
   else if (a === "fd-back") {
     const k = b.dataset.k, id = +b.dataset.i;
+    // A card put away as one comes back as one: each of its questions.
+    const ids = k === "g" && filedGone?.ids || [id];
     clearTimeout(filedTimer); filedGone = null; rail();
     if (await told({ ...b.dataset }, `${k}${id}`, "Could not put it back", () => {},
-      () => ctx.api(`/api/desks/${d.id}/${PATH[k]}/${id}/restore`, {}))) await getFiled(d.id, true);
+      () => Promise.all(ids.map(x => ctx.api(`/api/desks/${d.id}/${PATH[k]}/${x}/restore`, {}))))) await getFiled(d.id, true);
   }
   return true;
 }
@@ -549,6 +601,7 @@ async function openSuggested(d, s) {
   catch (e) { rowErr = { k: `s${s.id}`, why: s.kind === "widget" ? "Could not add it" : s.kind === "box" ? "Could not allow it" : "Could not open it", raw: e.message, again: { a: "sg-open", s: String(s.id) } }; rail(); return; }
   filed.suggestions = filed.suggestions.filter(x => x !== s);
   sgFor.delete(s.id); sgTry.delete(s.id); sgScript.delete(s.id);
+  for (const k of sgScript) if (String(k).startsWith(`${s.id}/`)) sgScript.delete(k);
   // Added, or allowed: it runs at the runner's next look, or its body is
   // drawn now, and its seat comes with it.
   if (asked) { rail(); return; }
@@ -617,6 +670,14 @@ const THREAD_CSS = `
 .tn-opt.quiet { border-style: dashed; }
 .tn-x { margin-left: auto; display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
 .tn-x:hover { background: var(--rule-2); color: var(--fg); }
+/* A card's ✕ is its top-right corner, out of the buttons' row: in the row,
+   three buttons and a link left it a line of its own (audit e0a854b732, U4).
+   A card of questions has one for all of them, and one on each question. */
+.dk-turn, .tn-gq { position: relative; }
+.dk-turn:not(.grp) > .tn-acts > .tn-x, .tn-gq > .tn-acts > .tn-x, .tn-gx { position: absolute; top: 4px; right: 4px; margin: 0; }
+.tn-gq > .tn-acts > .tn-x { top: 4px; right: -4px; }
+.dk-turn:not(.grp) > .tn-q, .tn-gq > .tn-q, .dk-turn.grp > .tn-by:first-child { padding-right: 20px; }
+.tn-star { margin-right: 3px; color: var(--accent); }
 .tn-wait { font-size: var(--fs-micro); color: var(--fg-3); }
 .dk-turn.said { border-style: dashed; }
 /* Questions asked together: one card, a row for each, ruled apart. */

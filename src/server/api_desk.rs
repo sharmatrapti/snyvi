@@ -33,13 +33,15 @@ pub(crate) async fn home(
     } else {
         (serde_json::Value::Null, serde_json::Value::Null)
     };
-    // Your turn across desks, and the threads by stage (`crate::thread`):
-    // behind the same gate as the desks they are on.
+    // On you across desks, each marked fresh or stale, and the threads by
+    // stage (`crate::thread`): behind the same gate as the desks they are
+    // on. What has waited three days is put away first.
     let (turns, threads) = if gated {
         app.store
             .clocked(|c, now| {
+                crate::thread::retire(c, now)?;
                 Ok((
-                    crate::thread::waiting(c)?,
+                    crate::thread::waiting(c, now)?,
                     crate::thread::across_desks(c, now - THREADS_SHIPPED_SHOWN)?,
                 ))
             })
@@ -936,6 +938,16 @@ pub(crate) async fn add_desk_key(
     };
     if let Err(e) = app.store.add_desk_key(desk_id, &name, b.provider.trim()) {
         return err(e);
+    }
+    // A key an agent handed over by name is in now: its turn is settled,
+    // and the agent hears it at its next prompt (audit e0a854b732, B5).
+    if let Ok(n) = app
+        .store
+        .clocked(|c, now| crate::thread::settle_key(c, desk_id, &name, now))
+    {
+        if n > 0 {
+            notes_moved(&app, id);
+        }
     }
     desks_moved(&app);
     Json(json!({ "ok": true, "kept": kept })).into_response()

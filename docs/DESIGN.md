@@ -796,9 +796,9 @@ is added later folds and spaces itself the same way for nothing.
   section scrolls.
 - **Chevron:** 4 px after the label, shown on hover, on focus and while
   folded. A section that never folds (`fixed`: the boxes on `/sidebars`)
-  has no chevron, and its head is not a button. Your turn and Suggested
-  are not sections since 1.32: they wait in a desk's corner (§ the
-  corner, `ui/desk/10-onyou.js`).
+  has no chevron, and its head is not a button. On you and Suggested
+  are not sections since 1.32: they wait in the corner of a desk's rail
+  column, never over a panel (§ the corner, `ui/desk/10-onyou.js`).
 - **Tail**, right-aligned, in this order: the **count**, a figure, never a
   pill: `--fg-3`, `--accent` while something waits, `--warn` while
   something is blocked (`!2`); then the **actions**, icon buttons, shown

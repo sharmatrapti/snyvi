@@ -458,6 +458,7 @@ fn thread_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/thread/move", post(pane_move_thread))
         .route("/api/panes/{id}/ask", post(pane_ask))
         .route("/api/panes/{id}/handover", post(pane_hand_over))
+        .route("/api/panes/{id}/settle", post(pane_settle))
         .route("/api/panes/{id}/suggest-panel", post(pane_suggest_panel))
         .route("/api/panes/{id}/suggest-desk", post(pane_suggest_desk))
         .route("/api/panes/{id}/seen", post(pane_seen))

@@ -566,6 +566,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // 1.33: the conversation a document came from (`NewDoc::session`).
     (19, "ALTER TABLE docs ADD COLUMN session TEXT NOT NULL DEFAULT ''"),
     (20, desk::HELD_COLUMN),
+    // 1.36: a question quieted by its panel's next prompt, and the key a
+    // key turn waits for (`thread::ON_YOU_1_36`).
+    (21, thread::ON_YOU_1_36[0]),
+    (21, thread::ON_YOU_1_36[1]),
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

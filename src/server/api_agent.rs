@@ -523,12 +523,13 @@ pub(crate) async fn pane_brief(
         .collect();
     let (threads, waiting) = app
         .store
-        .clocked(|c, _| {
+        .clocked(|c, now| {
             Ok((
                 crate::thread::for_desk(c, desk.id)?,
                 // This desk's own, dialog turns kept: the brief says what
-                // waits here, not the first thirty across every desk.
-                crate::thread::waiting_on(c, desk.id, true)?,
+                // waits here, not the first thirty across every desk; the
+                // stale ones only counted (`brief::brief_of`).
+                crate::thread::waiting_on(c, desk.id, true, now)?,
             ))
         })
         .unwrap_or_default();
@@ -649,9 +650,12 @@ pub(crate) async fn pane_changes(
     let Ok(Some(desk)) = app.store.desk(placed.desk_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    // The reader's answers on Your turn reach the panel whatever else is
+    // The reader's answers on On you reach the panel whatever else is
     // said: they are the reader speaking, not context snyvi adds, so the
     // brief's switch and a daemon that has just started do not hold them.
+    // So do this panel's questions still open as the reader prompts it,
+    // which go quiet now (`thread::quiet_asks`): the message may be their
+    // answer, and the agent is the one who can tell.
     let live: Vec<String> = desk
         .panes
         .iter()
@@ -660,8 +664,15 @@ pub(crate) async fn pane_changes(
         .collect();
     let answers = app
         .store
-        .clocked(|c, now| crate::thread::take_untold(c, desk.id, &id, &live, now))
+        .clocked(|c, now| {
+            let mut a = crate::thread::take_untold(c, desk.id, &id, &live, now)?;
+            a.extend(crate::thread::quiet_asks(c, desk.id, &id, now)?);
+            Ok(a)
+        })
         .unwrap_or_default();
+    if answers.iter().any(|t| t.answered_at == 0) {
+        super::api_thread::threads_moved(&app, desk.id);
+    }
     if !brief_on(&app) {
         let context = crate::brief::answers_only(&answers);
         return Json(json!({ "context": context, "state": state })).into_response();

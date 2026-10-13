@@ -135,6 +135,10 @@ const OLD_1_33: &str = "ALTER TABLE docs DROP COLUMN session;";
 /// And of 1.35's: a panel held for the reader's first Start (step 20).
 const OLD_1_35: &str = "ALTER TABLE panes DROP COLUMN held;";
 
+/// And of 1.36's: a question quieted by its panel's prompt, and a key
+/// turn's key (step 21, `thread::ON_YOU_1_36`).
+const OLD_1_36: &str = "ALTER TABLE turns DROP COLUMN quiet_at; ALTER TABLE turns DROP COLUMN key_name;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -943,7 +947,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
-         {OLD_1_35}
+         {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1232,7 +1236,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
-         {OLD_1_35}
+         {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1764,7 +1768,7 @@ fn a_1_32_database_gains_the_session_column() {
         s.insert(&new_id("a"), new_doc("A", "aaa", "w")).unwrap().id
     };
     let conn = Connection::open(&paths.db_path).unwrap();
-    conn.execute_batch(&format!("{OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"))
+    conn.execute_batch(&format!("{OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"))
         .unwrap();
     drop(conn);
     let s = Store::open(&paths).unwrap();
@@ -1777,5 +1781,5 @@ fn a_1_32_database_gains_the_session_column() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!((version, session.as_str()), (20, ""));
+    assert_eq!((version, session.as_str()), (21, ""));
 }

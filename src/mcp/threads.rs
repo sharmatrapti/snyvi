@@ -1,8 +1,9 @@
 //! The #90 tools, for an agent in a desk's panel: start_thread and
 //! move_thread file a piece of work, ask and hand_over put what only the
-//! reader can do on Your turn, and suggest_panel and suggest_desk offer a
+//! reader can do on On you, settle_asks takes back the questions the reader
+//! answered in the conversation, and suggest_panel and suggest_desk offer a
 //! card the reader clicks or not (`crate::thread`). Each description is kept
-//! short: all six are in every panel session's tool list.
+//! short: all seven are in every panel session's tool list.
 
 use super::{arg, said, Session};
 use crate::client;
@@ -17,15 +18,19 @@ const MOVE: &str = "Move this panel's thread: a stage (idea, planned, building, 
 parked), and with parked the next step to pick it up by. Add a PR number or more note ids. Call it when the \
 work changes stage, not every turn.";
 
-const ASK: &str = "Put a decision on the user's Your turn in snyvi: a question, two to four short options, and \
+const ASK: &str = "Put a decision on the user's On you list in snyvi: a question, two to four short options, and \
 the one you recommend; up to four at once as questions, on one card. It does not wait: the answers come with \
 the user's next message and are kept on the thread. Your own question tool stays in this panel, for when the \
 user is at it; Home lists it too.";
 
-const HAND_OVER: &str = "Put what blocks you and only the user can do on their Your turn: merge (a PR), key (add a \
-key), try (a change only they can try, e.g. on a phone; else say it in your reply), or run (a command you were \
+const HAND_OVER: &str = "Put what blocks you and only the user can do on their On you list: merge (a PR), key \
+(pass key, its name), try (a change only they can try; else say it in your reply), or run (a command you were \
 blocked from: pass cmd, one line; their Run types it here and you get its output). Never ask them to paste a \
 command. One sentence, a link if any.";
+
+const SETTLE_ASKS: &str = "Take your open questions off the user's On you list when their message in this \
+conversation answered them. Your hand-overs stay. snyvi says, at their next message, which questions of \
+yours are still open.";
 
 const SUGGEST_PANEL: &str = "Suggest a panel on this desk: a name, the exact command it would run, and why. \
 The user sees a card with the command and opens it or not; nothing runs until they click. Three wait at \
@@ -80,9 +85,15 @@ pub(super) fn specs() -> Vec<Value> {
                 "text": { "type": "string", "description": "One sentence: what to do." },
                 "kind": { "type": "string", "enum": ["try", "merge", "key", "run"] },
                 "link": { "type": "string", "description": "A URL or a port, if there is one." },
-                "cmd": { "type": "string", "description": "run only: one command line, exactly as it should run." }
+                "cmd": { "type": "string", "description": "run only: one command line, exactly as it should run." },
+                "key": { "type": "string", "description": "key only: its name, e.g. CLOUDFLARE_API_TOKEN. Adding it settles this." }
             }, "required": ["text", "kind"], "additionalProperties": false },
             "annotations": ann(false)
+        }),
+        json!({
+            "name": "settle_asks", "title": "Settle questions answered in the conversation", "description": SETTLE_ASKS,
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": ann(true)
         }),
         json!({
             "name": "suggest_panel", "title": "Suggest a panel", "description": SUGGEST_PANEL,
@@ -205,9 +216,9 @@ impl Session {
                 let n = v.get("turns").and_then(Value::as_array).map_or(1, Vec::len);
                 said(
                     if n > 1 {
-                        format!("Asked {n} questions, on one card on the user's Your turn in snyvi; the answers come with their next message. Carry on with what does not depend on them.")
+                        format!("Asked {n} questions, on one card on the user's On you list in snyvi; the answers come with their next message. Carry on with what does not depend on them.")
                     } else {
-                        "Asked. It is on the user's Your turn in snyvi; the answer comes with their next message. Carry on with what does not depend on it.".to_string()
+                        "Asked. It is on the user's On you list in snyvi; the answer comes with their next message. Carry on with what does not depend on it.".to_string()
                     },
                     false,
                 )
@@ -219,12 +230,25 @@ impl Session {
     pub(super) fn hand_over(&self, args: &Value) -> Value {
         let body = json!({
             "kind": arg(args, "kind"), "text": arg(args, "text"), "link": arg(args, "link"),
-            "cmd": arg(args, "cmd"), "by": self.by(),
+            "cmd": arg(args, "cmd"), "key": arg(args, "key"), "by": self.by(),
         });
         let run = arg(args, "kind") == "run";
         match self.thread_call("handover", body) {
             Ok(_) if run => said("Handed over. When the user clicks Run, it is typed into this panel as a ! command, and its output arrives here as their message. Say so in your reply; do not ask them to paste it.", false),
-            Ok(_) => said("Handed over. It is on the user's Your turn in snyvi; their answer comes with their next message. Say so in your reply.", false),
+            Ok(_) => said("Handed over. It is on the user's On you list in snyvi; their answer comes with their next message. Say so in your reply.", false),
+            Err(e) => e,
+        }
+    }
+
+    /// The reader answered this panel's questions in the conversation: off
+    /// On you, answered there, and nothing comes back about them.
+    pub(super) fn settle_asks(&self, _args: &Value) -> Value {
+        match self.thread_call("settle", json!({})) {
+            Ok(v) => match v.get("settled").and_then(Value::as_i64).unwrap_or(0) {
+                0 => said("None of your questions was open on On you.", false),
+                1 => said("Settled: one question, answered in the conversation.", false),
+                n => said(format!("Settled: {n} questions, answered in the conversation."), false),
+            },
             Err(e) => e,
         }
     }
@@ -261,12 +285,12 @@ impl Session {
 mod tests {
     use super::*;
 
-    /// Six tools in every panel session: each says what it does in a few
+    /// Seven tools in every panel session: each says what it does in a few
     /// lines, takes only what it names, and none is destructive.
     #[test]
-    fn the_six_are_short_and_take_only_what_they_name() {
+    fn the_seven_are_short_and_take_only_what_they_name() {
         let specs = specs();
-        assert_eq!(specs.len(), 6);
+        assert_eq!(specs.len(), 7);
         for s in &specs {
             let d = s["description"].as_str().unwrap();
             assert!(d.len() <= 350, "{}: {} chars", s["name"], d.len());

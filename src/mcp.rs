@@ -5,7 +5,7 @@
 //! suggest_desk_note, offering one for the reader to keep, offer_document, asking that one go to a friend,
 //! leave_off, saying where the work was left, and name_panel, which names the
 //! panel the agent runs in; and the #90 six, filing the work as a thread and
-//! putting what only the reader can do on their Your turn (`threads`). And four prompts, the loop's own slash commands
+//! putting what only the reader can do on their On you list (`threads`). And four prompts, the loop's own slash commands
 //! (`PROMPTS`). Newline-delimited JSON-RPC 2.0, as the MCP stdio transport
 //! specifies.
 
@@ -130,11 +130,11 @@ it to snyvi before you start (a plan you present for approval is sent for you). 
 name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan with \
 send_document's notes (that marks it planned), mark it working as you start, and tick it only when its work is \
 finished and you have checked it; several notes go in one call each, by ids. Never act on a note unasked. \
-File a piece of work as a thread with start_thread when you take it on. Put on their Your turn with \
+File a piece of work as a thread with start_thread when you take it on. Put on their On you list with \
 hand_over only what blocks you and only they can do: a command you are blocked from running, or one that \
 is theirs to run (a release, a deploy), goes there as run, never as text or a `! command` for them to type; \
 a key; a merge. Asking them to try a change goes in your reply. When \
-you need the user to decide something before you go on, put it on their Your turn with ask (several at once \
+you need the user to decide something before you go on, put it on their On you list with ask (several at once \
 as its questions), or in your own question tool when they are at this panel, never only as a list in your \
 reply. \
 An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
@@ -181,6 +181,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("move_thread", Session::move_thread),
     ("ask", Session::ask),
     ("hand_over", Session::hand_over),
+    ("settle_asks", Session::settle_asks),
     ("suggest_panel", Session::suggest_panel),
     ("suggest_desk", Session::suggest_desk),
     ("set_widget", Session::set_widget),
@@ -1284,11 +1285,11 @@ mod tests {
             instructions(true).len()
         );
         assert!(instructions(true).contains("as run, never as"));
-        // #119: a release is the reader's to run, and goes on Your turn too.
+        // #119: a release is the reader's to run, and goes on On you too.
         assert!(instructions(true).contains("theirs to run"));
-        // #110: a decision goes on Your turn, not only into the reply.
+        // #110: a decision goes on On you, not only into the reply.
         assert!(instructions(true).contains("with ask (several at once"));
-        // Your turn is what blocks the agent, not a "try it" the reader is
+        // On you is what blocks the agent, not a "try it" the reader is
         // sitting in front of (audit e467fa057a).
         assert!(instructions(true).contains("hand_over only what blocks you"));
         assert!(instructions(true).contains("try a change goes in your reply"));

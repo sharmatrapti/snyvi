@@ -585,6 +585,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         Gate::Token,
         true,
     ),
+    ("POST", "/api/panes/nope/settle", None, Gate::Token, true),
     (
         "POST",
         "/api/panes/nope/suggest-panel",

@@ -118,6 +118,24 @@ pub const TAKEN_COLUMN: &str = "ALTER TABLE threads ADD COLUMN taken_at INTEGER 
 /// Every thread there before 1.26 was last taken when it last moved.
 pub const TAKEN_FILL: &str = "UPDATE threads SET taken_at = moved_at WHERE taken_at = 0";
 
+/// 1.36 (audit e0a854b732): when the panel that asked was next prompted, so
+/// a question the reader answered in the conversation goes quiet
+/// (`quiet_asks`); and the key a `key` turn waits for, by name, so adding it
+/// on the desk settles the turn (`settle_key`). Version 21 of
+/// `store::MIGRATIONS`, never in `SCHEMA`.
+pub const ON_YOU_1_36: [&str; 2] = [
+    "ALTER TABLE turns ADD COLUMN quiet_at INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE turns ADD COLUMN key_name TEXT NOT NULL DEFAULT ''",
+];
+
+/// How long a waiting turn is fresh: after it, it is "older" -- no rising,
+/// no sound, out of the cap, the brief's list, the band and Home's count.
+/// The page's `OLDER_S`, said once here so every reader agrees (B3).
+pub const OLDER_S: i64 = 30 * 60;
+/// How long a waiting turn is kept on view at all: after it, it is put away
+/// by itself (`retire`), as a ✕ would, and stays recoverable.
+pub const RETIRE_S: i64 = 3 * 86400;
+
 /// Where a thread is. Every move is allowed -- the reader and the agent both
 /// know better than a state machine -- and only `shipped` stamps a date.
 /// `parked` carries the next step to pick it up by.
@@ -262,6 +280,18 @@ pub struct Turn {
     pub created_at: i64,
     #[serde(skip_serializing_if = "is_zero")]
     pub removed_at: i64,
+    /// When the panel that asked was next prompted, its question still open
+    /// (`quiet_asks`): the reader may have answered it there.
+    #[serde(skip)]
+    pub quiet_at: i64,
+    /// A `key` turn's key, by name, when the agent said it: adding a key of
+    /// that name on the desk settles the turn (`settle_key`).
+    #[serde(rename = "key", skip_serializing_if = "String::is_empty")]
+    pub key_name: String,
+    /// Waiting, and no longer fresh (`mark_stale`): never stored, worked out
+    /// at each read.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 /// A panel or a desk an agent suggests, waiting on the reader's click.
@@ -795,6 +825,7 @@ pub fn seen(
              WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
             params![desk_id, t.id, now, merged, evidence, pane],
         )?;
+        settle_merge(&tx, desk_id, t.id, &merged, now)?;
     }
     let t = get(&tx, desk_id, t.id)?.expect("the row just written");
     tx.commit()?;
@@ -856,11 +887,15 @@ pub fn landed(conn: &Connection, desk_id: i64, id: i64, merge: &str, at: i64) ->
     if !crate::desk::commit_ok(&merge) {
         return Ok(false);
     }
-    Ok(conn.execute(
+    let landed = conn.execute(
         "UPDATE threads SET merged = ?3, merged_at = ?4, stage = 'shipped', shipped_at = ?4
          WHERE desk_id = ?1 AND id = ?2 AND merged = ''",
         params![desk_id, id, merge, at],
-    )? > 0)
+    )? > 0;
+    if landed {
+        settle_merge(conn, desk_id, id, &merge, crate::store::now())?;
+    }
+    Ok(landed)
 }
 
 /// Put a thread away, or back. Its notes keep their link, so Undo brings the
@@ -897,7 +932,8 @@ pub fn moved_since(conn: &Connection, desk_id: i64, pane: &str, since: i64) -> R
 
 const TURN_COLS: &str =
     "id, desk_id, thread_id, pane, by, kind, via, text, options, recommended, link,
-     answer, answered_in, answered_at, told_at, created_at, removed_at, cmd, ask_group";
+     answer, answered_in, answered_at, told_at, created_at, removed_at, cmd, ask_group,
+     quiet_at, key_name";
 
 fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
     let options: String = r.get(8)?;
@@ -925,7 +961,44 @@ fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
         removed_at: r.get(16)?,
         cmd: r.get(17)?,
         ask_group: r.get(18)?,
+        quiet_at: r.get(19)?,
+        key_name: r.get(20)?,
+        stale: false,
     })
+}
+
+/// Which waiting turns are no longer fresh: their panel is gone, they were
+/// asked over `OLDER_S` ago, or the panel that asked was prompted since
+/// (`quiet_at`). The page used to be the only one to know (audit
+/// e0a854b732, B3): Home counted a key asked four days ago from a panel long
+/// closed as on the reader now, the brief told every new Claude about it,
+/// and it held one of the desk's six places.
+pub fn mark_stale(conn: &Connection, turns: &mut [Turn], now: i64) -> Result<()> {
+    let mut gone = std::collections::HashMap::<String, bool>::new();
+    let mut st = conn.prepare_cached("SELECT 1 FROM panes WHERE id = ?1")?;
+    for t in turns.iter_mut().filter(|t| t.answered_at == 0) {
+        let closed = !t.pane.is_empty()
+            && match gone.get(&t.pane) {
+                Some(g) => *g,
+                None => {
+                    let g = !st.exists(params![t.pane])?;
+                    gone.insert(t.pane.clone(), g);
+                    g
+                }
+            };
+        t.stale = closed || t.quiet_at != 0 || now - t.created_at >= OLDER_S;
+    }
+    Ok(())
+}
+
+/// Waiting turns older than `RETIRE_S`, put away by themselves, as a ✕
+/// puts one away: recoverable by id (`restore_turn`), never deleted. Run
+/// where turns are read, so no timer is needed. How many went.
+pub fn retire(conn: &Connection, now: i64) -> Result<usize> {
+    Ok(conn.execute(
+        "UPDATE turns SET removed_at = ?1 WHERE answered_at = 0 AND removed_at = 0 AND created_at < ?2",
+        params![now, now - RETIRE_S],
+    )?)
 }
 
 pub fn turn(conn: &Connection, desk_id: i64, id: i64) -> Result<Option<Turn>> {
@@ -938,39 +1011,46 @@ pub fn turn(conn: &Connection, desk_id: i64, id: i64) -> Result<Option<Turn>> {
         .optional()?)
 }
 
-/// A desk's turns: what is waiting, then what was answered in the last
-/// `answered_since` (the Decided rows of a thread go further back: see
-/// `decided`).
-pub fn turns(conn: &Connection, desk_id: i64, answered_since: i64) -> Result<Vec<Turn>> {
+/// A desk's turns: what is waiting, oldest first, then what was answered,
+/// newest first -- in the last `answered_since`, and a thread's last three
+/// decisions however old, for its tip. Every decision a thread ever had was
+/// kept, oldest first, so a desk past sixty lost what was just answered
+/// off the end of the read, and its Send now with it (audit e0a854b732, B4).
+pub fn turns(conn: &Connection, desk_id: i64, answered_since: i64, now: i64) -> Result<Vec<Turn>> {
     let mut st = conn.prepare(&format!(
-        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND removed_at = 0
-         AND (answered_at = 0 OR answered_at >= ?2 OR (kind = 'decide' AND thread_id != 0))
-         ORDER BY answered_at != 0, id LIMIT 60"
+        "SELECT {TURN_COLS} FROM turns t WHERE desk_id = ?1 AND removed_at = 0
+         AND (answered_at = 0 OR answered_at >= ?2 OR (kind = 'decide' AND thread_id != 0 AND id IN (
+           SELECT d.id FROM turns d WHERE d.desk_id = ?1 AND d.thread_id = t.thread_id AND d.kind = 'decide'
+           AND d.answered_at != 0 AND d.removed_at = 0 ORDER BY d.answered_at DESC LIMIT 3)))
+         ORDER BY answered_at != 0, CASE WHEN answered_at = 0 THEN id ELSE -answered_at END LIMIT 60"
     ))?;
-    let v = st
+    let mut v: Vec<Turn> = st
         .query_map(params![desk_id, answered_since], row_to_turn)?
         .collect::<rusqlite::Result<_>>()?;
+    mark_stale(conn, &mut v, now)?;
     Ok(v)
 }
 
-/// What is waiting on the reader on one desk, oldest first: the band and the
-/// brief. With `dialog` false the mod's own dialog turns are left out, since
-/// they are on the panel's screen already; the brief keeps them.
-pub fn waiting_on(conn: &Connection, desk_id: i64, dialog: bool) -> Result<Vec<Turn>> {
+/// What is waiting on the reader on one desk, oldest first, each marked
+/// fresh or stale: the band, the brief and the cap. With `dialog` false the
+/// mod's own dialog turns are left out, since they are on the panel's
+/// screen already; the brief keeps them.
+pub fn waiting_on(conn: &Connection, desk_id: i64, dialog: bool, now: i64) -> Result<Vec<Turn>> {
     let via = if dialog { "" } else { " AND via != 'dialog'" };
     let mut st = conn.prepare(&format!(
         "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND answered_at = 0 AND removed_at = 0{via}
          ORDER BY id LIMIT 60"
     ))?;
-    let v = st
+    let mut v: Vec<Turn> = st
         .query_map(params![desk_id], row_to_turn)?
         .collect::<rusqlite::Result<_>>()?;
+    mark_stale(conn, &mut v, now)?;
     Ok(v)
 }
 
-/// What is waiting on the reader across every open desk, oldest first: Home's
-/// Your turn.
-pub fn waiting(conn: &Connection) -> Result<Vec<Turn>> {
+/// What is waiting on the reader across every open desk, oldest first, each
+/// marked fresh or stale: Home's On you.
+pub fn waiting(conn: &Connection, now: i64) -> Result<Vec<Turn>> {
     let cols = TURN_COLS
         .split(',')
         .map(|c| format!("t.{}", c.trim()))
@@ -980,9 +1060,10 @@ pub fn waiting(conn: &Connection) -> Result<Vec<Turn>> {
         "SELECT {cols} FROM turns t JOIN desks d ON d.id = t.desk_id
          WHERE t.removed_at = 0 AND t.answered_at = 0 AND d.closed_at = 0 ORDER BY t.id LIMIT 30"
     ))?;
-    let v = st
+    let mut v: Vec<Turn> = st
         .query_map([], row_to_turn)?
         .collect::<rusqlite::Result<_>>()?;
+    mark_stale(conn, &mut v, now)?;
     Ok(v)
 }
 
@@ -999,6 +1080,8 @@ pub struct Ask {
     pub pane: String,
     /// `run` only: the command.
     pub cmd: String,
+    /// `key` only: the key's name, when the agent knows it.
+    pub key_name: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1046,6 +1129,7 @@ struct Checked<'a> {
     link: String,
     via: &'static str,
     by: String,
+    key_name: String,
 }
 
 fn check(a: &Ask) -> std::result::Result<Checked<'_>, Asked> {
@@ -1087,6 +1171,11 @@ fn check(a: &Ask) -> std::result::Result<Checked<'_>, Asked> {
         link: line(&a.link, 400),
         via: if a.via == "dialog" { "dialog" } else { "ask" },
         by: line(&a.by, 60),
+        // A name the desk's keys could not hold settles nothing: kept off.
+        key_name: Some(a.key_name.trim())
+            .filter(|k| a.kind == "key" && crate::secrets::valid_name(k).is_ok())
+            .unwrap_or("")
+            .to_string(),
     })
 }
 
@@ -1113,11 +1202,15 @@ pub fn ask_group(conn: &mut Connection, desk_id: i64, asks: &[Ask], now: i64) ->
     if !desk_open(&tx, desk_id)? {
         return Ok(Asked::NoSuchDesk);
     }
-    let waiting: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM turns WHERE desk_id = ?1 AND removed_at = 0 AND answered_at = 0",
-        params![desk_id],
-        |r| r.get(0),
-    )?;
+    // The room is for what is fresh: a dialog is on its panel's screen and
+    // settles there, and an older turn waits folded, out of the way. Both
+    // used to hold a place, so a desk whose six were days old refused the
+    // one question that mattered now (audit e0a854b732, B2).
+    retire(&tx, now)?;
+    let waiting = waiting_on(&tx, desk_id, false, now)?
+        .iter()
+        .filter(|t| !t.stale)
+        .count() as i64;
     if waiting + asks.len() as i64 > TURNS_PER_DESK {
         return Ok(Asked::Full);
     }
@@ -1130,8 +1223,8 @@ pub fn ask_group(conn: &mut Connection, desk_id: i64, asks: &[Ask], now: i64) ->
     let mut turns = Vec::with_capacity(asks.len());
     for (a, c) in asks.iter().zip(&checked) {
         tx.execute(
-            "INSERT INTO turns(desk_id, thread_id, pane, by, kind, via, text, options, recommended, link, created_at, cmd, ask_group)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO turns(desk_id, thread_id, pane, by, kind, via, text, options, recommended, link, created_at, cmd, ask_group, key_name)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 desk_id,
                 thread,
@@ -1145,7 +1238,8 @@ pub fn ask_group(conn: &mut Connection, desk_id: i64, asks: &[Ask], now: i64) ->
                 c.link,
                 now,
                 c.cmd,
-                group
+                group,
+                c.key_name
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -1215,6 +1309,17 @@ pub fn drop_dialog(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result
     )? > 0)
 }
 
+/// Send now typed the answer into the panel that asked: the agent reads it
+/// there, as the prompt it starts, so the changes that prompt brings do not
+/// tell it a second time. Whether it was still to be told.
+pub fn sent_turn(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE turns SET told_at = ?3 WHERE desk_id = ?1 AND id = ?2 AND answered_at != 0
+         AND told_at = 0",
+        params![desk_id, id, now],
+    )? > 0)
+}
+
 pub fn remove_turn(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result<bool> {
     Ok(conn.execute(
         "UPDATE turns SET removed_at = ?3 WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0",
@@ -1227,6 +1332,65 @@ pub fn restore_turn(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
         "UPDATE turns SET removed_at = 0 WHERE desk_id = ?1 AND id = ?2",
         params![desk_id, id],
     )? > 0)
+}
+
+/// The panel that asked was prompted: its questions asked before the prompt
+/// and still open go quiet -- stale, folded, still answerable. Half the
+/// questions agents put on On you were answered in the conversation and
+/// then cleared by hand, one ✕ each (audit e0a854b732, B1). Only `decide`
+/// asked with `ask`: typing in the chat adds no key and merges nothing, and
+/// Claude's own dialog settles by itself. The ones it quieted, for the
+/// agent to be told.
+pub fn quiet_asks(conn: &Connection, desk_id: i64, pane: &str, now: i64) -> Result<Vec<Turn>> {
+    let mut st = conn.prepare(&format!(
+        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND pane = ?2 AND kind = 'decide'
+         AND via = 'ask' AND answered_at = 0 AND removed_at = 0 AND quiet_at = 0 AND created_at < ?3
+         ORDER BY id"
+    ))?;
+    let quiet: Vec<Turn> = st
+        .query_map(params![desk_id, pane, now], row_to_turn)?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut up = conn.prepare_cached("UPDATE turns SET quiet_at = ?2 WHERE id = ?1")?;
+    for t in &quiet {
+        up.execute(params![t.id, now])?;
+    }
+    Ok(quiet)
+}
+
+/// `settle_asks`: the agent says its open questions were answered in the
+/// conversation. Each is answered there, and told, so nothing comes back to
+/// it. Its hand-overs stay: only the reader settles those. How many.
+pub fn settle_asks(conn: &Connection, desk_id: i64, pane: &str, now: i64) -> Result<usize> {
+    Ok(conn.execute(
+        "UPDATE turns SET answer = 'in the conversation', answered_in = 'panel', answered_at = ?3, told_at = ?3
+         WHERE desk_id = ?1 AND pane = ?2 AND kind = 'decide' AND via = 'ask'
+         AND answered_at = 0 AND removed_at = 0",
+        params![desk_id, pane, now],
+    )?)
+}
+
+/// A key was added on the desk (or on every desk, `desk::EVERY_DESK`): the
+/// `key` turns waiting for that name are answered, and the agent is told at
+/// its next prompt, as if the reader had pressed Added (B5). How many.
+pub fn settle_key(conn: &Connection, desk_id: i64, name: &str, now: i64) -> Result<usize> {
+    Ok(conn.execute(
+        "UPDATE turns SET answer = 'Added', answered_in = 'snyvi', answered_at = ?3
+         WHERE (?1 = ?4 OR desk_id = ?1) AND kind = 'key' AND key_name = ?2
+         AND answered_at = 0 AND removed_at = 0",
+        params![desk_id, name, now, crate::desk::EVERY_DESK],
+    )?)
+}
+
+/// snyvi saw a thread's merge -- the mod's gh, or git in main: the `merge`
+/// turns on that thread are answered with it, and told at the next prompt,
+/// so "Merged" is what was seen rather than a click (B5, X4).
+fn settle_merge(conn: &Connection, desk_id: i64, thread: i64, merge: &str, now: i64) -> Result<usize> {
+    let short: String = merge.chars().take(7).collect();
+    Ok(conn.execute(
+        "UPDATE turns SET answer = ?4, answered_in = 'snyvi', answered_at = ?3
+         WHERE desk_id = ?1 AND thread_id = ?2 AND kind = 'merge' AND answered_at = 0 AND removed_at = 0",
+        params![desk_id, thread, now, format!("Merged ({short}, seen by snyvi)")],
+    )?)
 }
 
 /// Answers a pane has not been told yet, and they are marked told: what its
@@ -1370,6 +1534,17 @@ pub fn suggest(conn: &mut Connection, desk_id: i64, s: &Suggest, now: i64) -> Re
         if let Some(d) = has {
             return Ok(Suggested::HasDesk(d));
         }
+    }
+    // A widget the same panel proposes again, its script fixed, takes the
+    // place of its card still waiting: one card, the newest. The old folder
+    // stays in `.proposed/`, where nothing runs, and the agent is not told
+    // of a card it replaced itself.
+    if kind == "widget" && !s.pane.is_empty() {
+        tx.execute(
+            "UPDATE desk_suggestions SET settled_at = ?4, outcome = 'replaced', told_at = ?4
+             WHERE desk_id = ?1 AND kind = 'widget' AND name = ?2 AND pane = ?3 AND settled_at = 0",
+            params![desk_id, name, s.pane, now],
+        )?;
     }
     let waiting: i64 = tx.query_row(
         "SELECT COUNT(*) FROM desk_suggestions WHERE desk_id = ?1 AND settled_at = 0",

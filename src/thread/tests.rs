@@ -15,6 +15,9 @@ fn db() -> Connection {
     for c in SUGGEST_COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
     }
+    for c in ON_YOU_1_36 {
+        conn.execute_batch(c).unwrap();
+    }
     for c in crate::peer::COLUMNS_1_23
         .iter()
         .filter(|c| c.starts_with("ALTER TABLE desk_notes"))
@@ -30,6 +33,15 @@ fn desk(conn: &mut Connection) -> (i64, Vec<i64>) {
         .iter()
         .map(|t| crate::desk::add_note(conn, d, t, 0).unwrap().unwrap().id)
         .collect();
+    // The panels the tests ask from are open: a turn from a panel with no
+    // row is stale (`mark_stale`), and "gone" is the one that is not.
+    for (slot, p) in ["p1", "p2", "p3"].iter().enumerate() {
+        conn.execute(
+            "INSERT OR IGNORE INTO panes(id, desk_id, slot, cwd, created_at) VALUES (?1, ?2, ?3, '/w', 0)",
+            params![p, d, slot as i64 + 1],
+        )
+        .unwrap();
+    }
     (d, notes)
 }
 
@@ -305,17 +317,17 @@ fn a_desks_waiting_turns_are_its_own() {
     }
     ask(&mut conn, d, &q("mine", ""), 2).unwrap();
     ask(&mut conn, d, &q("on screen", "dialog"), 3).unwrap();
-    let band = waiting_on(&conn, d, false).unwrap();
+    let band = waiting_on(&conn, d, false, 3).unwrap();
     assert_eq!(
         band.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(),
         ["mine"]
     );
-    let brief = waiting_on(&conn, d, true).unwrap();
+    let brief = waiting_on(&conn, d, true, 3).unwrap();
     assert_eq!(
         brief.iter().map(|t| t.text.as_str()).collect::<Vec<_>>(),
         ["mine", "on screen"]
     );
-    assert_eq!(waiting(&conn).unwrap().len(), 30, "Home's cap, as before");
+    assert_eq!(waiting(&conn, 9).unwrap().len(), 30, "Home's cap, as before");
 }
 
 /// Several questions an agent needs decided are one card (#110): all of
@@ -345,7 +357,7 @@ fn questions_asked_together_are_one_card() {
     assert!(ts
         .iter()
         .all(|t| t.ask_group == ts[0].id && t.kind == "decide"));
-    assert_eq!(turns(&conn, d, 0).unwrap().len(), 3);
+    assert_eq!(turns(&conn, d, 0, 7).unwrap().len(), 3);
     // Answered one at a time, as any turn.
     assert!(answer(&conn, d, ts[1].id, "Off", "snyvi", 2)
         .unwrap()
@@ -373,7 +385,7 @@ fn questions_asked_together_are_one_card() {
     let mixed = [three[0].clone(), merge];
     assert_eq!(ask_group(&mut conn, d, &mixed, 7).unwrap(), Asked::BadGroup);
     assert_eq!(
-        turns(&conn, d, 0)
+        turns(&conn, d, 0, 7)
             .unwrap()
             .iter()
             .filter(|t| t.answered_at == 0)
@@ -507,7 +519,7 @@ fn turns_are_capped_and_join_the_panes_thread() {
         assert_eq!(t.thread_id, th.id);
     }
     assert_eq!(ask(&mut conn, d, &h, 9).unwrap(), Asked::Full);
-    assert_eq!(waiting(&conn).unwrap().len() as i64, TURNS_PER_DESK);
+    assert_eq!(waiting(&conn, 9).unwrap().len() as i64, TURNS_PER_DESK);
 }
 
 /// A `run` turn carries its command exactly, one line typed on a click; one
@@ -757,4 +769,183 @@ fn a_stopped_widget_is_told_to_the_agent_that_proposed_it() {
     let again = take_opened(&conn, d, "p1", 4).unwrap();
     assert_eq!(again[0].note, "Your widget arena stopped");
     assert!(take_opened(&conn, d, "p1", 5).unwrap().is_empty());
+}
+
+#[test]
+fn a_widget_proposed_again_by_its_panel_replaces_its_card() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let w = |pane: &str, folder: &str| Suggest {
+        kind: "widget".into(),
+        name: "ci".into(),
+        cmd: "run.sh".into(),
+        folder: folder.into(),
+        why: "CI at a glance".into(),
+        pane: pane.into(),
+        ..Suggest::default()
+    };
+    let Suggested::Card(first) = suggest(&mut conn, d, &w("p1", "/w/.proposed/1-ci"), 1).unwrap() else {
+        panic!()
+    };
+    let Suggested::Card(second) = suggest(&mut conn, d, &w("p1", "/w/.proposed/2-ci"), 2).unwrap() else {
+        panic!()
+    };
+    let waiting = suggestions(&conn, d).unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].id, second.id);
+    assert_eq!(suggestion(&conn, d, first.id).unwrap().unwrap().outcome, "replaced");
+    // Not something the agent is told of on its next prompt.
+    assert!(take_opened(&conn, d, "p1", 3).unwrap().is_empty());
+    // Another panel's proposal of the same name is a card of its own.
+    suggest(&mut conn, d, &w("p2", "/w/.proposed/3-ci"), 4).unwrap();
+    assert_eq!(suggestions(&conn, d).unwrap().len(), 2);
+    // A full desk counts the replaced card out: three waiting, and the same
+    // panel's fix still fits.
+    suggest(&mut conn, d, &Suggest { name: "deploy".into(), ..w("p3", "/w/.proposed/5-deploy") }, 5).unwrap();
+    assert!(matches!(
+        suggest(&mut conn, d, &w("p1", "/w/.proposed/6-ci"), 6).unwrap(),
+        Suggested::Card(_)
+    ));
+    assert_eq!(suggestions(&conn, d).unwrap().len(), 3);
+}
+
+/// Send now types the answer into the panel: that is how the agent hears it,
+/// so the changes the typed prompt brings do not tell it again.
+#[test]
+fn an_answer_sent_now_is_not_told_again() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let Asked::Turn(t) = ask(
+        &mut conn,
+        d,
+        &Ask {
+            kind: "decide".into(),
+            text: "Ship it?".into(),
+            options: vec!["Yes".into(), "No".into()],
+            pane: "p1".into(),
+            ..Ask::default()
+        },
+        1,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    assert!(!sent_turn(&conn, d, t.id, 2).unwrap(), "not answered yet");
+    answer(&conn, d, t.id, "Yes", "snyvi", 3).unwrap().unwrap();
+    assert!(sent_turn(&conn, d, t.id, 4).unwrap());
+    let live = vec!["p1".to_string()];
+    assert!(take_untold(&conn, d, "p1", &live, 5).unwrap().is_empty());
+    assert!(!sent_turn(&conn, d, t.id, 6).unwrap(), "once");
+}
+
+/// What is fresh is the daemon's to say (audit e0a854b732, B2/B3): a turn
+/// from a panel since gone, one past the half hour, and one quieted by its
+/// panel's next prompt are stale, and only the fresh hold a place.
+#[test]
+fn only_fresh_turns_hold_a_place() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let try_ = |pane: &str| Ask {
+        kind: "try".into(),
+        text: "Try it".into(),
+        pane: pane.into(),
+        ..Ask::default()
+    };
+    ask(&mut conn, d, &try_("gone"), 10_000).unwrap();
+    for _ in 0..TURNS_PER_DESK - 1 {
+        ask(&mut conn, d, &try_("p1"), 10_000).unwrap();
+    }
+    let w = waiting_on(&conn, d, false, 10_001).unwrap();
+    assert_eq!(w.iter().filter(|t| t.stale).count(), 1, "the one from a closed panel");
+    // Six waiting, one of them stale: room for one more.
+    assert!(matches!(ask(&mut conn, d, &try_("p1"), 10_002).unwrap(), Asked::Turn(_)));
+    assert_eq!(ask(&mut conn, d, &try_("p1"), 10_003).unwrap(), Asked::Full);
+    // Half an hour on, every one of them is older, and the desk has room.
+    let later = 10_003 + OLDER_S;
+    assert!(waiting_on(&conn, d, false, later).unwrap().iter().all(|t| t.stale));
+    assert!(matches!(ask(&mut conn, d, &try_("p1"), later).unwrap(), Asked::Turn(_)));
+    // Claude's own dialog never holds a place.
+    let dialog = Ask { via: "dialog".into(), kind: "decide".into(), options: vec!["a".into(), "b".into()], ..try_("p1") };
+    for i in 0..TURNS_PER_DESK {
+        assert!(matches!(ask(&mut conn, d, &dialog, later + i).unwrap(), Asked::Turn(_)));
+    }
+    // Three days on, what still waits is put away by itself, and can come back.
+    let gone = retire(&conn, 10_003 + RETIRE_S).unwrap();
+    assert_eq!(gone, TURNS_PER_DESK as usize + 1, "the first seven; the later ones are not three days old");
+    let first = turns(&conn, d, 0, 10_003 + RETIRE_S).unwrap();
+    assert!(first.iter().all(|t| t.created_at >= later));
+}
+
+/// A question the reader answered in the conversation (B1): the panel's next
+/// prompt quiets it, a hand-over stays as it was, and `settle_asks` answers
+/// it there, told, so it never comes back to the agent.
+#[test]
+fn a_question_answered_in_the_conversation_settles() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let q = Ask {
+        kind: "decide".into(),
+        text: "Lit ink?".into(),
+        options: vec!["Yes".into(), "No".into()],
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let key = Ask {
+        kind: "key".into(),
+        text: "Add the R2 key".into(),
+        key_name: "R2_KEY".into(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let Asked::Turn(qt) = ask(&mut conn, d, &q, 1).unwrap() else { panic!() };
+    ask(&mut conn, d, &key, 1).unwrap();
+    ask(&mut conn, d, &Ask { pane: "p2".into(), ..q.clone() }, 1).unwrap();
+    // Panel 1's prompt quiets its question, not its key, nor panel 2's.
+    let quiet = quiet_asks(&conn, d, "p1", 2).unwrap();
+    assert_eq!(quiet.iter().map(|t| t.id).collect::<Vec<_>>(), [qt.id]);
+    assert!(quiet_asks(&conn, d, "p1", 3).unwrap().is_empty(), "once");
+    let w = waiting_on(&conn, d, false, 3).unwrap();
+    assert_eq!(w.iter().filter(|t| t.stale).map(|t| t.id).collect::<Vec<_>>(), [qt.id]);
+    // A question asked after the prompt is not the prompt's to quiet.
+    let Asked::Turn(after) = ask(&mut conn, d, &q, 5).unwrap() else { panic!() };
+    assert!(quiet_asks(&conn, d, "p1", 5).unwrap().is_empty());
+    // settle_asks answers panel 1's questions, and only those.
+    assert_eq!(settle_asks(&conn, d, "p1", 6).unwrap(), 2);
+    let t = turn(&conn, d, after.id).unwrap().unwrap();
+    assert_eq!((t.answer.as_str(), t.answered_in.as_str(), t.told_at), ("in the conversation", "panel", 6));
+    assert!(take_untold(&conn, d, "p1", &["p1".into()], 7).unwrap().is_empty());
+    assert_eq!(waiting_on(&conn, d, false, 7).unwrap().len(), 2, "the key, and panel 2's question");
+}
+
+/// What snyvi sees settles a turn by itself (B5): a key of that name added
+/// on the desk, or on every desk; and the merge of the thread a merge turn
+/// is on. Either is told to the agent at its next prompt.
+#[test]
+fn a_key_added_or_a_merge_seen_settles_its_turn() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let Started::New(th) = start_as(&mut conn, d, "A", "p1", &[]) else { panic!() };
+    let key = |name: &str| Ask {
+        kind: "key".into(),
+        text: "Add the key".into(),
+        key_name: name.into(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let Asked::Turn(k1) = ask(&mut conn, d, &key("R2_KEY"), 1).unwrap() else { panic!() };
+    let Asked::Turn(k2) = ask(&mut conn, d, &key("not a name!"), 1).unwrap() else { panic!() };
+    assert_eq!((k1.key_name.as_str(), k2.key_name.as_str()), ("R2_KEY", ""));
+    assert_eq!(settle_key(&conn, d, "OTHER", 2).unwrap(), 0);
+    assert_eq!(settle_key(&conn, crate::desk::EVERY_DESK, "R2_KEY", 2).unwrap(), 1);
+    let t = turn(&conn, d, k1.id).unwrap().unwrap();
+    assert_eq!((t.answer.as_str(), t.told_at), ("Added", 0));
+    let merge = Ask { kind: "merge".into(), text: "Merge PR 57".into(), pane: "p1".into(), ..Ask::default() };
+    let Asked::Turn(m) = ask(&mut conn, d, &merge, 3).unwrap() else { panic!() };
+    assert_eq!(m.thread_id, th.id);
+    let sha = "0123456789abcdef0123456789abcdef01234567";
+    let s = Seen { merged: sha.into(), ..Seen::default() };
+    seen(&mut conn, d, "p1", &s, 4).unwrap();
+    let t = turn(&conn, d, m.id).unwrap().unwrap();
+    assert_eq!(t.answer, "Merged (0123456, seen by snyvi)");
+    assert_eq!(t.told_at, 0, "the agent hears it at its next prompt");
 }
