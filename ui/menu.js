@@ -764,9 +764,9 @@ function install(ctx) {
  * it is fetched on the first press of a rail icon, and a reader whose
  * sidebar is never folded never pays for it. */
 const $ = s => document.querySelector(s), root = document.documentElement;
-const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], note: ["#note"] };
+const POPS = { inbox: ["#inbox-row"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], note: ["#note"] };
 /** #trees' order: the reader's (app.js `placeLeft` writes it), or index.html's. */
-const home = () => ($("#trees").dataset.order || "#inbox-row #queue #tree #desk-nav #browse-nav #widgets-nav").split(" ");
+const home = () => ($("#trees").dataset.order || "#inbox-row #tree #desk-nav #browse-nav #widgets-nav").split(" ");
 let popBtn = null, popWired = false;
 export function pop(ctx, sec, btn) {
   sheet();

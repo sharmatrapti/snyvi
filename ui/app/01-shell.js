@@ -5,7 +5,7 @@
   const boot = JSON.parse($("#boot").textContent || "{}");
   const root = document.documentElement;
   const main = $("#main"), docEl = $("#doc"), treeEl = $("#tree"), tocEl = $("#toc"), metaEl = $("#meta"), rail = $("#rail");
-  const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row"), queueEl = $("#queue"), queueBar = $("#queue-bar");
+  const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row"), queueBar = $("#queue-bar");
 
   const state = {
     tree: boot.tree || [],          // one row per project; what it holds is fetched when it is expanded

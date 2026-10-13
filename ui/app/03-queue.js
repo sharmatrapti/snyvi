@@ -8,11 +8,12 @@
    * page away from a reader. Before 0.14 an arrival opened itself whenever
    * the reader had gone 2.5 s without touching anything -- which is what
    * reading a paragraph looks like -- and with several agents sending, the
-   * document changed under them many times an hour. Now it is a row at the
-   * top of the sidebar, a bar above the document, and `n`. */
+   * document changed under them many times an hour. Now it is Recent, lit,
+   * in the sidebar, a bar above the document, and `n`. It was once a list
+   * of its own there too, Waiting, under Recent: the same documents twice,
+   * and the bar already says what arrived. */
   /** One GET, as JSON, or null: what every ask of the daemon below wants. */
   const getJson = async u => { try { return await (await fetch(u)).json(); } catch { return null; } };
-  const QUEUE_ROWS = 6;    // in the sidebar; the inbox lists the rest
   const QUEUE_HELD = 24;   // what a page opens with and keeps; the count is the daemon's, whatever is held
   /** Whether a row is on the queue: held here, or marked by the daemon on a
    *  row fetched with its project. */
@@ -33,29 +34,23 @@
       if (Array.isArray(q)) { state.queue = q; renderTree(); markActive(); if (state.view === "inbox") showInbox(false); }
     }, 150);
   }
-  const queueRow = (d, extra = "") => (noteKnown(d), `<li class="t-doc${extra}"${moment(d.id)}><a href="/d/${d.id}" class="new" data-id="${d.id}"${sizeOf(d)} data-tip="${esc(d.title)}" data-tip-sub="${esc(d.project)} · ${fmt(d.received_at)}" data-tip-overflow>${d.origin === "peer" && d.sender ? whoIco(d.sender) : docIco()}<span class="title" data-tip-cut>${esc(d.title)}</span><span class="k">${esc(d.project)}</span>${removeBtn(d)}</a></li>`);
 
   /* ---------- what moved, and when ----------
    * The sidebar is rebuilt from state whenever the library moves, so a row
    * has no life of its own to animate: an arrival is a row that was not there
-   * a render ago, a read is one that is gone. Both are kept here for as long
-   * as their motion lasts, with the moment they happened, and a row that is
-   * rebuilt mid-wash starts its animation at a negative delay -- where the
-   * last one was -- rather than from the top. So an arrival washes once,
-   * whatever the tree does underneath, and a row that has left is drawn a
-   * little longer, closing, in the place it had. */
+   * a render ago. It is kept here for as long as its wash lasts, with the
+   * moment it came, and a row that is rebuilt mid-wash starts its animation
+   * at a negative delay -- where the last one was -- rather than from the
+   * top. So an arrival washes once, whatever the tree does underneath.
+   * LEAVE_MS is how long a removed row's ghost takes to close. */
   const WASH_MS = 700, LEAVE_MS = 140;
   const washes = new Map();   // id -> when it arrived, or came back
-  const leaving = new Map();  // id -> { d, at, when it left }
-  let lastQueue = [];          // the rows of the last render, for where a leaver was
   let sweep = 0;
   /** A style that starts this row's animation where the last render left it. */
   function moment(id) {
-    const w = washes.get(id), l = leaving.get(id);
-    const t = l ? l.when : w;
+    const t = washes.get(id);
     if (t == null) return "";
-    const age = Date.now() - t;
-    return ` style="animation-delay:-${age}ms"`;
+    return ` style="animation-delay:-${Date.now() - t}ms"`;
   }
   const washCls = id => (washes.has(id) ? " wash" : "");
   /** Mark rows to be washed, once, on the next render. */
@@ -64,32 +59,21 @@
     for (const id of ids) washes.set(id, now);
     schedule();
   }
-  /** Rows on their way out of the queue, closing where they were. */
-  function depart(ids) {
-    const now = Date.now();
-    for (const id of ids) {
-      const at = lastQueue.findIndex(d => d.id === id);
-      if (at >= 0 && !leaving.has(id)) leaving.set(id, { d: lastQueue[at], at, when: now });
-    }
-    schedule();
-  }
-  /** A re-render when the next motion is over, to draw what state says and
+  /** A re-render when the next wash is over, to draw what state says and
    *  nothing more -- the render drops what has finished -- and then the one
-   *  after. The earliest deadline, not the last: a row that closed in 140 ms
-   *  must not sit there, closed, while an arrival's 700 ms wash runs on. */
+   *  after, the earliest first. */
   function schedule() {
     clearTimeout(sweep);
     const now = Date.now();
-    const due = [...washes.values()].map(t => WASH_MS - (now - t))
-      .concat([...leaving.values()].map(l => LEAVE_MS - (now - l.when)));
+    const due = [...washes.values()].map(t => WASH_MS - (now - t));
     if (!due.length) return;
     sweep = setTimeout(() => { renderTree(); markActive(); schedule(); }, Math.max(0, Math.min(...due)) + 40);
   }
   const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
 
-  /** The section at the top of the sidebar and the bar above the document,
-   *  both from the same rows. The bar is not drawn on the inbox, which lists
-   *  the queue itself, nor on a desk. */
+  /** Recent's count in the sidebar and the bar above the document, both
+   *  from the same rows. The bar is not drawn on the inbox, which lists the
+   *  queue itself, nor on a desk. */
   let qbGhost = null;   // Mark all read, answered by the bar itself: { n, undo, clock }
   let qbWas = 0, qbSettle = 0, waitedWas = 0;   // the bar's count last drawn, the face's way back to rest, and the count last seen
   // The bar's ✕ hides it, read nothing, until the next arrival.
@@ -119,51 +103,25 @@
   }
   function renderQueue() {
     queueIds = new Set(state.queue.map(d => d.id));
-    // What has finished moving is dropped here, at the render, and not only
+    // What has finished washing is dropped here, at the render, and not only
     // at the sweep: a sweep is put off by every arrival, and a row that had
-    // closed was otherwise drawn again, closed, until one ran.
+    // washed was otherwise drawn again, washing, until one ran.
     const now = Date.now();
     for (const [id, t] of washes) if (now - t >= WASH_MS) washes.delete(id);
-    for (const [id, l] of leaving) if (now - l.when >= LEAVE_MS) leaving.delete(id);
-    const n = state.waiting, head = state.queue[0], shown = Math.min(n, QUEUE_ROWS);
+    const n = state.waiting, head = state.queue[0];
     badge('[data-pop="inbox"]', n);
     drawInbox(n);
     // The last one waiting was read: the one moment snyvi shows love, on the
     // mark, for as long as a face's moment lasts (§2.2).
     if (!n && waitedWas && !quiet()) { root.dataset.cleared = "1"; setTimeout(() => delete root.dataset.cleared, 2400); }
     waitedWas = n;
-    // The rows state says, with the ones still closing put back where they
-    // were, so a read takes its row out rather than the list snapping up.
-    const rows = state.queue.slice(0, QUEUE_ROWS).map(d => queueRow(d, washCls(d.id)));
-    const ghost = gone && gone.where === "queue" && !queueIds.has(gone.id);
-    const left = [...leaving.values()].filter(l => !(ghost && l.d.id === gone.id)).sort((a, b) => a.at - b.at);
-    for (const l of left) if (!queueIds.has(l.d.id)) rows.splice(Math.min(l.at, rows.length), 0, queueRow(l.d, " leaving"));
-    if (ghost) rows.splice(Math.min(gone.at, rows.length), 0, ghostRow());
-    // Removed from its project while it was also waiting: its row here stays,
-    // quiet, until the ghost down there ends, and then both close together.
-    const held = gone && gone.where === "proj" && gone.qDoc && !queueIds.has(gone.id);
-    if (held) rows.splice(Math.min(gone.qAt, rows.length), 0, queueRow(gone.qDoc, gone.closing ? " held leaving" : " held"));
-    const empty = (!n || !head) && !left.length && !ghost && !held;
-    const qh = empty ? "" : `<div class="t-queue${!n && !ghost && !(held && !gone.closing) ? " leaving" : ""}"><div class="t-label">Waiting<span class="n">${n}</span></div><ul>` +
-      rows.join("") +
-      (n > shown ? `<li class="t-more"><a href="/inbox" data-nav="inbox">${n - shown} more</a></li>` : "") + `</ul></div>`;
-    // The same rows as last time are left alone, as the tree's are: a draw
-    // that changes nothing here must not cost a layout. A row mid-motion
-    // carries its delay in the string, so it is drawn again until it is done.
-    if (qh !== drawnQueue) {
-      const onRow = queueEl.contains(document.activeElement) && document.activeElement.dataset.id;
-      queueEl.innerHTML = drawnQueue = qh;
-      // A keyboard on a row stays on it, as it does in the tree.
-      if (onRow) queueEl.querySelector(`a[data-id="${CSS.escape(onRow)}"]`)?.focus({ preventScroll: true });
-    }
-    lastQueue = state.queue.slice(0, QUEUE_ROWS);
     // Marked read from the bar: the bar says so and holds the Undo, in the
     // same card at the same place, until the drain runs out (DESIGN §4.4).
     // Not on a desk (1.32): there the bar lay over the desk's head -- its
     // folder, Left off and the window's drag grip -- with other desks'
     // documents in it, and said again what the rail's Docs says. A desk's
     // own arrivals are at the top of its rail's Documents, marked new; the
-    // rest wait in the sidebar. Audit dc5adb4641. Nor on Home (1.32): it lay under
+    // rest light Recent in the sidebar. Audit dc5adb4641. Nor on Home (1.32): it lay under
     // Home's own sticky note bar and said again what Arrived and the status
     // line say. Audit 67d008cb6f.
     const off = state.view === "inbox" || state.view === "desk" || state.view === "home";
@@ -197,9 +155,9 @@
       queueBar.innerHTML = `<div class="qb${one ? " one" : ""}"><span class="qb-who"></span>` +
         `<button type="button" class="icon qb-step" data-q="prev" data-tip="Previous" aria-label="Previous one waiting">${glyph("prev", 14)}</button><span class="qb-n">${count}</span>` +
         `<button type="button" class="icon qb-step" data-q="step" data-tip="Next" aria-label="Next one waiting">${glyph("next", 14)}</button><span class="qb-next">${next}</span>` +
-        `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the newest · letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox" class="qb-all" data-nav="inbox">Show all</a>` +
+        `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the newest · letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox?recent" class="qb-all" data-nav="inbox">Show all</a>` +
         `<button type="button" class="icon" data-q="clear" data-tip="Mark all read" aria-label="Mark all read">${glyph("checks", 14)}</button>` +
-        `<button type="button" class="icon" data-q="shut" data-tip="Hide this bar" data-tip-sub="they stay waiting in the sidebar" aria-label="Hide this bar">${glyph("x", 14)}</button></div>`;
+        `<button type="button" class="icon" data-q="shut" data-tip="Hide this bar" data-tip-sub="they stay first in Recent" aria-label="Hide this bar">${glyph("x", 14)}</button></div>`;
       qbFeel("whoa");
       qbWas = n;
       return;
@@ -246,7 +204,7 @@
     let marked = false;
     for (const wfs of state.sub.values()) for (const w of wfs) for (const d of w.docs) if (d.id === id && d.unread) marked = true;
     if (!held && !marked) return;
-    if (held) { state.queue = state.queue.filter(d => d.id !== id); queueIds.delete(id); depart([id]); }
+    if (held) { state.queue = state.queue.filter(d => d.id !== id); queueIds.delete(id); }
     unmarkRows(new Set([id]));
     state.waiting = Math.max(0, state.waiting - 1);
     renderTree(); markActive();   // now, so the row is drawn closing rather than found gone
@@ -272,7 +230,6 @@
     const r = await post("/api/queue/clear");
     const j = r?.ok && await r.json();
     if (!j) return toast("Could not mark them read", { retry: clearQueue });
-    depart(state.queue.map(d => d.id));
     state.queue = []; state.waiting = 0;
     unmarkRows(null);
     renderTree(); markActive();
@@ -303,7 +260,6 @@
   function dropFromQueue(ids, waiting) {
     const gone = new Set(ids);
     const known = state.queue.some(d => gone.has(d.id)) || (waiting != null && waiting !== state.waiting);
-    depart(gone);
     state.queue = state.queue.filter(d => !gone.has(d.id));
     unmarkRows(gone);
     if (waiting != null) state.waiting = waiting;
@@ -408,7 +364,7 @@
    *  every document in the library on every page open — 13,000 rows and a
    *  718 ms task at 3000 documents — and what is behind a row is now two
    *  numbers until a reader asks for it. */
-  let drawnTree = null, drawnQueue = null, drawnInbox = null, recutDone = true;
+  let drawnTree = null, drawnInbox = null, recutDone = true;
   const treeTouched = new MutationObserver(() => { drawnTree = null; });
   treeTouched.observe(treeEl, { childList: true, subtree: true, attributes: true, attributeFilter: ["open"] });
   /** The daemon's projects, and the one whose last document was just removed:
@@ -442,8 +398,8 @@
   });
   /** How many projects the Inbox shows before its "more" row: the ones heard
    *  from this week, between USED_MIN and USED_MAX, and no more than fit
-   *  between what stands above the projects (the head, Recent, Waiting, the
-   *  waiting list) and what must stay on screen below them (all of Desks,
+   *  between what stands above the projects (the head and Recent) and what
+   *  must stay on screen below them (all of Desks,
    *  and the Folders head). Measured, because each of those changes it;
    *  never fewer than three. The whole list while the Inbox is folded or the
    *  sidebar is its rail, where there is no column to fit. */
@@ -507,35 +463,23 @@
     return `<button type="button" class="t-quiet${waiting ? " new" : ""}" data-quiet aria-expanded="${moreOpen}" data-tip="${esc(names)}">${icon("more")}<span class="nm">Show ${hidden.length} more</span>${chev}${say ? `<span class="k">${say}</span>` : ""}</button>`;
   }
   /** The Inbox's head, with All and the library's size at its right edge,
-   *  and two rows under it: Recent, the newest first, saying how long ago the
-   *  last one came, and Waiting, which unfolds the waiting list in place.
-   *  Waiting stands at nought too, quiet, so the Inbox is the same height
-   *  whatever arrives; it starts folded, and stays as the reader left it.
-   *  Links and a button, so the keyboard reaches them. The head says how
-   *  many wait only while the Inbox is folded. Written only when it changed,
-   *  as every section is. */
-  let waitOpen = store.get("snyvi.waiting") === "1";
-  treesEl.classList.toggle("wait-open", waitOpen);
+   *  and Recent under it: the newest first, saying how long ago the last one
+   *  came -- or, while any is unread, how many, in the accent, until the
+   *  last of them is read. Its page lists those first. The count stands
+   *  where the time did, so the row is the same whatever arrives. The head
+   *  says how many wait only while the Inbox is folded. Written only when it
+   *  changed, as every section is. */
   function drawInbox(waiting = state.waiting) {
     const total = state.tree.reduce((k, p) => k + p.docs, 0);
     const last = state.tree.reduce((k, p) => Math.max(k, p.latest || 0), 0);
     // All, without the library's size: 620 is the biggest figure in the
     // head and says nothing about today (audit 7c0fc42885). It is the tip.
     const all = `<a class="sec-all" href="/inbox" data-nav="inbox" data-tip="All documents" data-tip-sub="${plural(total, "document")} · what waits, then every project, newest first">All</a>`;
+    const tip = waiting ? ` data-tip="${plural(waiting, "unread document")}" data-tip-sub="Recent lists them first"` : "";
     const inbox = secHead("inbox", "Inbox", { count: waiting || "", tone: "accent", foldOnly: true, countTip: waiting ? `${waiting} waiting to be read` : "", end: all }) +
-      `<a class="t-inbox s-row" href="/inbox?recent" data-nav="inbox">${icon("clock")}<span class="title">Recent</span><span class="n">${last ? relShort(last) : ""}</span></a>` +
-      `<button type="button" class="t-wait s-row${waiting ? " new" : ""}" data-wait aria-expanded="${waitOpen}"${waiting ? "" : " data-tip=\"Nothing waiting\" data-tip-sub=\"what an agent sends waits here until you read it\""}>${icon("wait")}<span class="title">Waiting</span>${chev}<span class="n">${waiting || ""}</span></button>`;
+      `<a class="t-inbox s-row${waiting ? " new" : ""}" href="/inbox?recent" data-nav="inbox"${tip}>${icon("clock")}<span class="title">Recent</span><span class="n">${waiting || (last ? relShort(last) : "")}</span></a>`;
     if (inbox !== drawnInbox) inboxRowEl.innerHTML = drawnInbox = inbox;
   }
-  inboxRowEl.addEventListener("click", e => {
-    if (!e.target.closest("[data-wait]")) return;
-    waitOpen = !waitOpen;
-    store.set("snyvi.waiting", waitOpen ? "1" : "0");
-    treesEl.classList.toggle("wait-open", waitOpen);
-    drawInbox();
-    // The list under it grew or shrank: the projects' cap is measured again.
-    renderTree();
-  });
   function renderTree() {
     // One more draw, for bench/ui.mjs to count; nothing when it is not watching.
     window.__perf && window.__perf.renders++;
@@ -677,7 +621,7 @@
     let queued = false;
     const recap = () => { queued = false; if (capSeen != null && inboxCap(awayRowSeen) !== capSeen) { renderTree(); markActive(); } };
     const watch = new ResizeObserver(() => { if (!queued) { queued = true; requestAnimationFrame(recap); } });
-    for (const el of [treesEl, inboxRowEl, queueEl, $("#desk-nav")]) watch.observe(el);
+    for (const el of [treesEl, inboxRowEl, $("#desk-nav")]) watch.observe(el);
   } catch {}
 
   /** What one project holds, fetched the first time it is expanded and kept

@@ -76,8 +76,8 @@
    *  next one put away, which is the moment the offer stops being about it. */
   let awayJust = null, awayClock = null, awayUndo = null;
   /** The document just removed, while its row still offers Undo: what it was,
-   *  where its row stood (`where` "queue" or "proj", and the place in that
-   *  list), and the clock. Captured at the click, because the refetch that
+   *  where its row stood (`where` "proj", and the place in that list),
+   *  and the clock. Captured at the click, because the refetch that
    *  follows no longer has the row to say where it was. One at a time. */
   let gone = null;
   /** Whether the ghost can be seen: drawn, and not in a folded sidebar. */
@@ -124,7 +124,6 @@
     pin: '<path d="M9 3.5h6l-1 6 3.5 3.5h-11L10 9.5zM12 13v7.5"/>',
     clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     aside: '<path d="M20.5 14.5a2 2 0 0 1-2 2H8.5l-5 4V5.5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/>',
-    wait: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3"/>',
     more: '<circle cx="6" cy="12" r=".8"/><circle cx="12" cy="12" r=".8"/><circle cx="18" cy="12" r=".8"/>',
     prev: '<path d="m15 6-6 6 6 6"/>',
     next: '<path d="m9 6 6 6-6 6"/>',
@@ -182,7 +181,7 @@
    * writes to it by id, so showing it again draws nothing. */
   const widgetsEl = $("#widgets-nav");
   let layout = boot.layout || { left: ["inbox", "desks", "folders", "widgets"], right: [], hidden: [] };
-  const LEFT_NODES = { inbox: [inboxRowEl, queueEl, treeEl], desks: [$("#desk-nav")], folders: [browseEl], widgets: [widgetsEl] };
+  const LEFT_NODES = { inbox: [inboxRowEl, treeEl], desks: [$("#desk-nav")], folders: [browseEl], widgets: [widgetsEl] };
   const LEFT_ICONS = { inbox: ['[data-pop="inbox"]', '[data-pop="tree"]'], desks: ['[data-pop="desks"]'], folders: ['[data-pop="browse"]'], widgets: ['[data-pop="widgets"]'] };
   /** The global widgets the reader has not switched off, in their order. */
   const globalSeats = () => (state.widgets || []).filter(w => !w.hidden);

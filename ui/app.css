@@ -685,7 +685,7 @@ button.sec-fold:hover { color: var(--fg-2); }
 #widgets-nav > .sec { display: flow-root; }
 :is(#trees > :is(#desk-nav, #browse-nav), #widgets-nav > .sec) > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
 .s-chev { width: 5px; height: 5px; margin-left: 4px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-1.5px) rotate(45deg); opacity: 0; transition: transform var(--t), opacity var(--t); }
-:root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .s-row, #queue, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
+:root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .s-row, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
 .s-body { list-style: none; margin: 0; padding: 0; }
 .s-empty { padding: 5px 8px 5px 8px; font-size: var(--fs-small); color: var(--fg-3); }
 
@@ -709,19 +709,9 @@ button.sec-fold:hover { color: var(--fg-2); }
 summary > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); }
 summary:is(:hover, :focus-visible) > .s-chev, details:not([open]) > summary > .s-chev { opacity: 1; }
 details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
-/* The Inbox's two rows. Waiting folds the waiting list in place, with a
-   row's chevron, kept at rest while it is folded; at nought it stays, quiet,
-   so the Inbox never changes height. Its count and icon are the accent while
-   something waits. Its list says "Waiting" itself only in the rail's
-   popover, where the row is not over it. */
-.t-wait { width: 100%; text-align: left; }
-.t-wait > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); }
-.t-wait:is(:hover, :focus-visible) > .s-chev, .t-wait[aria-expanded="false"] > .s-chev { opacity: 1; }
-.t-wait[aria-expanded="false"] > .s-chev { transform: rotate(-45deg); }
-.t-wait:not(.new) { color: var(--fg-2); }
-.t-wait.new > .r-ico, .t-wait.new > .n { color: var(--accent); font-weight: 600; }
-#trees:not(.wait-open) > #queue { display: none; }
-#trees > #queue .t-queue > .t-label { display: none; }
+/* Recent, while anything is unread: its icon and count in the accent, the
+   count where the time stands, so the row is the same width and height. */
+.t-inbox.new > :is(.r-ico, .n) { color: var(--accent); font-weight: 600; }
 /* All, at the Inbox head's right edge: the whole library, and its size. */
 .sec-all { flex: none; display: flex; align-items: baseline; gap: 5px; height: 22px; padding: 0 6px; border-radius: var(--r-sm); font-size: var(--fs-micro); font-weight: 600; line-height: 22px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .sec-all .n { font-weight: 400; font-variant-numeric: tabular-nums; }
@@ -738,31 +728,21 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-doc a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
 /* No mark in front of a row: its icon is the mark. A read row's glyph is
    quiet, and centred on the line rather than sat on its baseline; a row
-   waiting to be read has it in the accent, with its title in ink -- the
-   same in the queue and in the tree, gone once the document is opened from
-   either -- and the open row is lit whole. */
+   waiting to be read has it in the accent, with its title in ink -- gone
+   once the document is opened -- and the open row is lit whole. */
 :is(.t-doc a, .b-file a) > .r-ico { align-self: center; opacity: .75; }
 :is(.t-doc a.new, .t-doc a.active, .b-file a.active) > .r-ico { color: var(--accent); opacity: 1; }
 .t-doc a.new .title { color: var(--fg); font-weight: 600; }
-.t-queue { margin: 0 0 6px; }
-.t-queue .t-label { display: flex; align-items: center; padding-top: 2px; }
-/* The count as a figure in the accent, not a filled pill: the bar over the
-   page is the one that interrupts, and this only says how many. */
-.t-queue .t-label .n { margin-left: auto; color: var(--accent); font-weight: 600; padding: 0 6px; line-height: 16px; letter-spacing: 0; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
-.t-queue ul { list-style: none; margin: 2px 0 0; padding: 0; }
-.t-queue .t-more { margin-left: 8px; }
-.t-queue .t-more a { display: inline-block; font-size: var(--fs-micro); color: var(--fg-2); padding: 3px 6px; border-radius: var(--r-sm); }
-.t-queue .t-more a:hover { background: var(--rule); color: var(--fg-2); text-decoration: none; }
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
 /* What moved in the sidebar, said once. An arrival's row, or one an undo put
    back, is lit the way a heading is where a jump landed -- the same wash, so
-   the eye learns one sign. A row that was read or deleted closes where it
-   was, 140 ms, before the list moves up into its place. Both start at a
+   the eye learns one sign. A removed row's ghost closes where it was,
+   140 ms, before the list moves up into its place. Both start at a
    negative delay when the tree is rebuilt under them (see `moment` in
    app.js), so a rebuild never plays them again. */
 .wash { animation: land 700ms ease-out; border-radius: var(--r-sm); }   /* on the row itself, where its moment is; /start's Show me too */
 @media (prefers-reduced-motion: reduce) { .wash, .prose .flash { outline: 2px solid var(--focus); outline-offset: 1px; } }
-.t-doc.leaving, .t-queue.leaving .t-label { animation: leave var(--dur-quick) var(--ease-out) forwards; overflow: hidden; pointer-events: none; }
+.t-doc.leaving { animation: leave var(--dur-quick) var(--ease-out) forwards; overflow: hidden; pointer-events: none; }
 /* A row leaving fades where it stands; its place goes when it does. Never
    an animated height: that is layout, every frame (docs/DESIGN.md §7.2). */
 @keyframes leave { to { opacity: 0; } }
@@ -783,10 +763,8 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-ghost > .t-undo { margin-left: auto; align-self: center; padding: 2px 7px; }
 :is(.t-ghost, .t-back)::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; transform-origin: left; transform: scaleX(var(--undo-left, 1)); transition: transform var(--dur-instant) linear; }
 .t-gone.leaving { animation-delay: var(--t, 0ms); }
-/* What stands around a ghost only for its sake -- the same document's row in
-   Waiting, a project that left with its last document -- is there to be read
-   past, not used, and closes when the ghost does. */
-.t-doc.held > a { opacity: .45; pointer-events: none; }
+/* A project that left with its last document stands around its ghost only
+   for its sake, and closes when the ghost does. */
 .t-proj.leaving > summary { animation: leave var(--dur-quick) var(--ease-out) forwards; overflow: hidden; pointer-events: none; }
 .t-doc .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-2); font-family: var(--mono); flex: none; font-variant-numeric: tabular-nums; }
 .t-doc .pin { color: var(--fg-2); flex: none; display: inline-flex; align-self: center; }
