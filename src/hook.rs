@@ -621,14 +621,20 @@ fn sent_this_turn(path: &str) -> bool {
 /// A `! command` for the reader to type, as Claude Code's shell mode takes
 /// it: `!`, a space, and a command word. First a line that is one, bare or
 /// in backticks; failing that, one in backticks inside a line of prose --
-/// "**Watch them:** `! xdg-open …`" was missed (#153). The command, without
-/// its `!`.
+/// "**Watch them:** `! xdg-open …`" was missed (#153). Inside prose it takes
+/// a word after the command: a bare `! command` or `! something` there is a
+/// reply talking about commands, not one for the reader to type. The
+/// command, without its `!`.
 fn bang_line(reply: &str) -> Option<&str> {
     fn whole(l: &str) -> Option<&str> {
         bang(l.trim().trim_matches('`').trim())
     }
     fn inline(l: &str) -> Option<&str> {
-        l.split('`').skip(1).step_by(2).find_map(bang)
+        l.split('`')
+            .skip(1)
+            .step_by(2)
+            .filter_map(bang)
+            .find(|cmd| cmd.contains(char::is_whitespace))
     }
     reply
         .lines()
@@ -1687,6 +1693,19 @@ mod tests {
             Some("xdg-open /tmp/vid/review.html")
         );
         assert_eq!(bang_line("Say `hi`, then `!x`"), None);
+        // A bare word in prose is a reply about commands, not one to type;
+        // on a line of its own it is still one.
+        for about in [
+            "The hook takes the `! command` check as a command.",
+            "A whole line that is `! something`, bare or in backticks.",
+        ] {
+            assert_eq!(bang_line(about), None, "{about}");
+        }
+        assert_eq!(bang_line("Then:\n\n`! ls`"), Some("ls"));
+        assert_eq!(
+            bang_line("Skip `! cmd` and run `! cargo test --all` here."),
+            Some("cargo test --all")
+        );
 
         // A file to look at goes to snyvi; a URL, or any other command, to a Run.
         let said = |msg: &str| -> String {
