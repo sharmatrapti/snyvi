@@ -3213,7 +3213,11 @@ async function panelRows(cdp, base, token) {
   const desk = d.desk ? d.desk.id : d.id;
   const pa = (await post(`/api/desks/${desk}/panes`)).pane.id, pb = (await post(`/api/desks/${desk}/panes`)).pane.id;
   const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
-  await post(`/api/panes/${pa}/start`, { cmd: `printf 'see https://example.com/snyvi-bench. then\\n'; while :; do ${sleepBin} 1; done` });
+  // Bracketed paste on while `paste` exists, as at Claude's prompt (S1 below);
+  // the mode is printed only when it changes, so the screen is otherwise still.
+  const paste = join(tmpdir(), `snyvi-bench-paste-${process.pid}`);
+  rmSync(paste, { force: true });
+  await post(`/api/panes/${pa}/start`, { cmd: `printf 'see https://example.com/snyvi-bench. then\\n'; b=0; while :; do if [ -e ${paste} ]; then [ $b = 1 ] || { printf '\\033[?2004h'; b=1; }; else [ $b = 0 ] || { printf '\\033[?2004l'; b=0; }; fi; ${sleepBin} 1; done` });
   await post(`/api/panes/${pb}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
   const n1 = (await post(`/api/desks/${desk}/notes`, { text: "a line for the menu" })).note.id;
   const n2 = (await post(`/api/desks/${desk}/notes`, { text: "a line for an agent" })).note.id;
@@ -3476,6 +3480,12 @@ async function panelRows(cdp, base, token) {
 
     // S1: into a Claude at its prompt, Send now types the reader's answer
     // alone -- never the agent's question, which is text an agent sent.
+    // A Claude at its prompt has bracketed paste on; panel a's loop turns
+    // it on while the flag file is there, and off again after the row. The
+    // loop wakes once a second, and the card is drawn as Yes is pressed, so
+    // the mode is in before the question is.
+    writeFileSync(paste, "");
+    await sleep(1500);
     const one = await (await agent("ask", { text: "bench: $(echo never typed)?", options: ["Yes", "No"], by: "bench-agent" })).json().catch(() => ({}));
     const oneId = one.turn?.id;
     const oneUp = !!oneId && await until(`!!document.querySelector('#onyou .dk-turn[data-w="${oneId}"] [data-v="Yes"]')`, 60);
@@ -3487,6 +3497,7 @@ async function panelRows(cdp, base, token) {
     const said1 = (sentTyped[0] || "").replace("\u001b[200~", "").replace("\u001b[201~", "");
     rows.push(["Send now types only the reader's answer, into a Claude", said1 === "Answered in snyvi: Yes" && sentTyped[1] === "\r",
       !oneUp ? `no card for the question: ${JSON.stringify(one).slice(0, 80)}` : !sendUp ? "no Send now with a Claude at its prompt" : `typed ${JSON.stringify(sentTyped)}`]);
+    rmSync(paste, { force: true });
 
     // U1, U2: the corner is the rail's column, over no panel, and above the
     // rail's foot line (the panel's pid and age).
