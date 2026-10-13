@@ -580,6 +580,7 @@ fn router(app: Arc<App>) -> Router {
             post(restore_desk_note),
         )
         .route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))
+        .route("/api/desks/{id}/notes/{note}/check", post(check_desk_note))
         .route("/api/desks/{id}/leftoff", post(desk_left_off))
         .route("/api/desks/{id}/keys", get(desk_keys).post(add_desk_key))
         .route("/api/desks/{id}/keys/{name}/remove", post(remove_desk_key))

@@ -102,22 +102,26 @@ function riseHtml(d, f, esc) {
   return `<div class="oy-card${first ? " rise" : ""}"><ul class="dk-turn-list" data-part="desk.turns">${body}</ul>${more}</div>`;
 }
 
-/** The tray, over the pill: under its head (On you, and the pin), what is
- *  fresh, newest first, the older ones folded under a line of their own,
- *  and Suggested. With nothing fresh above them the older ones are the
- *  tray, drawn open (#118): the pill said "1 older" and opened onto one
- *  more "1 older" to press, in an empty box. */
+/** The tray, where the pill was: under its head (On you, the pin, and
+ *  its ✕), what is fresh, newest first, the older ones folded under a line
+ *  of their own, and Suggested. With nothing fresh above them the older ones
+ *  are the tray, drawn open (#118), and the head says Older: an ON YOU head
+ *  over an OLDER head over one card was two titles for one thing. */
 function trayHtml(d, f, esc, old) {
   const gone = filedGone && (filedGone.k === "w" || filedGone.k === "g") ? goneRow(filedGone.k, filedGone.id, filedGone.text, esc) : "";
   const rows = gone + turnRows(d, f, esc, false);
   const said = rows ? `<ul class="dk-turn-list" data-part="desk.turns">${rows}</ul>` : "";
   const why = `data-tip="Older" data-tip-sub="Its panel closed, asked over half an hour ago, or its panel was prompted since. It goes by itself after three days, and can come back"`;
+  const olderOnly = !rows && old;
   const older = !old ? ""
-    : !rows ? `<h3 class="oy-h" ${why}>Older</h3><ul class="dk-turn-list">${turnRows(d, f, esc, true)}</ul>`
+    : !rows ? `<ul class="dk-turn-list">${turnRows(d, f, esc, true)}</ul>`
     : `<button type="button" class="oy-older" data-a="oy-older" aria-expanded="${oy.older}" ${why}>${old} older</button>` +
       (oy.older ? `<ul class="dk-turn-list">${turnRows(d, f, esc, true)}</ul>` : "");
   const all = said + older + sugRows(f, d);
-  const head = `<div class="oy-head"><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>${pinBtn()}</div>`;
+  const title = olderOnly ? `<h3 class="oy-h" ${why}>On you · older</h3>`
+    : `<h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>`;
+  const close = `<button type="button" class="oy-x" data-a="oy-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${ico("x")}</button>`;
+  const head = `<div class="oy-head">${title}<span class="oy-gap"></span>${pinBtn()}${close}</div>`;
   return `<div class="oy-tray" role="dialog" aria-label="On you" tabindex="-1">${head}<div class="oy-scroll">${all || `<p class="oy-none">Nothing is on you here.</p>`}</div></div>`;
 }
 
@@ -157,8 +161,10 @@ function onYou(d) {
   if (oy.rise && !card) { oy.rise = 0; oy.more = 0; clearTimeout(oy.timer); }
   const tray = oy.open ? trayHtml(d, f, esc, n.old) : "";
   const say = n.now ? `On you <span class="n">${n.now}</span>` : n.old ? `${n.old} older` : "On you";
-  const pill = card || tray || n.now || n.old
-    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="${oy.open}" data-tip="${oy.open ? "Close" : "On you"}" data-tip-sub="${oy.open ? "Esc" : "What only you can do on this desk"}" data-key="ctrl+alt+y">${say}</button>` : "";
+  // The open tray is closed by its head's ✕: a pill under it as well said
+  // "1 older" a second time, over the rail's last row (the notes' field).
+  const pill = !tray && (card || n.now || n.old)
+    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" data-tip="On you" data-tip-sub="What only you can do on this desk" data-key="ctrl+alt+y">${say}</button>` : "";
   // A redraw replaces every button: the one the keyboard was on gets the
   // focus back, by what it does and to which row, or a press on a card
   // button dropped the hand to the page's body (W24).
@@ -350,11 +356,19 @@ const ONYOU_CSS = `
 @keyframes oy-in { from { opacity: 0; transform: translateY(12px) scale(.96); } to { opacity: 1; transform: none; } }
 /* The tray: its head (On you, and the pin) stays; the rest scrolls under it. */
 .oy-tray { position: relative; width: 320px; box-sizing: border-box; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--bg); box-shadow: var(--shadow); animation: oy-in var(--dur-move) var(--ease-out); }
-.oy-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 6px 2px 10px; }
+.oy-head { display: flex; align-items: center; gap: 2px; padding: 6px 6px 2px 10px; }
+.oy-gap { flex: 1; }
 .oy-head .oy-h { margin: 0; }
-.oy-scroll { max-height: 60vh; overflow-y: auto; padding: 4px 8px 8px; }
-.oy-pin { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
-.oy-pin:hover { background: var(--rule-2); color: var(--fg); }
+.oy-scroll { max-height: 60vh; overflow-y: auto; padding: 0 10px 4px; }
+/* In the tray a turn is a row, ruled off from the next, not a card in the
+   tray's box: a box in a box, at the rail's width, wrapped its answers onto
+   two lines. The risen card, alone over the rail, keeps its card. */
+.oy-tray .dk-turn-list { gap: 0; margin: 0; }
+.oy-tray .dk-turn, .oy-tray .dk-sugcard { padding: 8px 0; border: 0; border-radius: 0; background: none; }
+.oy-tray .dk-turn-list > li + li, .oy-tray .dk-turn-list + .dk-turn-list > li:first-child { border-top: 1px solid var(--rule); }
+.oy-tray .dk-turn:not(.grp) > .tn-acts > .tn-x, .oy-tray .tn-gx { top: 6px; right: -4px; }
+.oy-pin, .oy-x { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
+.oy-pin:hover, .oy-x:hover { background: var(--rule-2); color: var(--fg); }
 .oy-pin.on { color: var(--accent); }
 .oy-pin.on svg { fill: currentColor; }
 .oy-h { margin: 2px 2px 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); text-transform: uppercase; letter-spacing: .04em; }
@@ -362,6 +376,10 @@ const ONYOU_CSS = `
 .oy-scroll > .oy-h:first-child { margin-top: 2px; }
 .oy-older { display: block; margin: 8px 2px 0; font-size: var(--fs-micro); color: var(--fg-3); text-decoration: underline dotted; }
 .oy-none { margin: 4px; font-size: var(--fs-small); color: var(--fg-3); }
+/* The pill floats over the rail's foot: the rail keeps that much room at
+   its end, always, so its last row -- the notes' field -- scrolls clear of
+   the pill rather than sit under it, and nothing moves as the pill comes. */
+#toc:has(> .dk-rail) { padding-bottom: 40px; }
 .oy .dk-note.gone { list-style: none; display: flex; align-items: center; gap: 6px; border: 1px dashed var(--rule-2); background: var(--bg-raise); }
 @media (prefers-reduced-motion: reduce) { .oy-card.rise, .oy-tray { animation: none; } }
 `;

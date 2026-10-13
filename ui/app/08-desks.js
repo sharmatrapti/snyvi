@@ -108,9 +108,6 @@
     if (roots !== deskRoots) { deskRoots = roots; renderTree(); markActive(); } else renderDesks();
     if (desk && (state.view === "desk" || state.deskBehind != null)) desk.update(state.desks);
   }
-  /** The first run is on until Getting started is put away: what it says
-   *  once (a word under Desks, under + New panel) goes with the card. */
-  const firstRun = () => { try { return localStorage.getItem("snyvi.own.gs") !== '"done"'; } catch { return false; } };
   /** A desk's mark, one meaning per colour (audit 67d008cb6f): amber while
    *  a panel needs the reader, green while an agent is working -- as on its
    *  project's row and in the live pill -- a hollow ring while something
@@ -136,12 +133,14 @@
     });
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty">Open the snyvi window to run desks</li>`
         : desksOff ? noReach("desks", "li") : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>`
-        // The word, said once, while Getting started is out (about.js).
-        : firstRun() ? `<li class="s-empty">A desk is one project: its folder, its agents, and what they write.</li>` : "");
+        // The word, said while there is one desk to say it of. It stayed
+        // over ten while a first-run card waited on Home, and read as
+        // clutter at the top of the list.
+        : list.length === 1 ? `<li class="s-empty">A desk is one project: its folder, its agents, and what they write.</li>` : "");
     // The head's + is the one way to a new desk from the list: a "+ New desk"
     // row under a lone desk came and went with the second, and moved the
     // sidebar as it did (audit 67d008cb6f). Welcome's Got another one? and
-    // Getting started's + Another project ask for one now (about.js).
+    // Welcome's Got another project? asks for one now (about.js).
     const rows = list.map(d => {
       const m = mark3(d.panes), n = d.panes.length, full = fullest(d);
       const say = m === "!" ? needYou(d.panes.filter(p => p.status && p.status.blocked).length) : m === "●" ? "An agent is working" : m === "◦" ? "Running" : "Idle";
@@ -198,7 +197,7 @@
     const was = state.view === "desk";
     state.view = "desk"; state.deskId = id; state.deskBehind = null; state.doc = null; state.previous = null; state.comparing = null; state.browseRoot = null;
     overBar();
-    if (id != null) { lastDesk = id; cameBack(); }
+    if (id != null) lastDesk = id;
     root.dataset.view = "desk";
     if (push) history.pushState({ desk: id }, "", id == null ? "/desks" : `/desk/${id}`);
     renderTree(); markActive();
@@ -302,18 +301,6 @@
     const d = lastDesk != null ? lastDesk : state.desks && state.desks.desks[0] ? state.desks.desks[0].id : null;
     showDesk(d, true);
   }
-  /** Getting started's facts past the first page (about.js `started`, the
-   *  onboarding KPI in doc e74a6968c1): the reader answered an agent -- a
-   *  panel stopped for them, working again, once a page had come -- and on
-   *  a later day came back to a desk. Kept in this window's preferences,
-   *  as the card's other facts are; nothing leaves the machine. */
-  const gsGet = k => { try { return JSON.parse(localStorage.getItem("snyvi.own.gs." + k)); } catch { return null; } };
-  const gsSet = (k, v) => { try { localStorage.setItem("snyvi.own.gs." + k, JSON.stringify(v)); } catch {} };
-  const dayNow = () => new Date().toDateString();
-  function answered(was, now) {
-    if (now === "working" && (was === "done" || was === "needs_you") && gsGet("doc") && !gsGet("ans")) gsSet("ans", dayNow());
-  }
-  function cameBack() { const a = gsGet("ans"); if (typeof a === "string" && a !== dayNow() && !gsGet("back")) gsSet("back", 1); }
   /** The page's foot while the panel that sent it waits on the reader
    *  (desk.js `turnLine`). The desk's part, with the desk's styles: a page
    *  from a panel is read after its desk was opened, and first paint stays
@@ -440,8 +427,6 @@
    *  enough before drafts had a branch of their own. */
   async function docEvent(j) {
     const d = j.doc;
-    // A page from a panel: Getting started's second line, wherever it lands.
-    if (d && d.desk) gsSet("doc", 1);
     // A project that was put away and has just been written to is not put
     // away any more: the sidebar never holds back something waiting to be
     // read. Taking it out of the set is enough -- the refresh below draws it.
@@ -625,7 +610,7 @@
     // A pane started, stopped, or rang for its reader: the dots, at once.
     es.addEventListener("panes", ev => {
       const j = parse(ev); if (!j) return;
-      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) { answered(p.status && p.status.agent, j.agent); p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent }; }
+      for (const d of state.desks ? state.desks.desks : []) for (const p of d.panes) if (p.id === j.id) p.status = { ...p.status, running: j.running, blocked: j.blocked, agent: j.agent };
       renderDesks();
     });
     for (const ev of ["peeroffers", "peernotes", "peerdone", "peerreply"]) es.addEventListener(ev, onPeer);

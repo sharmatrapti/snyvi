@@ -763,6 +763,60 @@ async fn merges_unseen(app: &Arc<App>, desk: i64) {
     }
 }
 
+/// A line's work went out by another branch than its thread's -- a release
+/// branch that gathered several worktrees, a branch reused, a worktree with
+/// none -- and no merge of its thread's branch ever came: #129-#131 sat at
+/// "planned" on 1.36 with their commit in 1.35. So the commits on main are
+/// read too, for what they say they finish ("(#129-#131)", `git::named_in`),
+/// and a line one names lands: "check it", with the commit, for the reader
+/// to check (`desk::land_notes`). As often as the merges, off the lock.
+async fn notes_landed(app: &Arc<App>, desk: i64) {
+    static LOOKED: std::sync::Mutex<Vec<(i64, std::time::Instant)>> =
+        std::sync::Mutex::new(Vec::new());
+    {
+        let mut looked = LOOKED.lock().unwrap_or_else(|e| e.into_inner());
+        looked.retain(|(_, at)| at.elapsed() < MERGE_LOOK);
+        if looked.iter().any(|(d, _)| *d == desk) {
+            return;
+        }
+        looked.push((desk, std::time::Instant::now()));
+    }
+    let Ok(Some(root)) = app.store.desk(desk).map(|d| d.map(|d| d.root)) else {
+        return;
+    };
+    let Ok(open) = app.store.clocked(|c, _| crate::desk::landable(c, desk)) else {
+        return;
+    };
+    let Some(since) = open.iter().map(|(_, t)| *t).min() else {
+        return;
+    };
+    let named = tokio::task::spawn_blocking(move || {
+        crate::git::notes_named(std::path::Path::new(&root), since)
+    })
+    .await
+    .unwrap_or_default();
+    // Newest first from git: the latest commit that names a line, made after
+    // the line was written (or reopened), is the one it lands with.
+    let mut found: Vec<(i64, String, i64)> = Vec::new();
+    for (id, commit, at) in named {
+        let fits = open.iter().any(|(n, t)| *n == id && at >= *t);
+        if fits && !found.iter().any(|(f, ..)| *f == id) {
+            found.push((id, commit, at));
+        }
+    }
+    if found.is_empty() {
+        return;
+    }
+    if app
+        .store
+        .clocked(|c, _| crate::desk::land_notes(c, desk, &found))
+        .unwrap_or(0)
+        > 0
+    {
+        notes_moved(app, desk);
+    }
+}
+
 /// A desk's threads, its turns and its waiting suggestions: the rail's three
 /// sections in one read.
 pub(crate) async fn desk_threads(
@@ -775,6 +829,7 @@ pub(crate) async fn desk_threads(
         return no;
     }
     merges_unseen(&app, id).await;
+    notes_landed(&app, id).await;
     let r = app.store.clocked(|c, now| {
         // What has waited three days is put away first (`thread::retire`).
         if thread::retire(c, now)? > 0 {

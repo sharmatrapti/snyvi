@@ -120,16 +120,7 @@ async function act(b, byKey) {
     else if (a === "note-num") copySha(b, "✓");
     else if (a === "note-doc") ctx.read(b.dataset.d);
     else if (a === "note-ev") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
-    else if (a === "note-keep") {
-      const x = noteList.find(y => y.id === +b.dataset.n);
-      if (x) {
-        const by = x.suggested_by;
-        x.suggested_by = "";
-        rail();
-        if (await told(b.dataset, `n${x.id}`, "Could not keep it", () => { x.suggested_by = by; },
-          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/keep`, {}))) await getNotes(d.id, true);
-      }
-    }
+    else if (a === "note-keep" || a === "note-works" || a === "note-broken") await noteAct(a, b, d);
     else if (a === "note-tell") await tellNote(d, b);
     else if (a === "left-edit") leftOffEdit(d);
     else if (a === "left-back") leftOffBack(d);
@@ -193,6 +184,29 @@ const VERB = { new: "open a new panel", stop: "stop the panel", start: "start th
  *  was changed (`back`) and says so in the row that asked (`k`), with a
  *  Retry that does the same thing again (`again`, the button's data).
  *  True when the daemon said yes. */
+/** A line's answers that are not its circle: Keep on an agent's
+ *  suggestion; and on a line whose work is out (1.37), works -- ticked as
+ *  the reader's, with the commit it landed with (desk::check_note) -- and
+ *  not yet..., a field over the line for what is still wrong, which Enter
+ *  sends to reopen it (06-rail.js `saveNote`). Out of `act`, which is long. */
+async function noteAct(a, b, d) {
+  const x = noteList.find(y => y.id === +b.dataset.n);
+  if (!x) return;
+  if (a === "note-broken") { noteField = { kind: "broken", id: x.id }; noteDraft = ""; noteCaret = 0; rail(); return; }
+  if (a === "note-works") {
+    x.done = true; notesKept.add(x.id);
+    rail();
+    if (await told(b.dataset, `n${x.id}`, "Could not tick this", () => { x.done = false; },
+      () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/check`, { works: true }))) await getNotes(d.id, true);
+    return;
+  }
+  const by = x.suggested_by;
+  x.suggested_by = "";
+  rail();
+  if (await told(b.dataset, `n${x.id}`, "Could not keep it", () => { x.suggested_by = by; },
+    () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/keep`, {}))) await getNotes(d.id, true);
+}
+
 /** Tell Trapti ✓ on a friend's ticked line: said in the row at once, put
  *  back with the reason if the daemon says no. */
 async function tellNote(d, b) {

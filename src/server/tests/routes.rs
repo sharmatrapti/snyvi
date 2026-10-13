@@ -269,6 +269,13 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
     ("POST", "/api/desks/1/notes/1/keep", None, Gate::Desk, true),
     (
         "POST",
+        "/api/desks/1/notes/1/check",
+        Some("{}"),
+        Gate::Desk,
+        true,
+    ),
+    (
+        "POST",
         "/api/desks/1/leftoff",
         Some(r#"{"text":"x","at":0}"#),
         Gate::Desk,

@@ -52,7 +52,6 @@ const CSS = `
 /* On you: a button in the status line, and a sheet over the page under
    it -- the desk's "On you" corner's, so its coming moves nothing. */
 .hm-st { position: relative; }
-.hm-gs { margin: 14px 0 20px; max-width: 420px; }   /* past the note bar's -8px, which sits over what is above it */
 .hm .hm-ask { max-width: none; padding: 0; margin: 0; }
 .hm-ask .w-q { font-size: var(--fs-h3); font-weight: 600; margin: 0 0 12px; }
 .hm-ask .w-btns { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -204,6 +203,8 @@ const CSS = `
 .hm-stage.planned:hover { color: var(--accent); }
 .hm-stage svg { width: 10px; height: 10px; }
 .hm-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.hm-stage.landed::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.hm-stage.reopened::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 .hm-stage.working.busy::before { animation: hm-breathe calc(var(--dur-moment) * 2) ease-in-out infinite; }
 @keyframes hm-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .hm-stage.working::before { animation: none; } }
@@ -356,10 +357,6 @@ const DAY = 86400;
 const QUIET_DAYS = 10;
 
 let c = null, last = null, soon = 0, reading = 0, sheet = null;
-/** about.js, once Getting started is to be drawn (`started`): asked for
- *  before Home is first drawn, so the card is there from the first paint
- *  and its coming moves nothing. Null once the card is put away. */
-let gsMod = null;
 /** Where Claude Code stands here, asked once a visit to Home (/api/agents
  *  reads the agents' own files, too much for every refresh): "missing",
  *  "unconnected" or "connected"; null until it answers. The status line says
@@ -373,7 +370,6 @@ function claudeAsk() {
     if (was !== claudeIs && last && c.view() === "home") drawUnlessTyping();
   }, () => {});
 }
-const gsOn = () => { try { return localStorage.getItem("snyvi.own.gs") !== '"done"'; } catch { return true; } };
 /** Parking in progress: the desk whose row holds the form, what is typed in
  *  it (kept across the redraws an event brings), and the one just parked,
  *  which keeps its row, with an Undo, for a moment. */
@@ -453,7 +449,6 @@ export async function show(ctx) {
   peersDirty = true;
   tick();
   claudeAsk();
-  if (!gsMod && gsOn() && c.capability) await c.card().then(m => (gsMod = m), () => {});
   if (last) draw(last);
   await refresh();
 }
@@ -601,10 +596,8 @@ function draw(j) {
     (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "");
   const desks = j.desks ? w("desks", "Other desks", desksList(j)) : "";
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
-  // Getting started at the head (R11).
-  const ds = j.desks || [], gs = gsMod && c.capability ? gsMod.started({ desks: ds.length, docs: ds.some(d => d.has_doc) }) : "";
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
-    `<div class="hm-st">${status(j)}${onYou(j)}</div>` + (gs ? `<div class="hm-gs">${gs}</div>` : "") +
+    `<div class="hm-st">${status(j)}${onYou(j)}</div>` +
     `<div class="hm-grid"><div class="hm-main">${bar(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
     `<p class="hm-foot" data-part="home.foot">snyvi ${esc(j.version || "")} · <button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
@@ -889,7 +882,7 @@ function notesOf(d, max) {
   if (!rows.length) return d.done ? `<p class="hm-s hm-done">Notes done · ${d.done} of ${d.done}</p>` : "";
   return `<ul class="hm-next" aria-label="Open notes on ${esc(d.name)}">` + rows.map(r =>
     `<li class="hm-nt${r.done ? " done" : ""}"><button type="button" class="hm-tick" role="checkbox" aria-checked="${r.done}" data-hm="tick" data-k="${d.id}" data-n="${r.id}" aria-label="${r.done ? "Done" : "Not done"}: ${esc(r.text)}">${r.done ? TICK : ""}</button>${stageMark(r)}` +
-    `<span class="hm-nt-t" data-tip="${esc(r.text)}" data-tip-overflow>${esc(r.text)}</span>${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
+    `<span class="hm-nt-t" data-tip="${esc(r.text)}"${r.reply ? ` data-tip-sub="${esc(`${r.reply_by || "you"}: ${r.reply}`)}"` : " data-tip-overflow"}>${esc(r.text)}</span>${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
     (more > 0 ? `<li class="hm-s hm-nt-more"><a href="/desk/${d.id}" data-desk="${d.id}">and ${more} more</a></li>` : "") + `</ul>`;
 }
 /** A line's stage, in the slot every line keeps: the server has already
@@ -897,6 +890,11 @@ function notesOf(d, max) {
 function stageMark(r) {
   const { esc } = c, by = esc(r.stage_by || "an agent");
   const st = r.done ? "" : r.stage || "";
+  // Out on main by a commit that names it, waiting for the reader's check
+  // on its desk; or reopened, the reader having said it is still broken.
+  if (!r.done && r.landed_commit)
+    return `<span class="hm-stage landed" role="img" data-tip="Shipped in ${esc(r.landed_commit.slice(0, 7))}" data-tip-sub="check it on its desk: works, or not yet" aria-label="Shipped, waiting for your check"></span>`;
+  if (st === "reopened") return `<span class="hm-stage reopened" role="img" data-tip="Reopened" data-tip-sub="you said it is still broken" aria-label="Reopened"></span>`;
   if (st === "planned" && r.stage_doc)
     return `<a class="hm-stage planned" href="/d/${esc(r.stage_doc)}" data-id="${esc(r.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(r.text)}">${DOC}</a>`;
   if (st === "working") {
@@ -1465,8 +1463,6 @@ function wire() {
     // A click anywhere else closes an Add to a desk… list, or On you.
     if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }
     if (turnsOpen && !e.target.closest(".hm-st")) { turnsOpen = false; draw(last); }
-    const g = e.target.closest("button[data-gs]");
-    if (g) { if (g.dataset.gs === "more") c.newDesk(g); else { gsMod?.startedOff(true); gsMod = null; draw(last); } return; }
     const b = e.target.closest("button[data-hm]");
     if (!b) return;
     const k = b.dataset.hm, id = +b.dataset.k || 0;

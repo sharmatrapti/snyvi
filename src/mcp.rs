@@ -69,14 +69,19 @@ that is only partly done, planned, or done by someone else, and do not tick note
 tick shows your name beside the line, and the user can untick it. If the work went into a commit, pass its hash as \
 `commit` (as git log prints it); if you sent a document about it with send_document, pass its id as `about`; and \
 if the finished work can be seen somewhere -- a pull request, a deploy, a store page -- pass that URL as \
-`evidence`. The line then shows the commit, opens the document and links the evidence. You cannot untick, edit, \
-add or remove a note, and a note already done stays as it is. After ticking, say in your reply which notes you ticked.";
+`evidence`. Pass `say`: one line, under 160 characters, of what changed, in words the user can check against -- \
+\"The hook now catches xdg-open inside prose\", not \"done\" -- which shows under the note. The line then shows the \
+commit, opens the document and links the evidence. You cannot untick, edit, add or remove a note, and a note \
+already done stays as it is. A note the user marked still broken says what is still wrong: fix that. A commit \
+that finishes a note names it, \"(#129)\", so snyvi finds the work on main when it ships by another branch. After \
+ticking, say in your reply which notes you ticked.";
 
 const MARK_DESCRIPTION: &str = "Say how far you have got with one of the user's notes on this snyvi desk, by \
 its id from read_desk_notes (or several at once by `ids`), so the user can see it on the line: `read` when the user has set you on it and you \
 have read and understood it; `planned` when you have sent the plan with send_document -- pass the plan's id as \
 `about`, and the line opens it, or pass the notes to send_document as `notes`, which marks them for you; `working` as you start the work, which shows the line as being worked on in this \
-panel until this session ends. Mark a note only when the user has set you on it, never to claim one you chose \
+panel until this session ends. With `planned`, pass `say`: one line of what you will do, which shows under the \
+note. Mark a note only when the user has set you on it, never to claim one you chose \
 yourself. You can move a note back a stage, for example from working to planned when you stop partway. Done is \
 not a stage: when the work is finished and checked, tick it with tick_desk_note. You cannot mark a note that is \
 already done.";
@@ -436,7 +441,7 @@ impl Session {
         };
         let ids = json!({ "ids": args["notes"] });
         match each_note(&ids, |n| {
-            client::mark_desk_note(&self.paths, p, n, "planned", self.by(), doc).map(|_| ())
+            client::mark_desk_note(&self.paths, p, n, "planned", self.by(), doc, "").map(|_| ())
         }) {
             Err(why) => format!(" The notes were not marked: notes {why}"),
             Ok((done, failed)) => {
@@ -499,12 +504,11 @@ impl Session {
             );
         };
         let mut desk = None;
+        let body = json!({ "by": self.by(), "commit": commit, "about": about, "evidence": evidence, "say": arg(args, "say") });
         let did = each_note(args, |n| {
-            client::tick_desk_note(&self.paths, p, n, self.by(), &commit, &about, &evidence).map(
-                |v| {
-                    desk = v.get("desk").and_then(Value::as_str).map(str::to_string);
-                },
-            )
+            client::tick_desk_note(&self.paths, p, n, &body).map(|v| {
+                desk = v.get("desk").and_then(Value::as_str).map(str::to_string);
+            })
         });
         match did {
             Err(why) => said(format!("tick_desk_note {why}"), true),
@@ -529,7 +533,7 @@ impl Session {
     }
 
     fn mark_desk_note(&self, args: &Value) -> Value {
-        let (stage, about) = (arg(args, "stage"), arg(args, "about"));
+        let (stage, about, say) = (arg(args, "stage"), arg(args, "about"), arg(args, "say"));
         let Some(p) = self.pane.as_deref() else {
             return said(
                 "This session is not running in a snyvi desk, so there is no desk list to mark.",
@@ -537,7 +541,7 @@ impl Session {
             );
         };
         match each_note(args, |n| {
-            client::mark_desk_note(&self.paths, p, n, &stage, self.by(), &about).map(|_| ())
+            client::mark_desk_note(&self.paths, p, n, &stage, self.by(), &about, &say).map(|_| ())
         }) {
             Err(why) => said(format!("mark_desk_note {why}"), true),
             Ok((done, failed)) => said(
@@ -709,7 +713,8 @@ fn tick_spec() -> Value {
                 "ids": { "type": "array", "items": { "type": "integer" }, "description": "Several notes' ids at once, in place of id, when the same work finished each of them." },
                 "commit": { "type": "string", "description": "Optional hash of the commit the work went into, as git log prints it (7 to 40 hex digits)." },
                 "about": { "type": "string", "description": "Optional id of a document sent with send_document (its result's structuredContent.id) about the work; the line opens it." },
-                "evidence": { "type": "string", "description": "Optional http(s) URL where the finished work can be seen: a pull request, a deploy, a store page." }
+                "evidence": { "type": "string", "description": "Optional http(s) URL where the finished work can be seen: a pull request, a deploy, a store page." },
+                "say": { "type": "string", "description": "One line, under 160 characters, of what changed, shown under the note for the user to check against." }
             },
             "additionalProperties": false
         },
@@ -728,7 +733,8 @@ fn mark_spec() -> Value {
                 "id": { "type": "integer", "description": "The note's id, from read_desk_notes." },
                 "ids": { "type": "array", "items": { "type": "integer" }, "description": "Several notes' ids at once, in place of id, all to the same stage." },
                 "stage": { "type": "string", "enum": ["read", "planned", "working"], "description": "read, planned or working. Done is tick_desk_note." },
-                "about": { "type": "string", "description": "The id of the plan sent with send_document (its result's structuredContent.id). Needed with planned." }
+                "about": { "type": "string", "description": "The id of the plan sent with send_document (its result's structuredContent.id). Needed with planned." },
+                "say": { "type": "string", "description": "Optional one line, under 160 characters, about the note: with planned, what you will do. Shown under the note." }
             },
             "required": ["stage"],
             "additionalProperties": false
@@ -949,7 +955,15 @@ fn say_notes(v: &Value) -> String {
             (Some(b), Some(c)) => format!(" (ticked by {b}, in {c})"),
             (Some(b), None) => format!(" (ticked by {b})"),
             // How far an agent has got with an open line.
+            // Out on main, by a commit that names it: the user's to check.
+            _ if !done && field("landed_commit").is_some() => format!(
+                " (landed in {}, waiting for the user's check)",
+                field("landed_commit").unwrap_or("")
+            ),
             _ if !done => match (field("stage"), field("stage_doc"), field("stage_panel")) {
+                (Some("reopened"), ..) => {
+                    " (reopened: the user says it is still broken)".to_string()
+                }
                 (Some("working"), _, Some(p)) => format!(" (being worked on in {p})"),
                 (Some("planned" | "working"), Some(d), _) => format!(" (planned, plan {d})"),
                 (Some(s), _, _) => format!(" ({s})"),
@@ -961,6 +975,11 @@ fn say_notes(v: &Value) -> String {
             "- [{}] #{id} {text}{by}\n",
             if done { "x" } else { " " }
         ));
+        // The one line said about it: an agent's, or the user's own words.
+        if let Some(r) = field("reply") {
+            let who = field("reply_by").unwrap_or("the user");
+            out.push_str(&format!("  {who} said: {r}\n"));
+        }
         // A picture on the line: a file the agent can open and look at.
         for p in n
             .get("images")
@@ -1169,7 +1188,7 @@ mod tests {
             .cloned()
             .collect();
         props.sort();
-        assert_eq!(props, ["about", "commit", "evidence", "id", "ids"]);
+        assert_eq!(props, ["about", "commit", "evidence", "id", "ids", "say"]);
         let v = json!({ "desk": "alpha", "notes": [
             { "id": 3, "text": "ship it", "done": true, "done_by": "claude-code" },
             { "id": 4, "text": "fix hover", "done": true, "done_by": "claude-code", "done_commit": "90f09d6" }

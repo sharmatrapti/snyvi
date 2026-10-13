@@ -136,6 +136,7 @@ pub fn brief_of(
         .iter()
         .filter(|n| !n.done && n.suggested_by.is_empty())
         .collect();
+    lines.extend(loose_ends(&open));
     if !open.is_empty() {
         let named: Vec<String> = open
             .iter()
@@ -202,6 +203,44 @@ pub fn brief_of(
         ));
     }
     capped(lines)
+}
+
+/// What the loop left open, ahead of the list: lines whose work landed on
+/// main and wait for the user's check, and lines the user said are still
+/// broken, with their words. Any panel can close these, not only the one
+/// that started them; a reopened line is the first thing to fix.
+fn loose_ends(open: &[&DeskNote]) -> Vec<String> {
+    let mut lines = Vec::new();
+    let reopened: Vec<String> = open
+        .iter()
+        .filter(|n| n.stage == crate::desk::REOPENED)
+        .map(|n| {
+            let said = if n.reply_by.is_empty() && !n.reply.is_empty() {
+                format!(": \"{}\"", cut(&n.reply, LINE_CHARS))
+            } else {
+                String::new()
+            };
+            format!("#{} {}{said}", n.id, cut(&n.text, LINE_CHARS))
+        })
+        .collect();
+    if !reopened.is_empty() {
+        lines.push(format!(
+            "The user checked these and says they are still broken: {}. Ask before picking one up.",
+            reopened.join("; ")
+        ));
+    }
+    let landed: Vec<String> = open
+        .iter()
+        .filter(|n| !n.landed_commit.is_empty())
+        .map(|n| format!("#{} (in {})", n.id, n.landed_commit))
+        .collect();
+    if !landed.is_empty() {
+        lines.push(format!(
+            "Landed on main and waiting for the user's check, not yours to tick: {}.",
+            landed.join(", ")
+        ));
+    }
+    lines
 }
 
 /// The pane in `slot`, by id; empty when there is none.
@@ -637,6 +676,23 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    /// The loop's loose ends lead: a reopened line with the user's words,
+    /// then what landed on main and waits for their check.
+    #[test]
+    fn the_brief_leads_with_what_landed_and_what_was_reopened() {
+        let mut back = note(131, "icons are not aligning", false);
+        back.stage = crate::desk::REOPENED.into();
+        back.reply = "still off in the folded rail".into();
+        let mut out = note(129, "fold the rail", false);
+        out.landed_commit = "6d732b2".into();
+        let open = [&back, &out];
+        let got = loose_ends(&open);
+        assert_eq!(got.len(), 2);
+        assert!(got[0].contains("#131 icons are not aligning: \"still off in the folded rail\""));
+        assert!(got[1].contains("#129 (in 6d732b2)"));
+        assert!(loose_ends(&[&note(3, "plain", false)]).is_empty());
     }
 
     fn note(id: i64, text: &str, done: bool) -> DeskNote {

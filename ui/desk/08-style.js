@@ -516,6 +516,26 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-meta .dk-marks > .dk-stage.pr.fail { color: var(--warn); }
 /* Shipped, not yet ticked: out, and the reader's to check (#112). */
 .dk-meta .dk-marks > .dk-stage.shipped { color: var(--accent); font-weight: 600; }
+/* Its check, in the marks' room (1.37): Works in the accent, Not yet...
+   quiet; each a word, so the line under the text keeps its one height. */
+.dk-meta .dk-marks > .dk-chk { font-weight: 600; }
+.dk-meta .dk-marks > .dk-chk.ok { color: var(--accent); }
+.dk-meta .dk-marks > .dk-chk:hover { text-decoration: underline; }
+.dk-meta .dk-marks > .dk-chk:not(.ok) { font-weight: 400; color: var(--fg-2); }
+/* Reopened: the reader said it is still broken. */
+.dk-meta .dk-marks > .dk-stage.reopened { color: var(--warn); font-weight: 600; }
+/* A plan or a read a day old with nothing since: there, and quieter. */
+.dk-meta .dk-marks > .dk-stage.stale { opacity: .6; }
+/* A line's pictures are a mark of the line, not news: as quiet as its
+   number until the row is under the pointer (brainstorm b55419f304, "note
+   meta louder than the note"). */
+.dk-meta .dk-marks > .dk-pic:not(.back) { opacity: .6; transition: opacity var(--t); }
+.dk-note:is(:hover, :focus-within) .dk-meta .dk-marks > .dk-pic { opacity: 1; }
+/* The one line said about it, under its text: an agent's, or the reader's
+   own ("you: ..."). One line, whole in its tip. */
+.dk-reply { flex: 1 0 100%; min-width: 0; box-sizing: border-box; padding: 0 8px 1px 28px; margin-top: -1px; font-size: var(--fs-micro); line-height: 15px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dk-reply.mine { color: var(--warn); }
+.dk-note.done .dk-reply { color: var(--fg-3); }
 /* Its chat ended with the work not out: the dot held still and hollow. */
 .dk-stage.working.ended::before { background: none; box-shadow: inset 0 0 0 1.25px var(--accent); }
 .dk-stage.working.ended .w { color: var(--fg-2); }
