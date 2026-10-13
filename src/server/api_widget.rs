@@ -737,7 +737,10 @@ pub(crate) async fn widget_prefs(
         return rehome_widget(&app, &name, 0, d);
     }
     if let Some(d) = b.ask_again {
-        return match app.store.clocked(|c, now| widget::ask_again(c, d, &name, now)) {
+        return match app
+            .store
+            .clocked(|c, now| widget::ask_again(c, d, &name, now))
+        {
             Ok(was) => Json(json!({ "ok": was })).into_response(),
             Err(e) => err(e),
         };
@@ -1107,12 +1110,18 @@ fn propose_refusal(app: &App, desk: i64, b: &ProposeBody) -> Option<Box<Response
     {
         return Some(Box::new(refused(
             StatusCode::CONFLICT,
-            format!("this desk shows {} widgets already: read_widgets, and update one of yours", widget::DESK_MAX),
+            format!(
+                "this desk shows {} widgets already: read_widgets, and update one of yours",
+                widget::DESK_MAX
+            ),
         )));
     }
     let command = b.command.trim();
     if command.is_empty() || command.contains('\n') {
-        return Some(Box::new(refused(StatusCode::BAD_REQUEST, "the command is one line")));
+        return Some(Box::new(refused(
+            StatusCode::BAD_REQUEST,
+            "the command is one line",
+        )));
     }
     let script_ok = b.script_name.is_empty() || proposed_name_ok(&b.script_name);
     if !script_ok || b.script.len() > SCRIPT_MAX {
@@ -1123,7 +1132,9 @@ fn propose_refusal(app: &App, desk: i64, b: &ProposeBody) -> Option<Box<Response
     }
     let files_ok = b.files.len() <= FILES_MAX
         && proposed_names_apart(&b.script_name, &b.files)
-        && b.files.iter().all(|(n, t)| proposed_name_ok(n) && t.len() <= SCRIPT_MAX);
+        && b.files
+            .iter()
+            .all(|(n, t)| proposed_name_ok(n) && t.len() <= SCRIPT_MAX);
     if !files_ok {
         return Some(Box::new(refused(
             StatusCode::BAD_REQUEST,
@@ -1291,7 +1302,10 @@ pub(crate) async fn pane_widgets(
         let shown: Vec<serde_json::Value> = seats
             .iter()
             .map(|s| {
-                let body = md.iter().find(|(n, _)| *n == s.name).map(|(_, b)| b.as_str());
+                let body = md
+                    .iter()
+                    .find(|(n, _)| *n == s.name)
+                    .map(|(_, b)| b.as_str());
                 let state = if s.hidden {
                     "off"
                 } else if s.error.starts_with(widget::STOPPED) {
@@ -1407,8 +1421,16 @@ pub(crate) fn install_proposed(
     let shared = spec.scope == widget::files::Scope::Global
         || card.detail.get("where").and_then(|w| w.as_str()) != Some("here");
     let owner = if shared { 0 } else { card.desk_id };
-    if !shared && !app.store.clocked(|c, _| widget::desk_has_room(c, card.desk_id)).unwrap_or(true) {
-        return Err(format!("this desk shows {} widgets already: remove one first", widget::DESK_MAX));
+    if !shared
+        && !app
+            .store
+            .clocked(|c, _| widget::desk_has_room(c, card.desk_id))
+            .unwrap_or(true)
+    {
+        return Err(format!(
+            "this desk shows {} widgets already: remove one first",
+            widget::DESK_MAX
+        ));
     }
     let cfg = &app.paths.config_dir;
     if let Some(why) = widget::files::taken(cfg, owner, name) {
@@ -1481,7 +1503,10 @@ pub(crate) fn allow_box(
 /// A proposal's folder, if it is still what its card shows: there, where
 /// proposals wait, and not changed since it was proposed. A card made
 /// before 1.36 kept no hash, and is asked again.
-fn proposal_as_shown(app: &App, card: &crate::thread::Suggestion) -> Result<std::path::PathBuf, String> {
+fn proposal_as_shown(
+    app: &App,
+    card: &crate::thread::Suggestion,
+) -> Result<std::path::PathBuf, String> {
     let stage = std::path::PathBuf::from(&card.folder);
     if !stage.starts_with(proposed_dir(app)) || !stage.is_dir() {
         return Err("the proposal is not there any more".into());

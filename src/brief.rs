@@ -956,12 +956,14 @@ mod tests {
             kind: "decide".into(),
             text: "Search box after how many docs?".into(),
             answer: "After 10".into(),
+            answered_at: 150,
             ..Turn::default()
         };
         let tried = Turn {
             kind: "try".into(),
             text: "Try it on 7871".into(),
             answer: "Needs changes: the box jumps".into(),
+            answered_at: 150,
             ..Turn::default()
         };
         let parked = Thread {

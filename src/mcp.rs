@@ -1355,8 +1355,13 @@ mod tests {
     #[test]
     fn the_loop_kit_is_five_prompts() {
         let names: Vec<&str> = PROMPTS.iter().map(|p| p.name).collect();
-        assert_eq!(names, ["wrap-up", "plan", "catch-up", "explain-back", "widget"]);
-        assert!(PROMPTS[4].text.starts_with("Make me a widget on this desk for this. First read_widgets"));
+        assert_eq!(
+            names,
+            ["wrap-up", "plan", "catch-up", "explain-back", "widget"]
+        );
+        assert!(PROMPTS[4]
+            .text
+            .starts_with("Make me a widget on this desk for this. First read_widgets"));
         let outside: Vec<&str> = PROMPTS
             .iter()
             .filter(|p| !p.panel)

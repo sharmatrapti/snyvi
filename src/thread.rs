@@ -1384,7 +1384,13 @@ pub fn settle_key(conn: &Connection, desk_id: i64, name: &str, now: i64) -> Resu
 /// snyvi saw a thread's merge -- the mod's gh, or git in main: the `merge`
 /// turns on that thread are answered with it, and told at the next prompt,
 /// so "Merged" is what was seen rather than a click (B5, X4).
-fn settle_merge(conn: &Connection, desk_id: i64, thread: i64, merge: &str, now: i64) -> Result<usize> {
+fn settle_merge(
+    conn: &Connection,
+    desk_id: i64,
+    thread: i64,
+    merge: &str,
+    now: i64,
+) -> Result<usize> {
     let short: String = merge.chars().take(7).collect();
     Ok(conn.execute(
         "UPDATE turns SET answer = ?4, answered_in = 'snyvi', answered_at = ?3

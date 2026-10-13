@@ -349,7 +349,11 @@ fn skill_install(skills: &Path, refreshing: bool) -> Result<Skill> {
         }
         wrote |= write_if_changed(&path, text.as_bytes())?;
     }
-    Ok(if wrote { Skill::Written(dir) } else { Skill::Current })
+    Ok(if wrote {
+        Skill::Written(dir)
+    } else {
+        Skill::Current
+    })
 }
 
 /// Take out the skill's files that are ours, and its folder when nothing
@@ -1014,22 +1018,44 @@ mod skill_tests {
     #[test]
     fn the_skill_is_written_once_kept_current_and_taken_out() {
         let skills = tmp("ours");
-        assert!(matches!(skill_install(&skills, true).unwrap(), Skill::Absent));
+        assert!(matches!(
+            skill_install(&skills, true).unwrap(),
+            Skill::Absent
+        ));
         assert!(!skills.exists(), "an update does not sign a reader up");
-        assert!(matches!(skill_install(&skills, false).unwrap(), Skill::Written(_)));
+        assert!(matches!(
+            skill_install(&skills, false).unwrap(),
+            Skill::Written(_)
+        ));
         for (name, text) in SKILL {
             assert!(text.contains(SKILL_MARK), "{name}");
-            assert_eq!(std::fs::read_to_string(skills.join("snyvi").join(name)).unwrap(), text);
+            assert_eq!(
+                std::fs::read_to_string(skills.join("snyvi").join(name)).unwrap(),
+                text
+            );
         }
-        assert!(matches!(skill_install(&skills, true).unwrap(), Skill::Current));
+        assert!(matches!(
+            skill_install(&skills, true).unwrap(),
+            Skill::Current
+        ));
         // An older snyvi's text is rewritten by an update.
-        std::fs::write(skills.join("snyvi/SKILL.md"), format!("<!-- {SKILL_MARK} -->old")).unwrap();
-        assert!(matches!(skill_install(&skills, true).unwrap(), Skill::Written(_)));
+        std::fs::write(
+            skills.join("snyvi/SKILL.md"),
+            format!("<!-- {SKILL_MARK} -->old"),
+        )
+        .unwrap();
+        assert!(matches!(
+            skill_install(&skills, true).unwrap(),
+            Skill::Written(_)
+        ));
         // A file of the reader's beside ours stays, and keeps the folder.
         std::fs::write(skills.join("snyvi/mine.md"), "mine").unwrap();
         assert!(skill_remove(&skills).unwrap().is_some());
         assert!(!skills.join("snyvi/SKILL.md").exists());
-        assert_eq!(std::fs::read_to_string(skills.join("snyvi/mine.md")).unwrap(), "mine");
+        assert_eq!(
+            std::fs::read_to_string(skills.join("snyvi/mine.md")).unwrap(),
+            "mine"
+        );
         assert!(skill_remove(&skills).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&skills);
     }
@@ -1039,9 +1065,14 @@ mod skill_tests {
         let skills = tmp("theirs");
         std::fs::create_dir_all(skills.join("snyvi")).unwrap();
         std::fs::write(skills.join("snyvi/SKILL.md"), "---\nname: snyvi\n---\nmine").unwrap();
-        assert!(matches!(skill_install(&skills, false).unwrap(), Skill::Theirs(_)));
+        assert!(matches!(
+            skill_install(&skills, false).unwrap(),
+            Skill::Theirs(_)
+        ));
         assert!(skill_remove(&skills).unwrap().is_none());
-        assert!(std::fs::read_to_string(skills.join("snyvi/SKILL.md")).unwrap().ends_with("mine"));
+        assert!(std::fs::read_to_string(skills.join("snyvi/SKILL.md"))
+            .unwrap()
+            .ends_with("mine"));
         assert!(!skills.join("snyvi/widgets.md").exists());
         let _ = std::fs::remove_dir_all(&skills);
     }
@@ -1054,7 +1085,13 @@ mod skill_tests {
             assert!(main.lines().nth(2).unwrap().contains(word), "{word}");
         }
         // Every tool the skill names is one the server has.
-        for tool in ["read_widgets", "set_widget", "propose_widget", "hand_over", "leave_off"] {
+        for tool in [
+            "read_widgets",
+            "set_widget",
+            "propose_widget",
+            "hand_over",
+            "leave_off",
+        ] {
             assert!(main.contains(tool), "{tool}");
         }
     }

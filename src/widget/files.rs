@@ -88,8 +88,13 @@ pub fn remove(config_dir: &Path, owner: i64, name: &str, now: i64) -> Result<Str
 /// never `a`'s.
 pub fn removed_name(config_dir: &Path, id: &str, owner: i64) -> Option<String> {
     let rest = id.strip_prefix(&format!("{owner}-"))?;
-    let json = std::fs::read_to_string(removed_dir(config_dir).join(id).join("widget.json")).ok()?;
-    let name = serde_json::from_str::<Value>(&json).ok()?.get("name")?.as_str()?.to_string();
+    let json =
+        std::fs::read_to_string(removed_dir(config_dir).join(id).join("widget.json")).ok()?;
+    let name = serde_json::from_str::<Value>(&json)
+        .ok()?
+        .get("name")?
+        .as_str()?
+        .to_string();
     let t = rest.strip_prefix(&format!("{name}-"))?;
     let stamp_ok = t.starts_with(|c: char| c.is_ascii_digit())
         && t.bytes().all(|b| b.is_ascii_digit() || b == b'-')
@@ -482,7 +487,8 @@ pub fn settings_ok(spec: &Spec) -> Result<(), String> {
     for (k, f) in &spec.settings {
         let key_ok = !k.is_empty()
             && k.len() <= super::NAME_MAX
-            && k.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
+            && k.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
         if !key_ok {
             return Err(format!(
                 "the setting \"{k}\": a key is lowercase letters, digits, _ and -, at most 32"
@@ -508,7 +514,9 @@ pub fn settings_ok(spec: &Spec) -> Result<(), String> {
             return Err(format!("the setting {k}'s default is not a {}", f.kind));
         }
         if f.label.chars().count() > 60 || f.choices.len() > 12 {
-            return Err(format!("the setting {k}: a label of at most 60 characters, at most 12 choices"));
+            return Err(format!(
+                "the setting {k}: a label of at most 60 characters, at most 12 choices"
+            ));
         }
     }
     Ok(())
@@ -953,9 +961,11 @@ mod tests {
             ))
             .unwrap()
         };
-        assert!(settings_ok(&spec(r#"{"base":{"type":"string","default":"main"},
+        assert!(settings_ok(&spec(
+            r#"{"base":{"type":"string","default":"main"},
             "branch_only":{"type":"boolean"},"every-n":{"type":"number"},
-            "which":{"type":"choice","choices":["a","b"]}}"#))
+            "which":{"type":"choice","choices":["a","b"]}}"#
+        ))
         .is_ok());
         assert!(settings_ok(&spec(r#"{"which":{"type":"choice"}}"#))
             .unwrap_err()
@@ -966,10 +976,15 @@ mod tests {
         assert!(settings_ok(&spec(r#"{"Base":{"type":"string"}}"#)).is_err());
         // /sidebars draws "bool" too; a default must be one it can show.
         assert!(settings_ok(&spec(r#"{"on":{"type":"bool","default":true}}"#)).is_ok());
-        assert!(settings_ok(&spec(r#"{"port":{"type":"number","default":"3000"}}"#))
-            .unwrap_err()
-            .contains("default is not a number"));
-        assert!(settings_ok(&spec(r#"{"which":{"type":"choice","choices":["a"],"default":"b"}}"#)).is_err());
+        assert!(
+            settings_ok(&spec(r#"{"port":{"type":"number","default":"3000"}}"#))
+                .unwrap_err()
+                .contains("default is not a number")
+        );
+        assert!(settings_ok(&spec(
+            r#"{"which":{"type":"choice","choices":["a"],"default":"b"}}"#
+        ))
+        .is_err());
         let many: Vec<String> = (0..=SETTINGS_MAX)
             .map(|i| format!(r#""s{i}":{{"type":"string"}}"#))
             .collect();

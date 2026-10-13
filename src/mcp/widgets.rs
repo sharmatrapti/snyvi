@@ -97,7 +97,10 @@ impl Session {
                 "structuredContent": v,
                 "isError": false
             }),
-            Err(e) => said(format!("snyvi could not read the desk's widgets: {e}"), true),
+            Err(e) => said(
+                format!("snyvi could not read the desk's widgets: {e}"),
+                true,
+            ),
         }
     }
 
@@ -157,10 +160,20 @@ impl Session {
 /// the boxes asked for that do not show, then the cards still waiting.
 fn say_widgets(v: &Value) -> String {
     let desk = v.get("desk").and_then(Value::as_str).unwrap_or("this desk");
-    let list = |k: &str| v.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+    let list = |k: &str| {
+        v.get(k)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
     let s = |o: &Value, k: &str| o.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let yours = |o: &Value| o.get("yours") == Some(&Value::Bool(true));
-    let (shown, boxes, files, waiting) = (list("widgets"), list("boxes"), list("files"), list("waiting"));
+    let (shown, boxes, files, waiting) = (
+        list("widgets"),
+        list("boxes"),
+        list("files"),
+        list("waiting"),
+    );
     let limit = v.get("limit").and_then(Value::as_u64).unwrap_or(6);
     let mut out = format!(
         "Widgets on the desk \"{desk}\": {} of {limit}.\n",
@@ -197,7 +210,11 @@ fn say_widgets(v: &Value) -> String {
             "again" => " -- the user took back their no: a push of it asks again, with a card",
             _ => "",
         };
-        out.push_str(&format!("- box {} ({}{who}){then}\n", s(b, "name"), s(b, "answer")));
+        out.push_str(&format!(
+            "- box {} ({}{who}){then}\n",
+            s(b, "name"),
+            s(b, "answer")
+        ));
     }
     for f in files.iter().filter(|f| !named(&s(f, "name"))) {
         let state = if !s(f, "error").is_empty() {
@@ -205,25 +222,51 @@ fn say_widgets(v: &Value) -> String {
         } else if f.get("changed") == Some(&Value::Bool(true)) {
             "changed since it was allowed: waits for Allow".into()
         } else if f.get("allowed") == Some(&Value::Bool(true)) {
-            if f.get("off") == Some(&Value::Bool(true)) { "off" } else { "allowed, not run yet" }.into()
+            if f.get("off") == Some(&Value::Bool(true)) {
+                "off"
+            } else {
+                "allowed, not run yet"
+            }
+            .into()
         } else {
             "waits for Allow".into()
         };
         out.push_str(&format!("- file {} ({state})\n", s(f, "name")));
     }
-    let names = |k: &str| list(k).iter().filter_map(|n| n.as_str().map(String::from)).collect::<Vec<_>>();
+    let names = |k: &str| {
+        list(k)
+            .iter()
+            .filter_map(|n| n.as_str().map(String::from))
+            .collect::<Vec<_>>()
+    };
     let (declined, removed) = (names("proposals_not_now"), names("removed"));
     if !declined.is_empty() {
-        out.push_str(&format!("- proposals the user said not now to: {} -- leave them unless they ask\n", declined.join(", ")));
+        out.push_str(&format!(
+            "- proposals the user said not now to: {} -- leave them unless they ask\n",
+            declined.join(", ")
+        ));
     }
     if !removed.is_empty() {
-        out.push_str(&format!("- widget files the user removed: {} -- leave them unless they ask\n", removed.join(", ")));
+        out.push_str(&format!(
+            "- widget files the user removed: {} -- leave them unless they ask\n",
+            removed.join(", ")
+        ));
     }
     for c in &waiting {
         let who = if yours(c) { "yours" } else { "another panel's" };
-        out.push_str(&format!("- card waiting: {} {} ({who})\n", s(c, "kind"), s(c, "name")));
+        out.push_str(&format!(
+            "- card waiting: {} {} ({who})\n",
+            s(c, "kind"),
+            s(c, "name")
+        ));
     }
-    if shown.is_empty() && boxes.is_empty() && files.is_empty() && waiting.is_empty() && declined.is_empty() && removed.is_empty() {
+    if shown.is_empty()
+        && boxes.is_empty()
+        && files.is_empty()
+        && waiting.is_empty()
+        && declined.is_empty()
+        && removed.is_empty()
+    {
         out.push_str("None yet.\n");
     }
     out

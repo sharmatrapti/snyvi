@@ -933,10 +933,13 @@ pub(crate) fn folder_of(app: &App, b: &FolderBody) -> Option<std::path::PathBuf>
         app.store.desk(id).ok().flatten().map(|d| d.root.into())
     } else if let Some(id) = b.project {
         app.store.project_root(id).map(Into::into)
-    } else if let Some(name) = b.widget.as_deref().filter(|n| crate::widget::name_ok(n)) {
-        Some(crate::widget::files::folder_of(&app.paths.config_dir, b.owner.unwrap_or(0), name))
     } else {
-        None
+        b.widget
+            .as_deref()
+            .filter(|n| crate::widget::name_ok(n))
+            .map(|name| {
+                crate::widget::files::folder_of(&app.paths.config_dir, b.owner.unwrap_or(0), name)
+            })
     };
     dir.filter(|d| d.is_dir())
 }

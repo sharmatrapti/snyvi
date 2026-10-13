@@ -246,8 +246,14 @@ impl Session {
         match self.thread_call("settle", json!({})) {
             Ok(v) => match v.get("settled").and_then(Value::as_i64).unwrap_or(0) {
                 0 => said("None of your questions was open on On you.", false),
-                1 => said("Settled: one question, answered in the conversation.", false),
-                n => said(format!("Settled: {n} questions, answered in the conversation."), false),
+                1 => said(
+                    "Settled: one question, answered in the conversation.",
+                    false,
+                ),
+                n => said(
+                    format!("Settled: {n} questions, answered in the conversation."),
+                    false,
+                ),
             },
             Err(e) => e,
         }

@@ -382,10 +382,16 @@ impl Body {
             // the box or show its braces: `{"status":"ok"}`, `{"body":5}`.
             if let Ok(serde_json::Value::Object(o)) = serde_json::from_str::<serde_json::Value>(t) {
                 const KNOWN: [&str; 5] = ["body", "tone", "count", "lines", "stale_after"];
-                if let Some(k) = o.keys().find(|k| !KNOWN.contains(&k.as_str())).filter(|_| !o.contains_key("body")) {
+                if let Some(k) = o
+                    .keys()
+                    .find(|k| !KNOWN.contains(&k.as_str()))
+                    .filter(|_| !o.contains_key("body"))
+                {
                     return Err(format!("JSON with \"{k}\" and no \"body\": a widget prints {{\"body\": …}}, or Markdown"));
                 }
-                if o.get("body").is_some_and(|b| !b.is_string() && !b.is_null()) {
+                if o.get("body")
+                    .is_some_and(|b| !b.is_string() && !b.is_null())
+                {
                     return Err("\"body\" is Markdown text".into());
                 }
             }

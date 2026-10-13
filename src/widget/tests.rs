@@ -163,8 +163,12 @@ fn nothing_clears() {
     assert_eq!(Body::parse(r#"{"body":"  "}"#).unwrap(), Sent::Clear);
     assert_eq!(Body::parse(r#"{"tone":"ok"}"#).unwrap(), Sent::Clear);
     // Not a widget's JSON: said, not cleared, not drawn as braces.
-    assert!(Body::parse(r#"{"status":"ok"}"#).unwrap_err().contains("no \"body\""));
-    assert!(Body::parse(r#"{"body":5}"#).unwrap_err().contains("Markdown text"));
+    assert!(Body::parse(r#"{"status":"ok"}"#)
+        .unwrap_err()
+        .contains("no \"body\""));
+    assert!(Body::parse(r#"{"body":5}"#)
+        .unwrap_err()
+        .contains("Markdown text"));
 }
 
 #[test]
@@ -627,7 +631,11 @@ fn a_no_is_the_readers_to_take_back() {
     ask_answer(&c, 1, "deploy", "no", 0, "", 2).unwrap();
     ask_wait(&c, 2, "ci", "p2", "panel 2", "y", 1).unwrap();
     ask_answer(&c, 2, "ci", "yes", 0, "", 2).unwrap();
-    let refused: Vec<_> = asks_refused(&c).unwrap().into_iter().map(|a| (a.desk_id, a.name)).collect();
+    let refused: Vec<_> = asks_refused(&c)
+        .unwrap()
+        .into_iter()
+        .map(|a| (a.desk_id, a.name))
+        .collect();
     assert_eq!(refused, vec![(1, "deploy".to_string())]);
     assert!(ask_again(&c, 1, "deploy", 3).unwrap());
     assert_eq!(ask_of(&c, 1, "deploy").unwrap().unwrap().answer, "again");

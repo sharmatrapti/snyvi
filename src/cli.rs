@@ -883,7 +883,10 @@ fn widget_check(
         None => {
             let owned = files::folder_of(&paths.config_dir, desk, name);
             let owner = if desk != 0 && owned.is_dir() { desk } else { 0 };
-            (files::folder_of(&paths.config_dir, owner, name), Some(owner))
+            (
+                files::folder_of(&paths.config_dir, owner, name),
+                Some(owner),
+            )
         }
     };
     let spec =

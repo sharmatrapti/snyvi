@@ -5,7 +5,12 @@ use super::*;
 use crate::widget;
 
 /// What a request answered, its body read whatever its status.
-async fn said(router: &Router, path: &str, body: &str, headers: &[(&str, &str)]) -> (StatusCode, String) {
+async fn said(
+    router: &Router,
+    path: &str,
+    body: &str,
+    headers: &[(&str, &str)],
+) -> (StatusCode, String) {
     let mut req = axum::http::Request::builder().method("POST").uri(path);
     for (k, v) in headers {
         req = req.header(*k, *v);
@@ -23,17 +28,21 @@ async fn said(router: &Router, path: &str, body: &str, headers: &[(&str, &str)])
 /// Add allows the folder the card showed and nothing else: an agent that
 /// edits its proposal after the card is up -- it has a shell as the reader
 /// -- gets nothing allowed, and is asked to propose it again.
-#[test]
-fn add_allows_only_what_the_card_showed() {
+#[tokio::test]
+async fn add_allows_only_what_the_card_showed() {
     let (_tmp, app, _router, _leaves) = gated_app_with("snyvi-widget-card", |_| {});
-    let desk = app.store.create_desk("/tmp/cardwatch", Some("cardwatch")).unwrap().id;
+    let desk = app
+        .store
+        .create_desk("/tmp/cardwatch", Some("cardwatch"))
+        .unwrap()
+        .id;
     let stage = widget::files::dir(&app.paths.config_dir)
         .join(".proposed")
         .join("100-ci");
     std::fs::create_dir_all(&stage).unwrap();
     std::fs::write(
         stage.join("widget.json"),
-        r#"{"name":"ci","scope":"desk","run":{"command":"run.sh"}}"#,
+        r#"{"name":"ci","scope":"desk","run":{"command":"sh \"$SNYVI_WIDGET_DIR/run.sh\""}}"#,
     )
     .unwrap();
     std::fs::write(stage.join("run.sh"), "echo shown").unwrap();
@@ -72,7 +81,10 @@ fn add_allows_only_what_the_card_showed() {
 #[tokio::test]
 async fn the_token_turns_a_widget_off_and_widens_nothing() {
     let (_tmp, router, l) = gated_router("snyvi-widget-widen");
-    let agent = [("host", l.host.as_str()), ("authorization", l.bearer.as_str())];
+    let agent = [
+        ("host", l.host.as_str()),
+        ("authorization", l.bearer.as_str()),
+    ];
     let window = [
         ("host", l.host.as_str()),
         ("origin", l.origin.as_str()),
@@ -102,14 +114,21 @@ async fn the_token_turns_a_widget_off_and_widens_nothing() {
 #[tokio::test]
 async fn a_no_holds_on_the_cli_until_the_reader_takes_it_back() {
     let (_tmp, app, router, l) = gated_app_with("snyvi-widget-no", |_| {});
-    let desk = app.store.create_desk("/tmp/nohold", Some("nohold")).unwrap().id;
+    let desk = app
+        .store
+        .create_desk("/tmp/nohold", Some("nohold"))
+        .unwrap()
+        .id;
     app.store
         .clocked(|c, now| {
             widget::ask_wait(c, desk, "deploy", "p1", "panel 1", "x", now)?;
             widget::ask_answer(c, desk, "deploy", "no", 0, "", now).map(|_| ())
         })
         .unwrap();
-    let agent = [("host", l.host.as_str()), ("authorization", l.bearer.as_str())];
+    let agent = [
+        ("host", l.host.as_str()),
+        ("authorization", l.bearer.as_str()),
+    ];
     let push = |body: &str| format!(r#"{{"name":"deploy","desk":{desk},"body":"{body}"}}"#);
     let (code, why) = said(&router, "/api/widgets", &push("**3/5**"), &agent).await;
     assert_eq!(code, StatusCode::CONFLICT, "{why}");
