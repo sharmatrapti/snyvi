@@ -2458,6 +2458,7 @@ pub fn new_id(hash: &str) -> String {
 
 mod keys;
 mod queue;
+mod refile;
 mod sends;
 pub use sends::Promotion;
 mod talk;
