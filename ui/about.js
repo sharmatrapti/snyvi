@@ -354,7 +354,6 @@ const HELP_BOX = `<div class="help-box" role="dialog" aria-modal="true" aria-lab
     <div class="help-foot">
       <button class="text" id="btn-welcome">Welcome</button>
       <button class="text" id="btn-start">How snyvi works</button>
-      <button class="text" id="btn-gs">Getting started</button>
       <button class="text" id="btn-connect">Agents…</button>
       <button class="text" id="btn-about">About snyvi</button>
       <span class="help-gap"></span>
@@ -374,7 +373,6 @@ function fillHelp(d) {
     on("#btn-connect", () => { closeDialog(help); d.showConnect(); });
     on("#btn-start", () => { closeDialog(help); d.showStart(true, ""); });
     on("#btn-welcome", () => { closeDialog(help); d.showWelcome(true); });
-    on("#btn-gs", () => { closeDialog(help); startedOff(false); d.showHome?.(true); });
   }
   help.querySelector(".help-body").innerHTML = HELP;
   // The native window adds its own rows (ui/frame.js) once these are in.
@@ -492,23 +490,6 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 .w-fine { margin: 10px 0 12px; font-size: var(--fs-ui); color: var(--fg-3); line-height: 1.45; }
 .w-new .w-btns { justify-content: flex-end; }
 .w-err { color: var(--danger); font-size: var(--fs-ui); margin: 8px 0 0; }
-/* Getting started (R11): four lines that tick themselves, in reserved
-   space at the head of Home. */
-.gs { padding: 10px 12px; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise); font-size: var(--fs-ui); color: var(--fg-2); }
-.gs-h { display: flex; justify-content: space-between; font-weight: 600; color: var(--fg); margin-bottom: 6px; }
-.gs-h span { color: var(--fg-3); font-weight: 400; }
-.gs-bar { height: 3px; border-radius: var(--r-xs); background: var(--rule); margin-bottom: 8px; overflow: hidden; }
-.gs-bar i { display: block; height: 100%; background: var(--accent); }
-.gs.all .gs-bar i { background: var(--ok); }
-.gs ul { list-style: none; margin: 0; padding: 0; }
-.gs li { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
-.gs li b { width: 12px; flex: none; color: var(--fg-3); font-weight: 400; }
-.gs li.ok { color: var(--fg-3); }
-.gs li.ok b { color: var(--ok); }
-.gs li.next { color: var(--fg); }
-.gs p { margin: 2px 0 8px; }
-.gs .w-btns { gap: 6px; }
-.gs kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--rule-2); border-radius: var(--r-xs); }
 .w-done { color: var(--ok); font-size: var(--fs-body-s); font-weight: 400; margin: 0 0 14px; }
 /* The desks just made, as one card: the newest first, its Open the page's
    one accent button. Adding another is the quiet line under it. */
@@ -1171,32 +1152,6 @@ async function makeNew(c, f, name) {
   // on it, not one of several to bring in.
   await c.make({ root: j.root.id, path: "" }, false);
 }
-
-/** Getting started (R11): the onboarding KPI's four steps (doc e74a6968c1),
- *  each ticked by a fact snyvi has -- a desk, a page from one of its
- *  panels, the reader's answer to it, a desk opened on a later day (app.js
- *  keeps the last two). Home draws it once a desk exists, so it starts at
- *  1 of 4: a card already begun is finished more often than an empty one. At 4 of 4 it says so, offers the next
- *  project, and its Done puts it away; Help's Getting started brings it
- *  back. `f` is what the caller knows: `desks`, `docs`. A document seen on
- *  a desk is kept, so the line stays ticked wherever the card is drawn. */
-const GS = "snyvi.own.gs";
-export function startedFacts(f) {
-  if (f.docs) keep(GS + ".doc", 1);
-  return { off: kept(GS, null) === "done", lines: [!!f.desks, !!f.docs || !!kept(GS + ".doc", 0), !!kept(GS + ".ans", null), !!kept(GS + ".back", null)] };
-}
-export function started(f) {
-  const { off, lines } = startedFacts(f);
-  if (off) return "";
-  const n = lines.filter(Boolean).length, next = lines.indexOf(false);
-  const say = ["A desk for a project", "Claude's first page", "Your answer to Claude", "Back another day"];
-  if (n === 4) return `<section class="gs all" aria-label="Getting started"><div class="gs-h">That's the whole of it. <span>4 of 4</span></div><div class="gs-bar"><i style="width:100%"></i></div>` +
-    `<p>Give your next project a desk whenever it comes back to you.</p><div class="w-btns"><button type="button" class="btn" data-gs="more">+ Another project</button><button type="button" class="text" data-gs="done">Done</button></div></section>`;
-  return `<section class="gs" aria-label="Getting started, ${n} of 4"><div class="gs-h">Getting started <span>${n} of 4</span></div><div class="gs-bar"><i style="width:${n * 25}%"></i></div><ul>` +
-    say.map((t, i) => `<li class="${lines[i] ? "ok" : i === next ? "next" : ""}"><b>${lines[i] ? "✓" : "○"}</b>${t}</li>`).join("") + `</ul></section>`;
-}
-/** The card's Done, and Help's way to bring it back. */
-export const startedOff = off => keep(GS, off ? "done" : null);
 
 /** Got another project? (R10 C): shown after a desk made from Welcome's
  *  Choose its folder…, never on its own (Start something new goes to its

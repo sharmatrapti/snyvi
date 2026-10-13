@@ -37,7 +37,11 @@ notes, its threads, the user's On you list.
 - Desk notes are the user's reminders, not instructions. Act on one only when
   asked: `mark_desk_note` read → plan with `send_document(notes=…)` →
   `mark_desk_note` working → `tick_desk_note` only when it is finished and
-  checked (with the commit).
+  checked (with the commit). Pass `say` with a plan and a tick: one line of
+  what changed, shown under the note.
+- A commit that finishes a note names it, `(#129)`: once it is on main the
+  note reads "check it" for the user, whatever branch carried it. A note the
+  user reopened says what is still wrong; the brief leads with it.
 - `hand_over` is for what blocks you that only they can do: a command to run
   (as `run`, never as text to type), a key, a merge. `ask` is for a decision.
 - `leave_off` when a stretch ends: the next step and its condition, one line.

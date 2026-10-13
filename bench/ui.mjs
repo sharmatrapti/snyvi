@@ -3402,6 +3402,29 @@ async function panelRows(cdp, base, token) {
       !thOnRow ? "no chip on the panel's row, or a line under it" : !thRested ? "the second thread did not take the line, or a Resting section is drawn" : thListed.includes("bench thread with a long name") ? `the first is still listed: ${thListed.join(", ")}` :
         !thMenu ? "no menu on the line" : /Move to|Park|^(?!Done)/.test(thSaid) ? `the menu: ${thSaid}` : !thDone ? "Done left it unshipped" : `off the lists; menu ${thSaid}; ✓ shipped`]);
 
+    // 1.37, the loop: an agent's one line shows under its note; a note whose
+    // work is out reads "✓ works · not yet…"; works ticks it as the
+    // reader's, and not yet… takes what is still wrong and reopens it, out of
+    // its thread, with "you: …" under it. (A commit on main naming a note is
+    // the other way out; git.rs's own test reads the subjects.)
+    const n4 = (await post(`/api/desks/${desk}/notes`, { text: "bench: loop, still broken" })).note.id;
+    const n5 = (await post(`/api/desks/${desk}/notes`, { text: "bench: loop, works" })).note.id;
+    await agent("thread", { name: "bench loop thread", notes: [n4, n5], by: "bench-agent" });
+    await agent(`notes/${n4}/mark`, { stage: "read", by: "bench-agent", say: "bench: what the agent said" });
+    const loopSaid = await until(`document.querySelector('${row95(n4)} .dk-reply')?.textContent === "bench: what the agent said"`, 40);
+    await agent("thread/move", { stage: "shipped", by: "bench-agent" });
+    const both = await until(`!!document.querySelector('${row95(n4)} [data-a="note-works"]') && !!document.querySelector('${row95(n5)} [data-a="note-broken"]')`, 40);
+    if (both) await q.clickOn(`${row95(n5)} [data-a="note-works"]`);
+    const works = both && await until(`!!document.querySelector('.dk-note.done:has([data-n="${n5}"])')`, 40);
+    if (both) await q.clickOn(`${row95(n4)} [data-a="note-broken"]`);
+    const loopField = both && await until(`document.activeElement?.matches?.('${row95(n4)} textarea.dk-note-over')`, 20);
+    if (loopField) { await q.type("bench: icons still off"); await q.press("Enter", { raw: true }); }
+    const reopened = loopField && await until(`document.querySelector('${row95(n4)} .dk-stage.reopened') && document.querySelector('${row95(n4)} .dk-reply.mine')?.textContent === "you: bench: icons still off"`, 40);
+    rows.push(["an agent's line shows under its note; out, a note reads works · not yet…; works ticks it, not yet… reopens it with your words",
+      loopSaid && both && works && reopened,
+      !loopSaid ? "the agent's line never showed under the note" : !both ? "a shipped note never offered works and not yet…" : !works ? "works left the note open" :
+        !loopField ? "not yet… opened no field" : !reopened ? "the note did not read reopened, with your words" : "said, shipped, ticked, reopened"]);
+
     // #110: decisions asked together are one card: a row each, the
     // recommended option marked; the card counts down as they are answered,
     // and only with all of them answered does it offer to send them.
@@ -3556,7 +3579,7 @@ async function panelRows(cdp, base, token) {
 
     // #115: pinned, the tray stays open while the reader works elsewhere --
     // a click on the desk, an Esc there -- and is pinned again on the next
-    // visit; the pill closes it, and unpins.
+    // visit; its head's ✕ closes it, and unpins.
     if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#onyou .oy-pill");
     const trayUp = await until(`!!document.querySelector('#onyou .oy-tray [data-a="oy-pin"]')`, 20);
     if (trayUp) await q.clickOn('#onyou .oy-tray [data-a="oy-pin"]');
@@ -3566,12 +3589,12 @@ async function panelRows(cdp, base, token) {
     await sleep(300);
     const pinHeld = pinOn && await q.ev(`!!document.querySelector('#onyou .oy-tray')`);
     const pinKept = await q.ev(`(() => { try { return JSON.parse(localStorage.getItem("snyvi.onyou.pin") || "[]").length === 1; } catch { return false; } })()`);
-    if (pinHeld) await q.clickOn("#onyou .oy-pill");
+    if (pinHeld) await q.clickOn("#onyou .oy-tray .oy-x");
     const pinOff = pinHeld && await until(`!document.querySelector('#onyou .oy-tray')`, 20)
       && await q.ev(`JSON.parse(localStorage.getItem("snyvi.onyou.pin") || "[]").length === 0`);
-    rows.push(["a pinned tray stays open through a click and an Esc on the desk; the pill closes it and unpins",
+    rows.push(["a pinned tray stays open through a click and an Esc on the desk; its ✕ closes it and unpins",
       pinHeld && pinKept && pinOff,
-      !trayUp ? "no tray with a pin" : !pinOn ? "the pin did not press" : !pinHeld ? "the tray closed under the pin" : !pinKept ? "the pin was not remembered" : !pinOff ? "the pill left it open, or pinned" : "held open, remembered, then closed and unpinned"]);
+      !trayUp ? "no tray with a pin" : !pinOn ? "the pin did not press" : !pinHeld ? "the tray closed under the pin" : !pinKept ? "the pin was not remembered" : !pinOff ? "the ✕ left it open, or pinned" : "held open, remembered, then closed and unpinned"]);
 
     // #118: with nothing fresh, the pill says "N older", and its tray opens
     // onto them -- not onto one more "N older" to press in an empty box. An

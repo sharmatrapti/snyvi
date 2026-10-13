@@ -197,13 +197,15 @@ function turnRow(d, w, esc) {
     : (ANSWERS[w.kind] || ["Done"]).map(o => o.endsWith("…")
       ? `<button type="button" class="tn-opt quiet" data-a="tn-change" data-w="${w.id}">${esc(o)}</button>`
       : `<button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}">${esc(o)}</button>`).join("");
-  const link = /^https?:\/\//.test(w.link || "") ? `<button type="button" class="tn-opt quiet" data-a="tn-link" data-u="${esc(w.link)}" data-tip="${esc(w.link)}">Open ↗</button>` : "";
+  // The link is its host, in the by-line: an Open ↗ beside Looks good and
+  // Needs changes… wrapped the three onto two lines in the rail's width.
+  const link = /^https?:\/\//.test(w.link || "") ? `<button type="button" class="tn-host" data-a="tn-link" data-u="${esc(w.link)}" data-tip="Open ↗" data-tip-sub="${esc(w.link)}">${esc(hostOf(w.link) || "link")} ↗</button>` : "";
   // A key is added on this desk's keys sheet: the card opens it (#114),
   // rather than leave the reader to find it with the card in the way.
   const add = w.kind === "key" ? `<button type="button" class="tn-opt rec" data-a="tn-key" data-tip="Add key…" data-tip-sub="This desk's keys: a panel started after has it">Add key…</button>` : "";
   return `<li class="dk-turn" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
-    `<p class="tn-by">${esc(w.kind === "decide" ? "decide" : w.kind)} · ${esc(from)}${w.link ? ` · ${esc(link ? hostOf(w.link) : w.link)}` : ""}</p>` +
-    `<div class="tn-acts">${add}${buttons}${link}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
+    `<p class="tn-by">${esc(w.kind === "decide" ? "decide" : w.kind)} · ${esc(from)}${w.link ? ` · ${link || esc(w.link)}` : ""}</p>` +
+    `<div class="tn-acts">${add}${buttons}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
     otherIn(w) + `</li>` + errLine(`w${w.id}`, esc);
 }
 
@@ -663,6 +665,8 @@ const THREAD_CSS = `
 .tn-q, .sg-what { margin: 0; color: var(--fg); }
 .tn-by { margin: 2px 0 0; font-size: var(--fs-micro); color: var(--fg-3); }
 .tn-by b { font-weight: inherit; color: var(--fg-2); }
+.tn-host { padding: 0; border: 0; background: none; font: inherit; color: var(--fg-2); text-decoration: underline dotted; cursor: pointer; }
+.tn-host:hover { color: var(--accent); }
 .tn-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; }
 .tn-opt { padding: 1px 7px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-2); cursor: pointer; }
 .tn-opt:hover { color: var(--fg); border-color: var(--accent); }

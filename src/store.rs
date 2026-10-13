@@ -570,6 +570,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // key turn waits for (`thread::ON_YOU_1_36`).
     (21, thread::ON_YOU_1_36[0]),
     (21, thread::ON_YOU_1_36[1]),
+    (22, desk::LOOP_COLUMNS_1_37), // 1.37: a line landed by a commit, and its reply
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

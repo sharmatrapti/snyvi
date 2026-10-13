@@ -298,6 +298,9 @@ pub(crate) struct TickBody {
     /// Where the finished work can be seen: a PR, a deploy, a store page.
     #[serde(default)]
     pub(crate) evidence: String,
+    /// One line about what changed, shown under the note.
+    #[serde(default)]
+    pub(crate) say: String,
 }
 
 /// An agent ticks a line on its own desk's list: `tick_desk_note`. The same
@@ -347,6 +350,7 @@ pub(crate) async fn pane_tick_note(
         doc: doc.into(),
         evidence: evidence.into(),
         pane: id.clone(),
+        say: b.say,
     };
     match app.store.tick_desk_note(placed.desk_id, note, &tick) {
         Ok(true) => {
@@ -374,6 +378,9 @@ pub(crate) struct MarkBody {
     /// The plan's document id: needed with `planned`.
     #[serde(default)]
     pub(crate) about: String,
+    /// One line about the line, shown under it.
+    #[serde(default)]
+    pub(crate) say: String,
 }
 
 /// An agent says how far it has got with a line on its own desk's list:
@@ -409,6 +416,7 @@ pub(crate) async fn pane_mark_note(
         doc: doc.into(),
         pane: id.clone(),
         session: placed.pane.agent_session.clone(),
+        say: b.say,
     };
     match app.store.mark_desk_note(placed.desk_id, note, &mark) {
         Ok(true) => {

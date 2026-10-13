@@ -8,6 +8,7 @@ fn db() -> Connection {
     conn.execute_batch(HELD_COLUMN).unwrap();
     conn.execute_batch(SENT_BY_COLUMN).unwrap();
     conn.execute_batch(crate::thread::THREAD_COLUMN).unwrap();
+    conn.execute_batch(LOOP_COLUMNS_1_37).unwrap();
     conn.execute_batch(crate::accounts::SCHEMA).unwrap();
     for c in crate::accounts::COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
@@ -201,6 +202,7 @@ fn mark(stage: &str, doc: &str) -> Mark {
         doc: doc.into(),
         pane: "p1".into(),
         session: "s1".into(),
+        say: String::new(),
     }
 }
 
@@ -295,6 +297,7 @@ fn a_tick_carries_its_commit_and_document_and_an_untick_clears_them() {
         doc: "82cc8f2d3c".into(),
         evidence: "https://github.com/o/r/pull/40".into(),
         pane: "p1".into(),
+        say: String::new(),
     };
     assert!(tick_note(&conn, mine, n.id, &tick, 1).unwrap());
     let got = &notes(&conn, mine).unwrap()[0];
@@ -330,6 +333,7 @@ fn a_tick_carries_its_commit_and_document_and_an_untick_clears_them() {
         doc: "../etc".into(),
         evidence: "javascript:alert(1)".into(),
         pane: String::new(),
+        say: String::new(),
     };
     assert!(tick_note(&conn, mine, n.id, &junk, 3).unwrap());
     let got = &notes(&conn, mine).unwrap()[0];
@@ -1276,4 +1280,85 @@ fn an_order_is_the_whole_list_of_open_desks_or_nothing() {
     assert!(!reorder(&mut conn, &[c, b, a]).unwrap(), "a closed desk");
     assert!(reorder(&mut conn, &[b, a]).unwrap());
     assert_eq!(order(&conn), ["b", "a"]);
+}
+
+/// The loop (1.37): a commit on main lands a line an agent picked up as
+/// "check it", never a line nobody touched; Works ticks it as the reader's,
+/// with the commit; Still broken reopens it with the reader's words, out of
+/// its thread, and only a commit made after that lands it again.
+#[test]
+fn a_landed_line_waits_for_the_readers_check_and_can_be_reopened() {
+    let mut conn = db();
+    let d = create(&conn, "/w", None, 0).unwrap().id;
+    let picked = add_note(&mut conn, d, "fold the rail", 10)
+        .unwrap()
+        .unwrap()
+        .id;
+    let untouched = add_note(&mut conn, d, "someday", 10).unwrap().unwrap().id;
+    let mut planned = mark("planned", "82cc8f2d3c");
+    planned.say = "  One strip,\n counts aligned  ".into();
+    assert!(mark_note(&conn, d, picked, &planned, 20).unwrap());
+    let got = &notes(&conn, d).unwrap()[0];
+    assert_eq!(
+        (got.reply.as_str(), got.reply_by.as_str(), got.reply_at),
+        ("One strip, counts aligned", "claude-code", 20)
+    );
+    // Only the picked-up line can land.
+    assert_eq!(landable(&conn, d).unwrap(), vec![(picked, 10)]);
+    let found = [(picked, "6D732B2".to_string(), 30)];
+    assert_eq!(land_notes(&conn, d, &found).unwrap(), 1);
+    let got = &notes(&conn, d).unwrap()[0];
+    assert_eq!(
+        (got.landed_commit.as_str(), got.landed_at, got.done),
+        ("6d732b2", 30, false)
+    );
+    assert!(
+        landable(&conn, d).unwrap().is_empty(),
+        "a landed line is not landed twice"
+    );
+    // Still broken: open again, the reader's words, a fresh start for git.
+    assert!(check_note(&conn, d, picked, false, "icons still off", 40).unwrap());
+    let got = &notes(&conn, d).unwrap()[0];
+    assert_eq!(
+        (got.stage.as_str(), got.landed_commit.as_str(), got.thread),
+        (REOPENED, "", 0)
+    );
+    assert_eq!(
+        (
+            got.reply.as_str(),
+            got.reply_by.as_str(),
+            got.stage_doc.as_str()
+        ),
+        ("icons still off", "", "82cc8f2d3c")
+    );
+    assert_eq!(
+        landable(&conn, d).unwrap(),
+        vec![(picked, 40)],
+        "only a commit after the reopen"
+    );
+    // An agent's next mark takes the line back from "reopened".
+    assert!(mark_note(&conn, d, picked, &mark("read", ""), 45).unwrap());
+    assert_eq!(
+        notes(&conn, d).unwrap()[0].reply,
+        "icons still off",
+        "a mark without say keeps the reply"
+    );
+    land_notes(&conn, d, &[(picked, "a41c2e9".into(), 50)]).unwrap();
+    // Works: ticked, the reader's, with the commit it landed with.
+    assert!(check_note(&conn, d, picked, true, "", 60).unwrap());
+    let got = notes(&conn, d)
+        .unwrap()
+        .into_iter()
+        .find(|n| n.id == picked)
+        .unwrap();
+    assert!(got.done);
+    assert_eq!(
+        (got.done_by.as_str(), got.done_commit.as_str()),
+        ("", "a41c2e9")
+    );
+    assert!(
+        !check_note(&conn, d, picked, true, "", 70).unwrap(),
+        "a done line is not checked again"
+    );
+    let _ = untouched;
 }
