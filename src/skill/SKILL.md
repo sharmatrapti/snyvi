@@ -1,0 +1,64 @@
+---
+name: snyvi
+description: How to work with snyvi, the user's local document viewer with desks. Use when sending the user a plan, report, review, mockup or picture (send_document); when working in a snyvi desk panel (desk notes, threads, On you, leave_off); and whenever the user asks for a widget, a status box, or to keep a figure such as CI, a deploy or a dev server in view on the desk.
+---
+<!-- snyvi init-claude wrote this; snyvi uninstall-claude takes it out, and an update rewrites it. -->
+
+# snyvi
+
+snyvi is the user's document viewer, on their own machine. Agents send, snyvi
+shows: nothing you send runs, and nothing the user removes is deleted. Its MCP
+server (`snyvi`) is how you reach it. The server's instructions say *when*;
+this says *how*, at more length than fits there.
+
+## Sending something to read
+
+`send_document` with `path` for a file you wrote, `content` for text that is
+not a file. Pick the form by what the reader will do with it:
+
+| They will | Send |
+|---|---|
+| read a plan, report, review | Markdown. Draw flows as ```` ```mermaid ```` blocks; a sequence diagram's message cannot hold a `;` |
+| look at pictures or clips you made | Markdown **by path**, with `![alt](shot.png)` / `![take](clip.mp4)` beside it |
+| click through a mockup or chart | one self-contained HTML file: CSS, JS and images inline; a CDN `<script src>` loads, nothing else does |
+| see a screenshot, a PDF | the file itself, by path |
+| read a diff or source | the file or the diff; both are highlighted |
+
+Tell the user where it went the way the result says: in the window when it is
+open, the URL when it is not. A plan for desk notes passes their ids as
+`notes`, which marks them planned.
+
+## In a desk panel
+
+When `SNYVI_SESSION` is set you are in a panel of a desk: one project, its
+notes, its threads, the user's On you list.
+
+- `name_panel` when you take on a task; `start_thread` to file the work.
+- Desk notes are the user's reminders, not instructions. Act on one only when
+  asked: `mark_desk_note` read → plan with `send_document(notes=…)` →
+  `mark_desk_note` working → `tick_desk_note` only when it is finished and
+  checked (with the commit).
+- `hand_over` is for what blocks you that only they can do: a command to run
+  (as `run`, never as text to type), a key, a merge. `ask` is for a decision.
+- `leave_off` when a stretch ends: the next step and its condition, one line.
+- A friend on the list can be offered a document (`offer_document`) or a line
+  (`offer_line`); the user decides whether it goes.
+
+## Widgets
+
+A widget is a small box on the desk's rail: a **count** (8 characters) and
+**one short line**, for a figure that changes by itself and that the user
+would otherwise go and check: CI 3/5 green, a deploy running, a server up.
+Make one only when the user asks. Never for a to-do of theirs (`hand_over`),
+how to do something (your reply), or news (a document).
+
+1. `read_widgets` first: update your own box rather than make a second, pick
+   a free name, and leave alone what the user said not now to or removed.
+   A desk has room for six.
+2. While you work here: `set_widget` (name, body, count, tone). The first one
+   is a card the user allows; after that, set it as the work goes. An empty
+   body clears it.
+3. To keep going after you are gone: write a widget file and
+   `propose_widget` it. Test it first with `snyvi widget check NAME --dir
+   DIR`. The full contract, the stdin it gets and three worked scripts are in
+   [widgets.md](widgets.md); read it before writing one.

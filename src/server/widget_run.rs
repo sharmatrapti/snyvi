@@ -47,7 +47,7 @@ const OUT_MAX: u64 = 4096;
 const AT_ONCE: usize = 2;
 
 /// A folder's stamp (`files::stamp`), and the hash taken at it.
-type Hashed = ((u128, u64, usize), Result<String, String>);
+type Hashed = (files::Stamp, Result<String, String>);
 
 /// The login shell's PATH, once the runner has read it: Try once on a card
 /// runs with the same.
@@ -520,12 +520,17 @@ pub(crate) async fn run_once(
         Err(e) => return Ran::Failed(format!("could not start: {e}")),
     };
     let pid = child.id();
-    if let Some(mut i) = child.stdin.take() {
-        let _ = i.write_all(stdin.to_string().as_bytes()).await;
-    }
+    // Fed inside the timeout, beside the reads: a command that never reads
+    // its stdin cannot hold a run's slot by filling the pipe.
+    let (input, text) = (child.stdin.take(), stdin.to_string());
     let (out, err) = (child.stdout.take(), child.stderr.take());
     let work = async {
-        let (o, e) = tokio::join!(read_cap(out, OUT_MAX + 1), read_cap(err, 1024));
+        let feed = async move {
+            if let Some(mut i) = input {
+                let _ = i.write_all(text.as_bytes()).await;
+            }
+        };
+        let (_, o, e) = tokio::join!(feed, read_cap(out, OUT_MAX + 1), read_drained(err, 1024));
         (o, e, child.wait().await)
     };
     match tokio::time::timeout(Duration::from_secs(spec.run.timeout), work).await {
@@ -558,6 +563,18 @@ pub(crate) async fn run_once(
             }
         }
     }
+}
+
+/// At most `cap` bytes of stderr, and the rest read and let go: a run
+/// that chatters there (node's warnings, git's progress) and prints its
+/// body fine is not killed by a closed pipe. The timeout still ends it.
+async fn read_drained<R: tokio::io::AsyncRead + Unpin>(p: Option<R>, cap: u64) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if let Some(mut p) = p {
+        let _ = AsyncReadExt::take(&mut p, cap).read_to_end(&mut buf).await;
+        let _ = tokio::io::copy(&mut p, &mut tokio::io::sink()).await;
+    }
+    buf
 }
 
 /// At most `cap` bytes of a pipe; the rest is left, and the pipe closed
@@ -611,7 +628,9 @@ fn land(app: &Arc<App>, desk: i64, who: &Who, cwd: &Path, fails: &Fails, ran: Ra
             let n = {
                 let mut m = fails.lock().unwrap();
                 let e = m.entry(key).or_insert((0, String::new()));
-                if e.1 != why {
+                // A stopped widget runs again only after Try again: it
+                // gets three tries anew, as the button says.
+                if e.1 != why || e.0 >= widget::FAILS_TO_STOP {
                     *e = (0, why.clone());
                 }
                 e.0 = e.0.saturating_add(1);
@@ -622,7 +641,7 @@ fn land(app: &Arc<App>, desk: i64, who: &Who, cwd: &Path, fails: &Fails, ran: Ra
                 let line = format!("{}after {n} failures, {why} (in {at})", widget::STOPPED);
                 let note = format!(
                     "Your widget {} stopped after {n} failures in a row: {why}, run in {at}. \
-                     Fix it, and the reader's Try again on its box runs it again.",
+                     Fix it, and the user's Try again on its box runs it again.",
                     spec.name
                 );
                 let _ = app.store.clocked(|c, _| {

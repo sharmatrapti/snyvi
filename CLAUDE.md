@@ -23,7 +23,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | a PTY, its process, its screen | `src/pane.rs`, `src/screen.rs` | touch the store |
 | every transport's way in | `src/receive.rs` → `render.rs` | be bypassed; hook, MCP, CLI, watch all call it |
 | who may call what | `src/capability.rs`, `src/config.rs` (token), `src/secrets.rs` (desk key values) | be duplicated in `server.rs` |
-| Claude Code side | `src/hook.rs`, `src/brief.rs`, `src/session.rs`, `src/statusline.rs`, `src/setup.rs` | write hooks for another binary |
+| Claude Code side | `src/hook.rs`, `src/brief.rs`, `src/session.rs`, `src/statusline.rs`, `src/setup.rs`, `src/skill/` (the skill `init-claude` writes) | write hooks for another binary |
 | MCP tools | `src/mcp.rs`, `src/agents.rs` (which agent has what) | reach the store directly; they go through `client.rs` |
 | CLI → daemon | `src/client.rs`, `src/main.rs` | be the only path a test knows |
 | self-update, restart | `src/update.rs`, `src/platform.rs`, `src/desktop.rs` | — |

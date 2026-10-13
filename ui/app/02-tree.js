@@ -240,7 +240,7 @@
   function seatFrame(w) {
     const key = `w:${w.name}`, t = w.title || wTitle(w.name);
     return `<section class="sec wg${secFolded(key) ? " folded" : ""}" id="wg-${w.desk_id}-${w.name}" data-sec="${key}" data-w="${w.name}" data-wdesk="${w.desk_id}" data-wsrc="${w.owner ? "own" : w.source}">` +
-      secHead(key, t, { tip: t }) +
+      secHead(key, esc(t), { tip: t }) +
       `<div class="sec-body"></div></section>`;
   }
   /** What a seat's body holds, apart, so an update patches it in place. */
@@ -252,18 +252,20 @@
    *  this desk until the reader says Try again (#111). Turn off here takes
    *  it off this desk; the rest keep it. */
   const wStopped = w => /^stopped: /.test(w.error || "");
-  const seatInner = w => (wAsks(w) ? `<p class="wg-ask" role="status">${esc(w.error.replace(/^\w+: /, ""))}<button type="button" class="wg-allow" data-wallow="${w.name}" data-tip="Allow it to run" data-tip-sub="Again whenever its folder changes, unless Rerun my edits is on for it on /sidebars. Only the snyvi window can allow">Allow</button></p>`
-      : wStopped(w) ? `<p class="wg-ask wg-stop" role="status">Stopped ${esc(w.error.replace(/^stopped: /, ""))}<button type="button" class="wg-allow" data-wretry="${w.name}" data-wd="${w.desk_id}" data-tip="Run it again" data-tip-sub="It stops again after three failures in a row">Try again</button>${w.desk_id ? `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Not on this desk" data-tip-sub="Other desks keep it; /sidebars puts it back">Turn off here</button>` : ""}</p>`
-      : w.error ? wFailed(w) : "") +
-    // Never printed: no room kept for a body, so the line is all there is.
-    (w.html ? `<div class="wg-body" style="--lines:${w.lines}">${w.html}${W_MORE}</div>` : "");
+  /* The seat keeps its room, `lines` × 20 px, printed or not, and its
+   * line -- Allow, stopped, failed -- lies over the top of it: a run that
+   * fails, or works again, never moves what is below (no layout shift). */
+  const seatInner = w => `<div class="wg-body" style="--lines:${w.lines}">${w.html || ""}${w.html ? W_MORE : ""}</div>` +
+    (wAsks(w) ? `<p class="wg-ask" role="status"><span data-tip="${esc(w.error.replace(/^\w+: /, ""))}">${esc(w.error.replace(/^\w+: /, ""))}</span><button type="button" class="wg-allow" data-wallow="${w.name}" data-tip="Allow it to run" data-tip-sub="Again whenever its folder changes, unless Rerun my edits is on for it on /sidebars. Only the snyvi window can allow">Allow</button></p>`
+      : wStopped(w) ? `<p class="wg-ask wg-stop" role="status"><span data-tip="${esc(w.error.replace(/^stopped: /, "Stopped "))}">Stopped ${esc(w.error.replace(/^stopped: /, ""))}</span><button type="button" class="wg-allow" data-wretry="${w.name}" data-wd="${w.desk_id}" data-tip="Run it again" data-tip-sub="It stops again after three failures in a row">Try again</button>${w.desk_id ? `<button type="button" class="wg-allow" data-wnot="${w.name}" data-wd="${w.desk_id}" data-tip="Not on this desk" data-tip-sub="Other desks keep it; /sidebars puts it back">Turn off here</button>` : ""}</p>`
+      : w.error ? wFailed(w) : "");
   /** Past its room: the cut line's "more", which opens it where it is --
    *  shown only once the box is measured as cut (`markCut`). */
   const W_MORE = `<button type="button" class="wg-more" aria-expanded="false">more</button>`;
   /** A failed run (#112): why, in two lines that open whole, and for a
    *  widget file, the button that tells the agent that proposed it. */
   const wFailed = w => `<div class="wg-err" role="status"><div class="wg-why">${esc(w.error)}${W_MORE}</div>` +
-    (w.source === "file" ? `<button type="button" class="wg-allow" data-wtell="${w.name}" data-wd="${w.desk_id}">Tell the agent</button>` : "") + `</div>`;
+    (w.source === "file" && w.agent ? `<button type="button" class="wg-allow" data-wtell="${w.name}" data-wd="${w.desk_id}">Tell the agent</button>` : "") + `</div>`;
   /** Which of a seat's body and its line are cut by their room, so their
    *  "more" shows: measured after they are drawn, and again when the seat
    *  is unfolded, since a folded one measures nothing. */

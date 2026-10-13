@@ -2932,8 +2932,9 @@ async function keysSheetRows(cdp, base) {
  *  the daemon says no, and says which thing failed, in that thing's row. In
  *  a tab of its own, with the capability, as `deskRows` is. */
 /** A widget's box (#112): its own title, how often it runs, a failure
- *  in two lines with more and Tell the agent, no room kept for a body
- *  it never printed, and a body past its room that says so with "more". */
+ *  in a line with more and Tell the agent, laid over the box's room, which
+ *  is kept whether it printed or not (1.36: no layout shift), and a body
+ *  past its room that says so with "more". */
 async function widgetBoxRows(cdp, base, tmp) {
   if (process.platform === "win32") return [["a widget's box (its scripts are sh here)", true, "not on Windows"]];
   const rows = [];
@@ -2969,7 +2970,8 @@ async function widgetBoxRows(cdp, base, tmp) {
     const came = await until(`!!document.querySelector("${box} .wg-why")`);
     const b = came && await p.ev(`(() => { const el = document.querySelector("${box}");
       return { head: el.querySelector(".sec-head").textContent, by: el.querySelector(".sec-fold").dataset.tipSub,
-        body: !!el.querySelector(".wg-body"), tell: !!el.querySelector("[data-wtell]"),
+        body: !!el.querySelector(".wg-body"), over: getComputedStyle(el.querySelector(".wg-err")).position === "absolute",
+        tell: !!el.querySelector("[data-wtell]"),
         cut: el.querySelector(".wg-why").classList.contains("cut"), more: __ui.vis("${box} .wg-why > .wg-more"),
         whole: el.querySelector(".wg-why").textContent.includes("runs by itself") }; })()`);
     // Shared, on every desk: its by-line, the name's tip, says so, ahead of how often.
@@ -3009,19 +3011,17 @@ async function widgetBoxRows(cdp, base, tmp) {
       await p.press("Escape");
       rows.push(["a shared widget, the reader's own, has no Remove", !shared, shared ? "Remove offered on a shared widget" : "Turn off alone"]);
     }
-    rows.push(["a failed one keeps no room for a body it never printed", !!b && !b.body, !b ? "no box" : b.body ? "an empty body still holds its lines under the line" : "the line, and nothing under it"]);
-    rows.push(["its reason is kept whole, two lines of it shown with more", !!b && b.whole && b.cut && b.more,
-      !b ? "no box" : !b.whole ? "the reason is cut short" : !b.cut ? "the line is not cut to two lines" : !b.more ? "no more on a cut line" : "two lines, and more"]);
+    rows.push(["a failed one keeps its room, its line laid over it", !!b && b.body && b.over, !b ? "no box" : !b.body ? "no room kept: its first print will move the rail" : !b.over ? "the line is in flow: a failure moves the rail" : "the room, and the line over it"]);
+    rows.push(["its reason is kept whole, a line of it shown with more", !!b && b.whole && b.cut && b.more,
+      !b ? "no box" : !b.whole ? "the reason is cut short" : !b.cut ? "the line is not cut to its one line" : !b.more ? "no more on a cut line" : "a line, and more"]);
     if (b && b.more) {
       await p.clickOn(`${box} .wg-why > .wg-more`);
       const open = await until(`document.querySelector("${box} .wg-why").classList.contains("open") && document.querySelector("${box} .wg-why > .wg-more").textContent === "less"`, 20);
       rows.push(["more opens the reason where it is", open, open ? "open, and its button says less" : "the click did not open it"]);
     }
-    if (b && b.tell) {
-      await p.clickOn(`${box} [data-wtell]`);
-      const said = await until(`/No agent proposed it|Told/.test(document.querySelector("${box} [data-wtell]")?.textContent || "")`, 30);
-      rows.push(["Tell the agent answers in its button", said, said ? `"${await p.ev(`document.querySelector("${box} [data-wtell]").textContent`)}"` : "the button said nothing"]);
-    } else rows.push(["Tell the agent answers in its button", false, "no Tell the agent on a failed widget file"]);
+    // The reader's own widget (shared, written by hand) has no agent to
+    // tell: no Tell the agent on its failure (1.36).
+    rows.push(["a widget the reader wrote has no Tell the agent", !!b && !b.tell, !b ? "no box" : b.tell ? "Tell the agent on a widget no agent proposed" : "its failure, and no agent to tell"]);
 
     // The long one, allowed: its body is cut at one line, says more, and
     // opens where it is.

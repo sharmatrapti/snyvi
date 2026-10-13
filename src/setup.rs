@@ -14,7 +14,12 @@ use std::path::{Path, PathBuf};
 
 /// The line `--claude-md` writes. Matched on `send_document` when removed or
 /// checked for, so a reader who rewords it keeps their wording.
-pub const CLAUDE_MD_LINE: &str = "When you produce a document for me to read (plan, review, summary), send it to snyvi with send_document and give me the link.";
+pub const CLAUDE_MD_LINE: &str = "When you produce a document for me to read (plan, review, summary), send it to snyvi with send_document and tell me where it went, as its result says.";
+
+/// The line through 1.35, which asked for the link: in a panel the link only
+/// opens a browser beside the window, which the tool's result says. Put
+/// right in place wherever it stands as it was written.
+pub const CLAUDE_MD_LINE_1_35: &str = "When you produce a document for me to read (plan, review, summary), send it to snyvi with send_document and give me the link.";
 
 /// How this binary is named to Claude Code: `snyvi` when the `snyvi` a shell
 /// would run is this file, its absolute path otherwise. A bare name survives
@@ -105,6 +110,12 @@ fn claude(args: &[&str]) -> Claude {
 }
 
 pub fn init_claude(auto: bool, claude_md: bool) -> Result<()> {
+    init_claude_as(auto, claude_md, false)
+}
+
+/// `refreshing` is an installer's run over an older snyvi: the skill is
+/// rewritten only where it already is.
+fn init_claude_as(auto: bool, claude_md: bool, refreshing: bool) -> Result<()> {
     let (exe, on_path) = program();
     let base = crate::config::base_url();
 
@@ -176,7 +187,14 @@ pub fn init_claude(auto: bool, claude_md: bool) -> Result<()> {
         println!("  Written with the binary's full path, since `snyvi` is not on PATH; run this again if it moves.");
     }
 
-    // 3. The line in CLAUDE.md.
+    // 3. The line in CLAUDE.md, and the one through 1.35 put right, which
+    // an update does too: it is ours, word for word.
+    if crate::agents::line_upgrade(&claude_md_path()?)? {
+        println!(
+            "Reworded the snyvi line in {}: Claude says where a document went, not a link that opens a browser.",
+            claude_md_path()?.display()
+        );
+    }
     if claude_md {
         let (path, added) = claude_md_add()?;
         if added {
@@ -192,6 +210,20 @@ pub fn init_claude(auto: bool, claude_md: bool) -> Result<()> {
         }
     } else if !claude_md_has()? {
         println!("  `snyvi init-claude --claude-md` adds one line to ~/.claude/CLAUDE.md asking Claude to send you what it writes.");
+    }
+
+    // 4. The skill.
+    let skills = claude_dir()?.join("skills");
+    match skill_install(&skills, refreshing)? {
+        Skill::Written(dir) => println!(
+            "Skill in {}: how to send a document, work a desk, and write a widget, read when Claude needs it.",
+            dir.display()
+        ),
+        Skill::Current | Skill::Absent => {}
+        Skill::Theirs(dir) => println!(
+            "  {} is a skill of your own, so snyvi left it as it is.",
+            dir.display()
+        ),
     }
 
     println!("\nTry it: open the window (`snyvi app`), give a project a desk, and run claude there. What it writes lands beside it, or at {base} without the window.");
@@ -216,7 +248,7 @@ pub fn refresh_claude() -> Result<()> {
         println!("Claude Code has nothing of snyvi, so nothing to refresh; `snyvi init-claude` registers it.");
         return Ok(());
     }
-    init_claude(false, false)
+    init_claude_as(false, false, true)
 }
 
 /// Undo `init-claude`: the MCP entry, every hook of ours, the CLAUDE.md line.
@@ -249,6 +281,9 @@ pub fn uninstall_claude_keeping(keeping: bool) -> Result<()> {
     if let Some(path) = claude_md_remove()? {
         println!("Removed the snyvi line from {}.", path.display());
     }
+    if let Some(dir) = skill_remove(&claude_dir()?.join("skills"))? {
+        println!("Removed the snyvi skill from {}.", dir.display());
+    }
     if !keeping {
         return Ok(());
     }
@@ -261,11 +296,78 @@ pub fn uninstall_claude_keeping(keeping: bool) -> Result<()> {
     Ok(())
 }
 
-fn claude_md_path() -> Result<PathBuf> {
+fn claude_dir() -> Result<PathBuf> {
     Ok(dirs::home_dir()
         .context("no home directory")?
-        .join(".claude")
-        .join("CLAUDE.md"))
+        .join(".claude"))
+}
+
+fn claude_md_path() -> Result<PathBuf> {
+    Ok(claude_dir()?.join("CLAUDE.md"))
+}
+
+/// The skill `init-claude` writes into `~/.claude/skills/snyvi/`: the
+/// long form of what the MCP server's instructions say in a line, which
+/// Claude reads when the work calls for it -- a document to send, a desk
+/// note, a widget. In the binary, so an update keeps it in step with the
+/// tools it describes.
+const SKILL: [(&str, &str); 2] = [
+    ("SKILL.md", include_str!("skill/SKILL.md")),
+    ("widgets.md", include_str!("skill/widgets.md")),
+];
+
+/// The line every file of the skill carries: ours to rewrite and to take
+/// out. A `snyvi` skill without it is the reader's own.
+const SKILL_MARK: &str = "snyvi init-claude wrote this";
+
+enum Skill {
+    Written(PathBuf),
+    Current,
+    /// Refreshing, and the reader has none: an update does not sign them up.
+    Absent,
+    Theirs(PathBuf),
+}
+
+fn ours(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|t| t.contains(SKILL_MARK))
+}
+
+fn skill_install(skills: &Path, refreshing: bool) -> Result<Skill> {
+    let dir = skills.join("snyvi");
+    let main = dir.join(SKILL[0].0);
+    if main.exists() && !ours(&main) {
+        return Ok(Skill::Theirs(dir));
+    }
+    if refreshing && !main.exists() {
+        return Ok(Skill::Absent);
+    }
+    let mut wrote = false;
+    for (name, text) in SKILL {
+        let path = dir.join(name);
+        if path.exists() && !ours(&path) {
+            continue;
+        }
+        wrote |= write_if_changed(&path, text.as_bytes())?;
+    }
+    Ok(if wrote { Skill::Written(dir) } else { Skill::Current })
+}
+
+/// Take out the skill's files that are ours, and its folder when nothing
+/// else is in it. The folder, when there was something of ours to remove.
+fn skill_remove(skills: &Path) -> Result<Option<PathBuf>> {
+    let dir = skills.join("snyvi");
+    let mut removed = false;
+    for (name, _) in SKILL {
+        let path = dir.join(name);
+        if ours(&path) {
+            std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+            removed = true;
+        }
+    }
+    if removed {
+        let _ = std::fs::remove_dir(&dir);
+    }
+    Ok(removed.then_some(dir))
 }
 
 fn claude_md_has() -> Result<bool> {
@@ -636,7 +738,6 @@ impl DesktopFiles {
 }
 
 /// Write `bytes` at `path` unless it already holds them. True when written.
-#[cfg(target_os = "linux")]
 fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
     if std::fs::read(path).ok().as_deref() == Some(bytes) {
         return Ok(false);
@@ -897,5 +998,64 @@ mod desktop_tests {
             "twice is nothing"
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod skill_tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("snyvi-skill-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    #[test]
+    fn the_skill_is_written_once_kept_current_and_taken_out() {
+        let skills = tmp("ours");
+        assert!(matches!(skill_install(&skills, true).unwrap(), Skill::Absent));
+        assert!(!skills.exists(), "an update does not sign a reader up");
+        assert!(matches!(skill_install(&skills, false).unwrap(), Skill::Written(_)));
+        for (name, text) in SKILL {
+            assert!(text.contains(SKILL_MARK), "{name}");
+            assert_eq!(std::fs::read_to_string(skills.join("snyvi").join(name)).unwrap(), text);
+        }
+        assert!(matches!(skill_install(&skills, true).unwrap(), Skill::Current));
+        // An older snyvi's text is rewritten by an update.
+        std::fs::write(skills.join("snyvi/SKILL.md"), format!("<!-- {SKILL_MARK} -->old")).unwrap();
+        assert!(matches!(skill_install(&skills, true).unwrap(), Skill::Written(_)));
+        // A file of the reader's beside ours stays, and keeps the folder.
+        std::fs::write(skills.join("snyvi/mine.md"), "mine").unwrap();
+        assert!(skill_remove(&skills).unwrap().is_some());
+        assert!(!skills.join("snyvi/SKILL.md").exists());
+        assert_eq!(std::fs::read_to_string(skills.join("snyvi/mine.md")).unwrap(), "mine");
+        assert!(skill_remove(&skills).unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&skills);
+    }
+
+    #[test]
+    fn a_snyvi_skill_of_the_readers_own_is_left_alone() {
+        let skills = tmp("theirs");
+        std::fs::create_dir_all(skills.join("snyvi")).unwrap();
+        std::fs::write(skills.join("snyvi/SKILL.md"), "---\nname: snyvi\n---\nmine").unwrap();
+        assert!(matches!(skill_install(&skills, false).unwrap(), Skill::Theirs(_)));
+        assert!(skill_remove(&skills).unwrap().is_none());
+        assert!(std::fs::read_to_string(skills.join("snyvi/SKILL.md")).unwrap().ends_with("mine"));
+        assert!(!skills.join("snyvi/widgets.md").exists());
+        let _ = std::fs::remove_dir_all(&skills);
+    }
+
+    #[test]
+    fn the_skill_says_when_claude_should_read_it() {
+        let main = SKILL[0].1;
+        assert!(main.starts_with("---\nname: snyvi\ndescription: "));
+        for word in ["send_document", "widget", "desk"] {
+            assert!(main.lines().nth(2).unwrap().contains(word), "{word}");
+        }
+        // Every tool the skill names is one the server has.
+        for tool in ["read_widgets", "set_widget", "propose_widget", "hand_over", "leave_off"] {
+            assert!(main.contains(tool), "{tool}");
+        }
     }
 }

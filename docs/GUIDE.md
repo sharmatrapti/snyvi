@@ -505,9 +505,13 @@ The tool descriptions tell Claude
 when to use each; a line in your global `CLAUDE.md` helps it remember:
 
 > When you produce a document for me to read (plan, review, summary),
-> send it to snyvi with send_document and give me the link.
+> send it to snyvi with send_document and tell me where it went, as its
+> result says.
 
-`snyvi init-claude --claude-md` writes that line for you, once. The
+`snyvi init-claude --claude-md` writes that line for you, once. Through
+1.35 it ended "and give me the link", which in a desk's panel sent you to a
+browser beside the window; `init-claude`, and the update that runs it,
+rewords that line wherever it is still as it was written. The
 command is safe to run as often as you like: it reads what Claude Code
 already has before touching anything, says "already registered" when
 there is nothing to do, and when the binary has moved -- an update, a
@@ -595,12 +599,19 @@ connectors or Remote Control, which want the `/login` account. snyvi never
 switches an account on its own, and *Remove from every desk* puts its desks
 and panels back on your login and forgets the token, with Undo first.
 
-The server also offers four prompts, the loop's own commands, listed in the
+The server also offers five prompts, the loop's own commands, listed in the
 `/` menu as `/snyvi:wrap-up (MCP)` and so on: `wrap-up` ticks what is
 finished and checked and says where the work was left, `plan` writes the
 plan as a document and waits, `catch-up` says where the desk stands in five
-lines, and `explain-back` says what was just done and why. Nothing is
+lines, `explain-back` says what was just done and why, and `widget` keeps a
+figure you name in view on the desk's rail (`docs/WIDGETS.md`). Nothing is
 written into your `CLAUDE.md` for them.
+
+It writes a skill too, `~/.claude/skills/snyvi/`: how to send a document in
+the form you'll read it in, how a desk's notes and On you work, and how
+to write a widget, which Claude reads when the work calls for it. An update
+keeps it in step with the binary; a `snyvi` skill of your own is left alone;
+`uninstall-claude` takes it out.
 
 It also sets Claude Code's status line to `snyvi statusline`, which prints
 nothing and tells a desk panel which model it runs and how full its context

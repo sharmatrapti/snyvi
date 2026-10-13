@@ -316,6 +316,9 @@ const ownerOf = sec => sec?.dataset.wsrc === "own" ? +sec.dataset.wdesk : 0;
 function widgetItems(ctx, sec) {
   if (!sec) return [];
   const name = sec.dataset.w, desk = +sec.dataset.wdesk, owner = ownerOf(sec), file = sec.dataset.wsrc === "file";
+  // A pushed box is switched off on its own desk alone (1.36): its switch
+  // is kept under its desk, as a desk's own widget's is.
+  const offKey = sec.dataset.wsrc === "push" ? desk : owner;
   const set = (body, what, then) => async () => {
     try { await ctx.api(`/api/widgets/${name}/prefs`, { owner, ...body }); then?.(); }
     catch (e) { ctx.toast(`Could not ${what}`, { sub: e }); }
@@ -324,7 +327,8 @@ function widgetItems(ctx, sec) {
     owner && { label: "Share with other desks…", run: set({ share: true }, "share it", () => ctx.showSidebars(true)) },
     file && desk && { label: "Make it this desk's own", run: set({ keep_here: desk }, "make it this desk's") },
     file && desk && { label: "Not on this desk", run: set({ not_desk: desk }, "take it off this desk") },
-    { label: "Turn off", run: set({ hidden: true }, "turn it off") },
+    (file || owner) && { label: "Open its folder", run: () => reveal(ctx, { widget: name, owner }) },
+    { label: "Turn off", run: set({ hidden: true, owner: offKey }, "turn it off") },
     RULE,
   ].filter(Boolean);
 }
@@ -503,7 +507,11 @@ async function order(ctx, ids, moved, byKey) {
 export async function allowWidget(ctx, b) {
   b.disabled = true;
   try { await ctx.api(`/api/widgets/${b.dataset.wallow}/allow`, { owner: ownerOf(b.closest("section.wg")) }); b.textContent = "Allowed"; }
-  catch { b.disabled = false; ctx.toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" }); }
+  catch (e) {
+    b.disabled = false;
+    if (e?.status === 403) ctx.toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" });
+    else ctx.toast(`Not allowed: ${e?.message || e}`);
+  }
 }
 /** A seat's own buttons: Try again on one that stopped, Turn off here,
  *  Tell the agent on one that failed (#112), Undo on one just removed.
@@ -525,7 +533,7 @@ export async function seatAct(ctx, b) {
     if (b.dataset.wretry) await ctx.api(`/api/widgets/${name}/retry`, { desk, owner });
     else await ctx.api(`/api/widgets/${name}/prefs`, { not_desk: desk, owner });
     b.textContent = b.dataset.wretry ? "Running…" : "Turned off";
-  } catch { b.disabled = false; b.textContent = "Could not · again"; }
+  } catch (e) { b.disabled = false; b.textContent = "Could not · again"; b.dataset.tip = e?.message || ""; }
 }
 /** A cut body or line opened where it is, or closed again. */
 export function seatOpen(ctx, x) {

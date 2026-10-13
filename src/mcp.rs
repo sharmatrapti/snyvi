@@ -137,6 +137,8 @@ a key; a merge. Asking them to try a change goes in your reply. When \
 you need the user to decide something before you go on, put it on their On you list with ask (several at once \
 as its questions), or in your own question tool when they are at this panel, never only as a list in your \
 reply. \
+A figure the user asks to keep in view (CI, a deploy): read_widgets, then set_widget, or propose_widget \
+for one snyvi runs on its own; never unasked. \
 An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
 away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
@@ -184,6 +186,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("settle_asks", Session::settle_asks),
     ("suggest_panel", Session::suggest_panel),
     ("suggest_desk", Session::suggest_desk),
+    ("read_widgets", Session::read_widgets),
     ("set_widget", Session::set_widget),
     ("propose_widget", Session::propose_widget),
 ];
@@ -789,7 +792,7 @@ struct Prompt {
     text: &'static str,
 }
 
-const PROMPTS: [Prompt; 4] = [
+const PROMPTS: [Prompt; 5] = [
     Prompt {
         name: "wrap-up",
         title: "Wrap up",
@@ -832,6 +835,21 @@ need it. In at most five lines: where we are, what is open, and the next step. D
         text: "Explain back to me, in plain words and at most eight lines: what you just did and why, what you \
 checked and how, and anything you are unsure of. If a diagram would make it clearer, send it with send_document \
 as Markdown with Mermaid, and say where it is.",
+    },
+    Prompt {
+        name: "widget",
+        title: "Make a widget",
+        description: "Keep a figure in view on this desk's rail: a box you update, or a widget file snyvi runs.",
+        panel: true,
+        arg: Some(("what", "The figure to keep in view: CI, a deploy, a dev server, a queue.")),
+        text: "Make me a widget on this desk for this. First read_widgets: update a box of yours rather than \
+make a second, pick a name that is free, and leave alone what I said not now to or removed. A widget is a count \
+of at most 8 characters and one short line, for a figure that changes by itself and I would otherwise go and \
+check -- not a to-do, not instructions. If it only matters while you work here, use set_widget and keep it up \
+to date as the work goes. If it should keep going after this session, write a script that prints the widget's \
+JSON ({\"body\",\"tone\",\"count\"}) or Markdown, run it once here with the stdin snyvi gives it to check it \
+works, then propose_widget with the script, any settings I would want to change, and why. Tell me in one line \
+which you did; the card on my On you list is where I allow it.",
     },
 ];
 
@@ -1293,6 +1311,10 @@ mod tests {
         // sitting in front of (audit e467fa057a).
         assert!(instructions(true).contains("hand_over only what blocks you"));
         assert!(instructions(true).contains("try a change goes in your reply"));
+        // Widgets are named, so an agent asked to watch CI reaches for one,
+        // and the rule that it is only on asking is beside them.
+        assert!(instructions(true).contains("read_widgets, then set_widget"));
+        assert!(instructions(true).contains("never unasked"));
     }
 
     /// What the agent is told to say matches what the user will see: the
@@ -1328,12 +1350,13 @@ mod tests {
         }
     }
 
-    /// Four prompts; the two that use a desk's tools only in a panel, and an
-    /// argument only where one helps.
+    /// Five prompts; the three that use a desk's tools only in a panel, and
+    /// an argument only where one helps.
     #[test]
-    fn the_loop_kit_is_four_prompts() {
+    fn the_loop_kit_is_five_prompts() {
         let names: Vec<&str> = PROMPTS.iter().map(|p| p.name).collect();
-        assert_eq!(names, ["wrap-up", "plan", "catch-up", "explain-back"]);
+        assert_eq!(names, ["wrap-up", "plan", "catch-up", "explain-back", "widget"]);
+        assert!(PROMPTS[4].text.starts_with("Make me a widget on this desk for this. First read_widgets"));
         let outside: Vec<&str> = PROMPTS
             .iter()
             .filter(|p| !p.panel)

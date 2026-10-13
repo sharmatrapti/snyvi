@@ -1,0 +1,122 @@
+<!-- snyvi init-claude wrote this; snyvi uninstall-claude takes it out, and an update rewrites it. -->
+
+# Writing a snyvi widget
+
+Read `SKILL.md` first: a widget is for a figure the user asked to keep in
+view, as a count and one short line.
+
+## Box or file
+
+| | `set_widget` | `propose_widget` |
+|---|---|---|
+| Who updates it | you, by calling it again | snyvi, by running your script on a timer |
+| Lives | until cleared, or as long as the user picked on the card; says "panel N closed" when yours does | while it is switched on, for as long as the user picked |
+| Use for | something you are watching as you work: a test run, a build | something worth seeing after you are gone: CI, a deploy, a queue |
+
+Both go through a card on the user's On you list. Nothing shows until they say
+yes. Not now, or Remove, means leave that name alone on this desk.
+
+## What a widget shows
+
+Markdown, or one JSON object:
+
+```json
+{ "body": "**deploy** 3/5 green", "tone": "ok", "count": "3/5", "lines": 1, "stale_after": 600 }
+```
+
+| Field | |
+|---|---|
+| `body` | Markdown, 1,500 characters at most: text, bold, code, links, lists. No HTML, pictures, tables, diagrams. Empty clears |
+| `tone` | `ok`, `warn`, `bad`, `none`: colours the count |
+| `count` | at most 8 characters, kept while folded: `3`, `!2`, `3/5` |
+| `lines` | 1–6, the body's room; keep it 1 |
+| `stale_after` | seconds before it dims as old (1800); 0 is never |
+
+Names are lowercase letters, digits and dashes, 32 at most.
+
+## A widget file
+
+`propose_widget` takes what goes in its folder:
+
+| Argument | |
+|---|---|
+| `name`, `title`, `why` | the name, the head it shows, one sentence for the card |
+| `command` | one line, run with `sh -c` (`cmd /C` on Windows) **in the desk's folder**. Name the script bare: `run.sh`, never `./run.sh` or `sh run.sh` |
+| `script_name`, `script` | the script, whole, at most 16 KB; it is made executable |
+| `files` | up to 4 other files it reads, `{name: text}`, 16 KB each |
+| `settings` | rows the user changes on /sidebars: `{"base": {"type": "string", "label": "Compare against", "default": "main"}}`; `type` is `string`, `number`, `boolean`, or `choice` with `choices`; at most 8 |
+| `every`, `timeout` | seconds between runs (60, at least 5); seconds it may take (10, at most 30) |
+| `for` | how long you suggest: `today`, `week`, `panel` (while yours is open), or `always`; the user picks |
+
+How each run sees the world:
+
+- **cwd**: the desk's folder. The widget's own folder is first on `PATH` and
+  in `$SNYVI_WIDGET_DIR`: reach a file beside the script as
+  `"$SNYVI_WIDGET_DIR/query.graphql"`.
+- **stdin**: `{"desk":{"id":3,"name":"snyvi","folder":"/home/you/snyvi"},"settings":{"base":"main"},"snyvi":"1.36.0"}`.
+- **env**: the user's login-shell `PATH` (nvm, pyenv and the like are on it),
+  home and language. Not snyvi's token, not the desk's keys.
+- **Limits**: 4 KB of output read; a timeout kills the whole process group;
+  two run at a time; it runs only while its desk is in view.
+- **State** between runs goes in `$TMPDIR`, never the widget's folder: a
+  change there asks the user to Allow it again.
+- **Failure**: a non-zero exit, a timeout or a body snyvi refuses shows as a
+  line over the last good body. Three in a row for the same reason stop it,
+  and you are told on your next prompt.
+
+## Check it before proposing
+
+```sh
+d=$(mktemp -d)/ci && mkdir -p "$d"
+cat > "$d/widget.json" <<'JSON'
+{ "name": "ci", "title": "CI", "scope": "desk", "run": { "command": "run.sh", "every": 60, "timeout": 10 } }
+JSON
+cat > "$d/run.sh" <<'SH'
+...the script...
+SH
+chmod +x "$d/run.sh"
+snyvi widget check ci --dir "$d"     # run from the desk's folder: prints what snyvi would draw, or why not
+```
+
+Then `propose_widget` with the same command and script. On the card the
+user can **Try once**, pick how long, and **Add**.
+
+## Three that work
+
+**Git: branch, ahead, dirty** (a setting for the base branch):
+
+```sh
+#!/bin/sh
+base=$(sed -n 's/.*"base":"\([^"]*\)".*/\1/p'); base=${base:-main}
+ahead=$(git rev-list --count "$base"..HEAD 2>/dev/null || echo 0)
+dirty=$(git status --porcelain | wc -l | tr -d ' ')
+tone=ok; [ "$dirty" -gt 0 ] && tone=warn
+printf '{"body":"**%s** · %s ahead of %s","tone":"%s","count":"%s"}\n' \
+  "$(git branch --show-current)" "$ahead" "$base" "$tone" "$dirty"
+```
+
+**CI: the latest run on this branch** (needs `gh`, signed in):
+
+```sh
+#!/bin/sh
+b=$(git branch --show-current)
+gh run list --branch "$b" --limit 1 --json status,conclusion,name,url \
+  --jq '.[0] | if . == null then {body:"no runs yet",tone:"none",count:"-"}
+        elif .status != "completed" then {body:"**\(.name)** running · [open](\(.url))",tone:"warn",count:"…"}
+        elif .conclusion == "success" then {body:"**\(.name)** green · [open](\(.url))",tone:"ok",count:"ok"}
+        else {body:"**\(.name)** \(.conclusion) · [open](\(.url))",tone:"bad",count:"!"} end'
+```
+
+**A dev server: up or down** (a setting for the port):
+
+```sh
+#!/bin/sh
+port=$(sed -n 's/.*"port":\([0-9]*\).*/\1/p'); port=${port:-3000}
+if curl -s -o /dev/null -m 2 "http://127.0.0.1:$port/"; then
+  printf '{"body":"localhost:%s answers","tone":"ok","count":"up"}\n' "$port"
+else
+  printf '{"body":"nothing on localhost:%s","tone":"bad","count":"down"}\n' "$port"
+fi
+```
+
+with `"settings": {"port": {"type": "number", "label": "Port", "default": 3000}}`.

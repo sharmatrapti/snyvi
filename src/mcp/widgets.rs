@@ -3,7 +3,8 @@
 //! a turn of the user's to ask for it (`crate::widget`, docs/WIDGETS.md).
 //! propose_widget: a widget file the user adds or not, for a status that
 //! should outlive the session: snyvi runs its command on a timer, on the
-//! agent's desk alone (1.32).
+//! agent's desk alone (1.32). read_widgets: what is on the desk and where
+//! each stands, so the agent does not push what was refused.
 
 use super::{arg, said, Session};
 use crate::client;
@@ -14,7 +15,7 @@ when the user asked for one. A box is for a figure that changes by itself and th
 check: CI 3/5 green, a deploy running, a dev server up. Never for what waits on them (that is hand_over), how to \
 do something (say it in your reply), news (a document), or what changes only when they act. Put the figure in \
 count and one short line in the body (\"**deploy** 3/5 green\"), no instructions. The first time, the user gets \
-a card on their Your turn to allow the box, and nothing shows until they do; after that the same name updates it \
+a card on their On you list to allow the box, and nothing shows until they do; after that the same name updates it \
 freely, and an empty body clears it. If they said not now, or removed it, leave it. Optional: for (today, week, \
 panel: while this panel is open) suggests how long it lasts, tone (ok, warn, bad) colours the count, lines is its \
 height (1-6, keep it 1), stale_after the seconds before it dims as old (default 1800).";
@@ -24,15 +25,30 @@ snyvi runs its command on a timer while this desk is in view and shows what it p
 {\"body\",\"tone\",\"count\"} JSON). Only when the user asked for a widget. The same test as set_widget: a \
 figure that changes by itself and that they would otherwise go and check, printed as count plus one short line, \
 never a to-do of theirs or how to do it. The user gets a card on \
-their Your turn showing the script, where it runs and how often, can try it once, and adds it or not; nothing \
+their On you list showing the script, where it runs and how often, can try it once, and adds it or not; nothing \
 runs before. It is this desk's own: it runs in this desk's folder and on no other desk, and only the user can \
 share it. The script's folder is first on PATH and in $SNYVI_WIDGET_DIR, so name the script bare as the command \
 (run.sh, not ./run.sh or sh run.sh), or write \"$SNYVI_WIDGET_DIR/run.sh\"; snyvi refuses a command that cannot \
-reach it. Give the script whole (it gets the desk and settings as JSON on stdin). for suggests how long it lasts: \
-today, week, panel (while this panel is open), or leave it out for until the user turns it off.";
+reach it. Give the script whole (it gets the desk and settings as JSON on stdin), with any files it reads and \
+the settings the user would change. Try it first: write widget.json and the script to a folder and run snyvi \
+widget check NAME --dir FOLDER from the desk's folder. Proposing the same name again replaces your card. for \
+suggests how long it lasts: today, week, panel (while this panel is open), or leave it out for until the user \
+turns it off.";
+
+const READ: &str = "Read the widgets on this snyvi desk and where each stands: the boxes panels push \
+(waiting on the user's card, allowed, not now, removed) and the widget files snyvi runs (allowed, changed since, \
+off, stopped after failing, with the error), what each shows, and the cards still waiting. Read it before \
+set_widget or propose_widget, to update your own box rather than make a second, to pick a name that is free, and \
+to leave alone what the user said not now to or removed: boxes, proposals and widget files alike. A desk has room \
+for six.";
 
 pub(super) fn specs() -> Vec<Value> {
     vec![
+        json!({
+            "name": "read_widgets", "title": "Read this desk's widgets", "description": READ,
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+        }),
         json!({
             "name": "propose_widget", "title": "Propose a widget", "description": PROPOSE,
             "inputSchema": { "type": "object", "properties": {
@@ -44,6 +60,8 @@ pub(super) fn specs() -> Vec<Value> {
                 "lines": { "type": "integer", "minimum": 1, "maximum": 6 },
                 "script_name": { "type": "string", "description": "The script's file name, e.g. run.sh." },
                 "script": { "type": "string", "description": "The script, whole, at most 16 KB." },
+                "files": { "type": "object", "additionalProperties": { "type": "string" }, "maxProperties": 4, "description": "Other files the script reads, by name: a helper, a query. Each at most 16 KB, named without a folder; reach them through $SNYVI_WIDGET_DIR. Shown on the card." },
+                "settings": { "type": "object", "description": "Rows the user sets on /sidebars, as widget.json has them: {\"base\": {\"type\": \"string\", \"label\": \"Compare against\", \"default\": \"main\"}}. type is string, number, boolean, or choice with choices. At most 8. The script gets them on stdin as settings." },
                 "why": { "type": "string", "description": "One sentence." },
                 "for": { "type": "string", "enum": ["today", "week", "panel", "always"], "description": "How long you suggest it lasts; the user picks on the card." }
             }, "required": ["name", "command", "why"], "additionalProperties": false },
@@ -66,6 +84,23 @@ pub(super) fn specs() -> Vec<Value> {
 }
 
 impl Session {
+    pub(super) fn read_widgets(&self, _args: &Value) -> Value {
+        let Some(p) = self.pane.as_deref() else {
+            return said(
+                "This session is not running in a snyvi desk, so there are no desk widgets to read.",
+                true,
+            );
+        };
+        match client::desk_widgets(&self.paths, p) {
+            Ok(v) => json!({
+                "content": [{ "type": "text", "text": say_widgets(&v) }],
+                "structuredContent": v,
+                "isError": false
+            }),
+            Err(e) => said(format!("snyvi could not read the desk's widgets: {e}"), true),
+        }
+    }
+
     pub(super) fn propose_widget(&self, args: &Value) -> Value {
         let Some(p) = self.pane.as_deref() else {
             return said(
@@ -77,7 +112,7 @@ impl Session {
         body["by"] = json!(self.by());
         match client::pane_thread(&self.paths, p, "propose-widget", body) {
             Ok(_) => said(
-                format!("Proposed. The user has a card on their Your turn in snyvi with the script, where it runs and how often; nothing runs until they add {}. Carry on.", arg(args, "name")),
+                format!("Proposed. The user has a card on their On you list in snyvi with the script, where it runs and how often; nothing runs until they add {}. Carry on.", arg(args, "name")),
                 false,
             ),
             Err(e) => said(format!("snyvi did not take it: {e}"), true),
@@ -105,7 +140,7 @@ impl Session {
         }
         match client::pane_thread(&self.paths, p, "widget", sent) {
             Ok(v) if v.get("waiting").and_then(Value::as_bool) == Some(true) => said(
-                format!("The user has a card on their Your turn to allow the box {name} on this desk; it shows once they do, with what you sent last. Carry on, and set it as the work goes: your updates wait behind the card."),
+                format!("The user has a card on their On you list to allow the box {name} on this desk; it shows once they do, with what you sent last. Carry on, and set it as the work goes: your updates wait behind the card."),
                 false,
             ),
             Ok(_) if cleared => said(format!("Cleared the widget {name}."), false),
@@ -116,4 +151,80 @@ impl Session {
             Err(e) => said(format!("snyvi did not take it: {e}"), true),
         }
     }
+}
+
+/// The desk's widgets as a few lines an agent reads: one per widget, then
+/// the boxes asked for that do not show, then the cards still waiting.
+fn say_widgets(v: &Value) -> String {
+    let desk = v.get("desk").and_then(Value::as_str).unwrap_or("this desk");
+    let list = |k: &str| v.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+    let s = |o: &Value, k: &str| o.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let yours = |o: &Value| o.get("yours") == Some(&Value::Bool(true));
+    let (shown, boxes, files, waiting) = (list("widgets"), list("boxes"), list("files"), list("waiting"));
+    let limit = v.get("limit").and_then(Value::as_u64).unwrap_or(6);
+    let mut out = format!(
+        "Widgets on the desk \"{desk}\": {} of {limit}.\n",
+        shown.len()
+    );
+    for w in &shown {
+        let mut line = format!("- {} ({}", s(w, "name"), s(w, "kind"));
+        if yours(w) {
+            line.push_str(", yours");
+        }
+        line.push_str(&format!(", {})", s(w, "state")));
+        if !s(w, "count").is_empty() {
+            line.push_str(&format!(" [{}]", s(w, "count")));
+        }
+        let body = s(w, "body");
+        let first = body.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+        if !first.is_empty() {
+            line.push_str(&format!(": {first}"));
+        }
+        if !s(w, "error").is_empty() {
+            line.push_str(&format!(" -- error: {}", s(w, "error")));
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+    let named = |n: &str| shown.iter().any(|w| s(w, "name") == n);
+    // A box that shows is in the list above; these are the ones that don't.
+    for b in boxes.iter().filter(|b| !named(&s(b, "name"))) {
+        let who = if yours(b) { ", yours" } else { "" };
+        let then = match s(b, "answer").as_str() {
+            "not now" => " -- leave it: a push of it is refused",
+            "removed" => " -- leave it: the user removed it",
+            "waiting" => " -- on the user's card; your updates wait behind it",
+            "again" => " -- the user took back their no: a push of it asks again, with a card",
+            _ => "",
+        };
+        out.push_str(&format!("- box {} ({}{who}){then}\n", s(b, "name"), s(b, "answer")));
+    }
+    for f in files.iter().filter(|f| !named(&s(f, "name"))) {
+        let state = if !s(f, "error").is_empty() {
+            format!("cannot be read: {}", s(f, "error"))
+        } else if f.get("changed") == Some(&Value::Bool(true)) {
+            "changed since it was allowed: waits for Allow".into()
+        } else if f.get("allowed") == Some(&Value::Bool(true)) {
+            if f.get("off") == Some(&Value::Bool(true)) { "off" } else { "allowed, not run yet" }.into()
+        } else {
+            "waits for Allow".into()
+        };
+        out.push_str(&format!("- file {} ({state})\n", s(f, "name")));
+    }
+    let names = |k: &str| list(k).iter().filter_map(|n| n.as_str().map(String::from)).collect::<Vec<_>>();
+    let (declined, removed) = (names("proposals_not_now"), names("removed"));
+    if !declined.is_empty() {
+        out.push_str(&format!("- proposals the user said not now to: {} -- leave them unless they ask\n", declined.join(", ")));
+    }
+    if !removed.is_empty() {
+        out.push_str(&format!("- widget files the user removed: {} -- leave them unless they ask\n", removed.join(", ")));
+    }
+    for c in &waiting {
+        let who = if yours(c) { "yours" } else { "another panel's" };
+        out.push_str(&format!("- card waiting: {} {} ({who})\n", s(c, "kind"), s(c, "name")));
+    }
+    if shown.is_empty() && boxes.is_empty() && files.is_empty() && waiting.is_empty() && declined.is_empty() && removed.is_empty() {
+        out.push_str("None yet.\n");
+    }
+    out
 }

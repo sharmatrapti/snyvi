@@ -880,6 +880,17 @@ pub fn agent_context(paths: &Paths, pane: &str, seen: &crate::statusline::Seen) 
 /// a daemon: a pane only runs while one does, so none answering means the
 /// shell this came from is already gone.
 pub fn desk_notes(paths: &Paths, pane: &str) -> Result<Value> {
+    pane_read(paths, pane, "notes")
+}
+
+/// The widgets on the desk `pane` is on, and where each stands (`read_widgets`),
+/// read as the notes are.
+pub fn desk_widgets(paths: &Paths, pane: &str) -> Result<Value> {
+    pane_read(paths, pane, "widgets")
+}
+
+/// A read of the desk `pane` is on, by the pane route after its id.
+fn pane_read(paths: &Paths, pane: &str, what: &str) -> Result<Value> {
     let token = config::read_token(paths).ok_or_else(|| {
         anyhow!(
             "no token at {}; is the daemon running as this user?",
@@ -887,7 +898,7 @@ pub fn desk_notes(paths: &Paths, pane: &str) -> Result<Value> {
         )
     })?;
     let mut resp = agent()
-        .get(&format!("{}/api/panes/{pane}/notes", config::base_url()))
+        .get(&format!("{}/api/panes/{pane}/{what}", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_secs(5)))

@@ -1873,4 +1873,5 @@ mod accounts;
 mod first_desk;
 mod keys;
 mod routes;
+mod widgets;
 use routes::{Gate, ROUTES};

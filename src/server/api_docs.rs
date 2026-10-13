@@ -837,6 +837,10 @@ pub(crate) struct FolderBody {
     pub(crate) desk: Option<i64>,
     /// A project's root, as the sidebar's project rows know it.
     pub(crate) project: Option<i64>,
+    /// A widget file's folder, by its name and the desk it belongs to (0,
+    /// or none: shared): the reader reads what Allow would take (1.36).
+    pub(crate) widget: Option<String>,
+    pub(crate) owner: Option<i64>,
 }
 
 /// The directory Open in file manager opens for a document, if one exists.
@@ -929,6 +933,8 @@ pub(crate) fn folder_of(app: &App, b: &FolderBody) -> Option<std::path::PathBuf>
         app.store.desk(id).ok().flatten().map(|d| d.root.into())
     } else if let Some(id) = b.project {
         app.store.project_root(id).map(Into::into)
+    } else if let Some(name) = b.widget.as_deref().filter(|n| crate::widget::name_ok(n)) {
+        Some(crate::widget::files::folder_of(&app.paths.config_dir, b.owner.unwrap_or(0), name))
     } else {
         None
     };

@@ -424,6 +424,7 @@ fn widget_routes() -> Router<Arc<App>> {
         .route("/api/layout", post(set_layout))
         .route("/api/desks/{id}/widgets", get(desk_widgets))
         .route("/api/panes/{id}/widget", post(pane_set_widget))
+        .route("/api/panes/{id}/widgets", get(pane_widgets))
         .route("/api/widgets", get(list_widgets).post(set_widget))
         .route("/sidebars", get(shell_sidebars))
         .route("/api/widgets/{name}/allow", post(allow_widget))
