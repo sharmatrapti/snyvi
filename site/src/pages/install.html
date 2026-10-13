@@ -1,0 +1,45 @@
+<!--{
+  "path": "/install",
+  "title": "Install snyvi",
+  "description": "Install snyvi on macOS, Linux or Windows: Homebrew, a one-line script, winget, Scoop, the installer, .deb or cargo.",
+  "nav": "install",
+  "head": "Install",
+  "rail": "toc"
+}-->
+<h1>Install snyvi</h1>
+<p class="lede">One line for your machine. Then open snyvi from your apps, or run <code>snyvi app</code>. It asks what you're working on, makes that project's first desk, and connects Claude Code from the window. From then on it updates itself, once a day, when you're not looking.</p>
+
+{{install}}
+
+<h2 id="macos">macOS</h2>
+<pre><code>brew install --cask snymrova/snyvi/snyvi</code></pre>
+<p>The app is signed and notarized. Without Homebrew, the one-liner below puts <code>snyvi.app</code> in Applications and <code>snyvi</code> on your <code>PATH</code>.</p>
+
+<h2 id="linux">Linux</h2>
+<pre><code>curl -fsSL https://snyvi.com/install.sh | sh</code></pre>
+<p>It installs into your home, with no root: <code>snyvi</code> into <code>~/.local/bin</code>, the window beside it when the machine has a display and WebKitGTK 4.1, and a menu entry, the icon and <code>snyvi://</code> links. Every download is checked against the <code>.sha256</code> published beside it, and Claude Code is connected if it's installed. <a href="https://github.com/snymrova/snyvi/blob/main/install.sh">Read the script first</a>; <code>snyvi.com/install.sh</code> is a redirect to that file on GitHub.</p>
+<pre><code>sh install.sh --deb              <span class="c"># the two .debs instead (Debian, Ubuntu; needs root)</span>
+sh install.sh --no-app           <span class="c"># without the window</span>
+sh install.sh --no-init          <span class="c"># without registering with Claude Code</span>
+sh install.sh --version 1.33.0   <span class="c"># a particular release</span></code></pre>
+<p>The same flags go after <code>sh -s --</code> when piping from <code>curl</code>.</p>
+
+<h2 id="windows">Windows</h2>
+<pre><code>scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi
+scoop install snyvi</code></pre>
+<p>Or the <a href="https://github.com/snymrova/snyvi/releases/latest/download/snyvi-windows-x64-setup.exe">installer</a>. It isn't signed yet, so SmartScreen asks once: <i>More info</i>, then <i>Run anyway</i>. Scoop installs without the prompt. snyvi is in Microsoft's review for winget, and <code>winget install snymrova.snyvi</code> works once it's through.</p>
+
+<h2 id="cargo">Cargo</h2>
+<pre><code>cargo install snyvi
+snyvi init-claude --auto</code></pre>
+<p>That builds the daemon, the CLI, the MCP server and the hook from <a href="https://crates.io/crates/snyvi">crates.io</a>: everything but the window, which links a browser engine. <code>snyvi app</code> then opens snyvi in your browser instead.</p>
+
+<h2 id="check">Check what you downloaded</h2>
+<p>Every release file carries a <code>.sha256</code> beside it and a build attestation. This proves a file came out of the release workflow in snyvi's repository, on the commit its tag names:</p>
+<pre><code>gh attestation verify &lt;file&gt; --repo snymrova/snyvi</code></pre>
+
+<h2 id="then">Then</h2>
+<p>Open snyvi. It asks <i>What are you working on?</i>, and the folder you pick becomes your first desk. Every other agent is one line: <code>snyvi init codex</code>, or <code>cursor</code>, <code>claude-desktop</code>, <code>gemini</code>, <code>windsurf</code>, <code>vscode</code>, <code>zed</code>. The <a href="/guide">guide</a> has the rest.</p>
+
+<h2 id="updating">Updating</h2>
+<p>snyvi checks for a new version every six hours or so and applies one at most once a day, at a quiet moment, after checking its signature. <code>snyvi update off</code> stops the checks; <code>snyvi update</code> still works when you ask. A <code>.deb</code> is owned by root and a cargo build by you, so for those snyvi only says a new version is out.</p>

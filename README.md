@@ -20,6 +20,7 @@
 </p>
 
 <p align="center">
+  <a href="https://snyvi.com"><b>snyvi.com</b></a> &nbsp;·&nbsp;
   <a href="#install"><b>Install</b></a> &nbsp;·&nbsp;
   <a href="#one-desk-for-each-project">Tour</a> &nbsp;·&nbsp;
   <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
@@ -55,7 +56,7 @@ and nothing to configure.
 |---|---|
 | **macOS** | `brew install --cask snymrova/snyvi/snyvi` |
 | **Linux** | `curl -fsSL https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh \| sh` |
-| **Windows** | `winget install snymrova.snyvi`, or `scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi` then `scoop install snyvi`, or the [installer][win] |
+| **Windows** | `scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi` then `scoop install snyvi`, or the [installer][win]; `winget install snymrova.snyvi` once Microsoft's review is through |
 
 Then open snyvi from your apps, or run `snyvi app`. It asks what you're
 working on, makes that project's first desk, and connects Claude Code from

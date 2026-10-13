@@ -1,0 +1,56 @@
+# snyvi.com: built from site/ and the docs, deployed to Cloudflare.
+# The pages are rendered by snyvi itself (`snyvi render`), so the job builds
+# the binary first; the changelog reads the tags, so the checkout is whole.
+name: site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "docs/**"
+      - "ui/app.css"
+      - "ui/themes.css"
+      - "ui/app/**"
+      - "ui/tour/**"
+      - "src/render.rs"
+      - "src/render/**"
+      - "Cargo.toml"
+      - ".github/workflows/site.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --bin snyvi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node site/build.mjs --check
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: site
+          command: deploy
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: site/www
+          command: deploy
