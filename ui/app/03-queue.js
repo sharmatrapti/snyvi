@@ -79,13 +79,24 @@
   // The bar's ✕ hides it, read nothing, until the next arrival.
   let arrivals = 0, qbShut = -1;
   let qbAt = null;   // the waiting document the bar shows, by id; null is the newest
-  /** ‹ or › on the bar: the one before or after, round the ends. */
+  /* ‹ › page through what was waiting, opening each one: the bar sits over a
+   * document, and a pager there that only turned its own label read as
+   * broken. An open is a read, which takes the document off the queue, so
+   * the pages are a snapshot taken at the first step -- the count stays the
+   * place in that batch and ‹ goes back to one just read. An arrival joins
+   * the end. The batch ends when the reader goes anywhere else, or on ✕. */
+  let qbBatch = null;   // [{ id, title, project }] since the first step; null when not paging
+  let qbGoing = null;   // the batch's document being opened, so the page left behind does not end it
+  const qbRow = ({ id, title, project }) => ({ id, title, project });
+  /** ‹ or › on the bar: the one before or after, round the ends, opened. */
   function qbStep(by) {
-    const q = state.queue, n = q.length;
+    const b = qbBatch || state.queue.map(qbRow), n = b.length;
     if (n < 2) return;
-    const i = Math.max(0, q.findIndex(d => d.id === qbAt));
-    qbAt = q[(i + by + n) % n].id;
+    qbBatch = b;
+    const i = Math.max(0, b.findIndex(d => d.id === qbAt));
+    const id = qbAt = qbGoing = b[(i + by + n) % n].id;
     renderQueue();
+    showDoc(id, true).finally(() => { if (qbGoing === id) qbGoing = null; renderQueue(); });
   }
   // ← → on one of the bar's buttons step it as ‹ › do; the page's keys are not told.
   queueBar.addEventListener("keydown", e => {
@@ -131,19 +142,26 @@
       qbWas = 0;
       return;
     }
-    const bar = n > 0 && !!head && !off && qbShut !== arrivals;
+    // A batch outlives the page only while that page is one of its own.
+    if (qbBatch && !qbGoing && !(state.view === "doc" && qbBatch.some(d => d.id === state.doc?.id))) qbBatch = null;
+    if (qbBatch) for (const d of state.queue) if (!qbBatch.some(x => x.id === d.id)) qbBatch.push(qbRow(d));
+    const bar = (!!qbBatch || (n > 0 && !!head)) && !off && qbShut !== arrivals;
     queueBar.hidden = !bar;
-    if (!bar) { queueBar.innerHTML = ""; qbWas = 0; return; }
+    if (!bar) { queueBar.innerHTML = ""; qbWas = 0; qbBatch = null; return; }
     // The bar rises when it appears and stays put after: a count that changes
     // ticks in place. It used to be rebuilt on every render, which re-ran the
     // rise for one more arrival, and twelve arrivals rose twelve times.
     // ‹ › step through what this page holds (#100), by id: an arrival or a
     // read elsewhere leaves the one shown where it is, and if it goes, the
     // bar is back on the newest.
-    let at = qbAt ? state.queue.findIndex(d => d.id === qbAt) : 0;
+    // Paging, the figure is the place in the batch, which is also what ‹ ›
+    // step through; it was the daemon's count while they stepped through the
+    // rows held here, and past QUEUE_HELD the two parted.
+    const rows = qbBatch || state.queue, total = qbBatch ? rows.length : n;
+    let at = qbAt ? rows.findIndex(d => d.id === qbAt) : 0;
     if (at < 0) { at = 0; qbAt = null; }
-    const cur = state.queue[at], one = state.queue.length < 2;
-    const count = one ? `${n} waiting` : `${at + 1}/${n}`, next = `<b>${esc(cur.title)}</b> · ${esc(cur.project)}`;
+    const cur = rows[at], one = rows.length < 2;
+    const count = one ? `${n} waiting` : `${at + 1}/${total}`, next = `<b>${esc(cur.title)}</b> · ${esc(cur.project)}`;
     // The bar, not the Marked-read ghost that stood in its place: a ghost
     // found here was taken for the bar, lost its words to the next title and
     // threw on its missing count -- inside the Undo, before it could ask.
@@ -153,20 +171,20 @@
     // top of the page. It arrives wide-eyed and settles into a smile.
     if (!qb) {
       queueBar.innerHTML = `<div class="qb${one ? " one" : ""}"><span class="qb-who"></span>` +
-        `<button type="button" class="icon qb-step" data-q="prev" data-tip="Previous" aria-label="Previous one waiting">${glyph("prev", 14)}</button><span class="qb-n">${count}</span>` +
-        `<button type="button" class="icon qb-step" data-q="step" data-tip="Next" aria-label="Next one waiting">${glyph("next", 14)}</button><span class="qb-next">${next}</span>` +
+        `<button type="button" class="icon qb-step" data-q="prev" data-tip="Open the previous one" aria-label="Open the previous one waiting">${glyph("prev", 14)}</button><span class="qb-n">${count}</span>` +
+        `<button type="button" class="icon qb-step" data-q="step" data-tip="Open the next one" aria-label="Open the next one waiting">${glyph("next", 14)}</button><span class="qb-next">${next}</span>` +
         `<button type="button" data-q="next" data-tip="Open this one" data-tip-sub="n opens the newest · letter keys: Ctrl B turns them on">Open<kbd>n</kbd></button><a href="/inbox?recent" class="qb-all" data-nav="inbox">Show all</a>` +
         `<button type="button" class="icon" data-q="clear" data-tip="Mark all read" aria-label="Mark all read">${glyph("checks", 14)}</button>` +
         `<button type="button" class="icon" data-q="shut" data-tip="Hide this bar" data-tip-sub="they stay first in Recent" aria-label="Hide this bar">${glyph("x", 14)}</button></div>`;
       qbFeel("whoa");
-      qbWas = n;
+      qbWas = total;
       return;
     }
     const num = qb.querySelector(".qb-n"), nx = qb.querySelector(".qb-next");
     qb.classList.toggle("one", one);
     if (nx.innerHTML !== next) nx.innerHTML = next;
     // A step changes the figure and is not news: it is written, not ticked.
-    if (num.textContent !== count && n === qbWas) num.textContent = count;
+    if (num.textContent !== count && total === qbWas) num.textContent = count;
     else if (num.textContent !== count) {
       num.textContent = count;
       // Restarted by replacing the node: a class taken off and put back in
@@ -176,9 +194,9 @@
       num.replaceWith(fresh);
       // One more is a surprise; one fewer is a read, which happens tens of
       // times a day and moves nothing (docs/DESIGN.md §7.2).
-      if (n > qbWas) qbFeel("whoa");
+      if (total > qbWas) qbFeel("whoa");
     }
-    qbWas = n;
+    qbWas = total;
   }
   /** The face on the bar: `feel` for the moment, then plain -- the face at
    *  rest holding the count is a smile, not a stare. The moment is a fresh
@@ -230,7 +248,7 @@
     const r = await post("/api/queue/clear");
     const j = r?.ok && await r.json();
     if (!j) return toast("Could not mark them read", { retry: clearQueue });
-    state.queue = []; state.waiting = 0;
+    state.queue = []; state.waiting = 0; qbBatch = null;
     unmarkRows(null);
     renderTree(); markActive();
     if (state.view === "inbox") showInbox(false);
@@ -280,11 +298,12 @@
     const b = e.target.closest("[data-q]");
     if (!b) return;
     e.preventDefault();
-    if (b.dataset.q === "next") { const id = qbAt; qbAt = null; id ? showDoc(id, true) : openNext(); }
+    // Paging, the one the bar shows is already open: Open is `n` again, the newest unread.
+    if (b.dataset.q === "next") { const id = qbBatch ? null : qbAt; qbAt = null; qbBatch = null; id ? showDoc(id, true) : (openNext(), renderQueue()); }
     else if (b.dataset.q === "prev" || b.dataset.q === "step") qbStep(b.dataset.q === "prev" ? -1 : 1);
     else if (b.dataset.q === "clear") clearQueue();
     else if (b.dataset.q === "undo") qbGhost?.undo();
-    else if (b.dataset.q === "shut") { qbShut = arrivals; renderQueue(); }
+    else if (b.dataset.q === "shut") { qbShut = arrivals; qbBatch = null; renderQueue(); }
   });
 
   /** The rows inside one project: its sessions, their documents, and — where a

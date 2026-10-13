@@ -1126,20 +1126,31 @@ async function queueRows(p, url, arrive) {
   await p.goto(url);
   await until(`!document.querySelector("#queue-bar").hidden`);
 
-  // ‹ › step the bar through what waits, round the ends, and open nothing (#100).
+  // ‹ › page through what waits, opening each, round the ends; the count is
+  // the place in the batch, so a read does not take the one shown off it.
+  const ids = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.map(d => d.id))`);
+  const on = i => until(`document.title === ${JSON.stringify(served[i])}`);
   await p.clickOn("#queue-bar [data-q=step]");
+  const stepOpened = await on(1);
   await sleep(200);
   const stepped = await read();
   await p.clickOn("#queue-bar [data-q=prev]");
+  await on(0);
   await p.clickOn("#queue-bar [data-q=prev]");
+  const roundOpened = await on(11);
   await sleep(200);
   const round = await read();
   await p.clickOn("#queue-bar [data-q=step]");
+  const homeOpened = await on(0);
   await sleep(200);
   const home = await read();
   const shows = (r, i) => (r.bar || "").startsWith(`${i + 1}/12${served[i]}`);
-  rows.push(["› and ‹ step the bar, round the ends", shows(stepped, 1) && shows(round, 11) && shows(home, 0) && home.side === 12,
-    `the bar read "${(stepped.bar || "").slice(0, 16)}", "${(round.bar || "").slice(0, 16)}", "${(home.bar || "").slice(0, 16)}", ${home.side} still waiting`]);
+  rows.push(["› and ‹ open the next and the one before, round the ends", stepOpened && roundOpened && homeOpened && shows(stepped, 1) && shows(round, 11) && shows(home, 0) && home.side === 9,
+    `opened ${[stepOpened, roundOpened, homeOpened].map(Number).join("")}; the bar read "${(stepped.bar || "").slice(0, 16)}", "${(round.bar || "").slice(0, 16)}", "${(home.bar || "").slice(0, 16)}", ${home.side} still waiting`]);
+  // The three read put back, for the rows below that count twelve.
+  await p.ev(`fetch("/api/queue/unread", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ${JSON.stringify(ids)} }) }).then(r => r.status)`);
+  await p.goto(url);
+  await until(`/^1\\/12/.test(document.querySelector("#queue-bar").textContent)`);
 
   await p.press("i");
   await sleep(600);
