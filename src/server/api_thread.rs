@@ -194,7 +194,7 @@ fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
             ),
         ),
         Ok(Asked::Empty) => refused(StatusCode::BAD_REQUEST, "it needs one sentence"),
-        Ok(Asked::BadKind) => refused(StatusCode::BAD_REQUEST, "kind is try, merge, key or run"),
+        Ok(Asked::BadKind) => refused(StatusCode::BAD_REQUEST, "kind is try, merge, key, run or do"),
         Ok(Asked::BadCmd) => refused(
             StatusCode::BAD_REQUEST,
             format!(
@@ -228,7 +228,7 @@ pub(crate) async fn pane_ask(
     pane_turn(app, headers, id, b, true).await
 }
 
-/// `hand_over`: try, merge, key or run.
+/// `hand_over`: try, merge, key, run or do.
 pub(crate) async fn pane_hand_over(
     State(app): S,
     headers: HeaderMap,
@@ -253,7 +253,10 @@ async fn pane_turn(
     // options, and a question is not a hand-over.
     let kind = if decide { "decide".to_string() } else { b.kind };
     if !decide && kind == "decide" {
-        return refused(StatusCode::BAD_REQUEST, "kind is try, merge, key or run");
+        return refused(
+            StatusCode::BAD_REQUEST,
+            "kind is try, merge, key, run or do",
+        );
     }
     let a = Ask {
         kind,

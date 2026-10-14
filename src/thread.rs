@@ -144,10 +144,13 @@ pub const STAGES: [&str; 7] = [
 ];
 
 /// What a turn asks of the reader. The kind picks the buttons: `decide` has
-/// the agent's options, `try` has Looks good and Needs changes, `merge` and
-/// `key` have Done, and `run` has its command and Run, which types it into
-/// the panel that asked as Claude Code's `!` shell mode (#95).
-pub const KINDS: [&str; 5] = ["decide", "try", "merge", "key", "run"];
+/// the agent's options, `try` has Looks good and Needs changes, `merge`,
+/// `key` and `do` have Done, and `run` has its command and Run, which types
+/// it into the panel that asked as Claude Code's `!` shell mode (#95). `do`
+/// is what only the reader can do elsewhere -- pay, sign in, approve: without
+/// it an agent filed a top-up as a `try`, and the card asked whether adding
+/// credits Looks good.
+pub const KINDS: [&str; 6] = ["decide", "try", "merge", "key", "run", "do"];
 
 /// The longest command a `run` turn carries, in bytes: one line, typed into
 /// a terminal on the reader's click.

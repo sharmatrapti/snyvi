@@ -138,7 +138,7 @@ finished and you have checked it; several notes go in one call each, by ids. Nev
 File a piece of work as a thread with start_thread when you take it on. Put on their On you list with \
 hand_over only what blocks you and only they can do: a command you are blocked from running, or one that \
 is theirs to run (a release, a deploy), goes there as run, never as text or a `! command` for them to type; \
-a key; a merge. Asking them to try a change goes in your reply. When \
+a key; a merge; a payment or sign-in, as do. Asking them to try a change goes in your reply. When \
 you need the user to decide something before you go on, put it on their On you list with ask (several at once \
 as its questions), or in your own question tool when they are at this panel, never only as a list in your \
 reply. \
