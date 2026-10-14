@@ -495,14 +495,9 @@
 
   /** Where a document's row stands, as a place that outlives the row: the
    *  row that was clicked, or -- for the meta pane and Del, which have none --
-   *  the tree's row before the queue's. Null when neither is drawn. */
+   *  the tree's. Null when it is not drawn. */
   function rowOf(id, from) {
     const sel = `a[data-id="${id}"]`;
-    const inQueue = from ? !!from.closest("#queue") : !treeEl.querySelector(sel) && !!queueEl.querySelector(sel);
-    if (inQueue) {
-      const at = lastQueue.findIndex(x => x.id === id);
-      return at < 0 ? null : { where: "queue", at };
-    }
     if (!from && !treeEl.querySelector(sel)) return null;
     for (const [pid, wfs] of state.sub) for (const [wfAt, w] of wfs.entries()) {
       const at = w.docs.findIndex(x => x.id === id);
@@ -558,18 +553,15 @@
     // the last thing that happened.
     if (gone) { gone.clock.stop(); unoffer(gone.undo); gone = null; }
     const g = { ...(place || { where: null }), id: d.id, d, here, waiting: waitingRow(d), drawn: false, made: Date.now() };
-    g.clock = undoClock("#tree .t-gone .t-ghost, #queue .t-gone .t-ghost", () => ghostSettle(g));
+    g.clock = undoClock("#tree .t-gone .t-ghost", () => ghostSettle(g));
     g.undo = () => undoGone(g);
     // What stands around the ghost stands with it until the offer ends, so
     // nothing above it moves the row out from under the pointer either: the
-    // project, which leaves the daemon's tree with its last document, and the
-    // same document's row in Waiting.
+    // project, which leaves the daemon's tree with its last document.
     if (g.where === "proj") {
       g.projAt = state.tree.findIndex(p => String(p.id) === g.pid);
       g.proj = g.projAt >= 0 ? state.tree[g.projAt] : null;
-      g.qAt = lastQueue.findIndex(x => x.id === d.id);
-      g.qDoc = g.qAt >= 0 ? lastQueue[g.qAt] : null;
-    } else if (g.where !== "queue") depart([d.id]);
+    }
     state.queue = state.queue.filter(x => x.id !== d.id);
     state.waiting = Math.max(0, state.waiting - (g.waiting ? 1 : 0));
     for (const wfs of state.sub.values()) for (const w of wfs) {

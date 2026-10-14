@@ -62,9 +62,6 @@ function prelude() {
   // What the page counts of itself: app.js adds one to `renders` per draw
   // of the sidebar when this object is there, and nothing when it is not.
   window.__perf = { renders: 0 };
-  // The sections here read the waiting list's rows, which the Inbox's
-  // Waiting row folds away until a reader opens it; this reader has.
-  try { if (localStorage.getItem("snyvi.waiting") == null) localStorage.setItem("snyvi.waiting", "1"); } catch {}
   window.__ui = {
     vis(s) {
       const el = q(s);
@@ -752,7 +749,7 @@ async function sideRailRows(p, url, arrive) {
   const rows = [];
   await p.goto(url);
   await p.pointerAway();
-  const HOME = ["inbox-row", "queue", "tree", "desk-nav", "browse-nav", "widgets-nav", "pop"];
+  const HOME = ["inbox-row", "tree", "desk-nav", "browse-nav", "widgets-nav", "pop"];
   // The fold eases over 160 ms; the widths below are read where it lands.
   const eased = () => p.ev(`Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => 0))).then(() => 1)`);
   await p.press("\\");
@@ -762,7 +759,7 @@ async function sideRailRows(p, url, arrive) {
     folded.side !== "0" ? "\\ did not fold it" : folded.width !== 44 ? `the rail is ${folded.width} px` : !folded.icons ? "no icons on it" : folded.tree ? "the tree is still drawn in 44 px" : "44 px, icons only"]);
 
   const opened = [], broke = [];
-  for (const [sec, id] of [["inbox", "queue"], ["tree", "tree"], ["desks", "desk-nav"], ["browse", "browse-nav"], ["note", "note"]]) {
+  for (const [sec, id] of [["inbox", "inbox-row"], ["tree", "tree"], ["desks", "desk-nav"], ["browse", "browse-nav"], ["note", "note"]]) {
     if (!(await p.ui("vis", `#rail-nav [data-pop="${sec}"]`))) { if (sec !== "note") broke.push(`${sec}: no icon`); continue; }
     await p.clickOn(`#rail-nav [data-pop="${sec}"]`);
     const m = await p.ev(`({ in: !!document.querySelector("#pop > #${id}"), shown: window.__ui.vis("#pop"), left: Math.round(document.querySelector("#pop").getBoundingClientRect().left), focus: window.__ui.focus() })`);
@@ -788,9 +785,9 @@ async function sideRailRows(p, url, arrive) {
   // The number on the inbox is the number waiting.
   await arrive();
   await sleep(700);
-  const count = await p.ev(`({ badge: document.querySelector('#rail-nav [data-pop="inbox"] .badge').textContent, label: document.querySelector("#queue .t-label .n")?.textContent || "" })`);
+  const count = await p.ev(`({ badge: document.querySelector('#rail-nav [data-pop="inbox"] .badge').textContent, label: document.querySelector("#inbox-row .t-inbox.new .n")?.textContent || "" })`);
   rows.push(["the inbox icon says how many wait", count.badge !== "" && count.badge === count.label,
-    count.badge === "" ? `nothing on the icon (the queue says ${count.label || "nothing"})` : count.badge !== count.label ? `the icon says ${count.badge}, the queue ${count.label}` : `${count.badge}, as the queue says`]);
+    count.badge === "" ? `nothing on the icon (Recent says ${count.label || "nothing"})` : count.badge !== count.label ? `the icon says ${count.badge}, Recent ${count.label}` : `${count.badge}, as Recent says`]);
 
   // Tab reaches every icon, and the arrows walk them.
   await p.ev(`document.querySelector(".brand").focus()`);
@@ -1012,8 +1009,8 @@ async function diagramRows(p, url) {
 }
 
 /** 1.33: what the hook saves as Claude writes is a draft -- a row in its
- *  project, and nothing announced: no bar, no count, no row under Waiting,
- *  no wash. The agent's send of the same bytes takes the draft over, and
+ *  project, and nothing announced: no bar, no count, Recent not lit, no
+ *  wash. The agent's send of the same bytes takes the draft over, and
  *  that is the arrival: one row, washed once, with the agent's title. */
 async function draftRows(p, url, arrive) {
   const rows = [];
@@ -1026,20 +1023,20 @@ async function draftRows(p, url, arrive) {
   const draft = await arrive({ name: "draft.md", body, origin: "hook" });
   const listed = await until(`!!document.querySelector('#tree a[data-id="${draft.id}"]')`, 30);
   await sleep(300);
-  const hushed = await p.ev(`({ bar: !document.querySelector("#queue-bar").hidden, queued: !!document.querySelector('#queue a[data-id="${draft.id}"]'),
+  const hushed = await p.ev(`({ bar: !document.querySelector("#queue-bar").hidden, queued: !!document.querySelector("#inbox-row .t-inbox.new"),
     washed: document.querySelectorAll(".wash").length, marked: !!document.querySelector('#tree a.new[data-id="${draft.id}"]') })`);
   const counted = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.length)`);
   rows.push(["a draft is listed and says nothing", listed && !hushed.bar && !hushed.queued && !hushed.washed && !hushed.marked && counted === 0,
-    !listed ? "the draft is not in the tree" : hushed.bar ? "the bar came up" : hushed.queued ? "it is under Waiting" : hushed.washed ? "something washed" : hushed.marked ? "the tree marks it new" : counted ? `the daemon counts ${counted} waiting`
-      : "in the tree, unmarked; no bar, no Waiting row, no wash, nothing counted"]);
+    !listed ? "the draft is not in the tree" : hushed.bar ? "the bar came up" : hushed.queued ? "it lights Recent" : hushed.washed ? "something washed" : hushed.marked ? "the tree marks it new" : counted ? `the daemon counts ${counted} waiting`
+      : "in the tree, unmarked; no bar, Recent not lit, no wash, nothing counted"]);
 
   const sent = await arrive({ name: "draft.md", body, origin: "mcp", title: "The draft, sent" });
-  const came = await until(`!!document.querySelector('#queue a[data-id="${sent.id}"]')`, 30);
-  const washes = await p.ev(`(() => { const li = document.querySelector('#queue li.t-doc.wash:has(> a[data-id="${sent.id}"])'); return li ? li.getAnimations().filter(x => x.animationName === "land").length : -1; })()`);
-  const title = await p.ev(`document.querySelector('#queue a[data-id="${sent.id}"] .title')?.textContent || ""`);
+  const came = await until(`!!document.querySelector('#tree a.new[data-id="${sent.id}"]') && !!document.querySelector("#inbox-row .t-inbox.new")`, 30);
+  const washes = await p.ev(`(() => { const li = document.querySelector('#tree li.t-doc.wash:has(> a[data-id="${sent.id}"])'); return li ? li.getAnimations().filter(x => x.animationName === "land").length : -1; })()`);
+  const title = await p.ev(`document.querySelector('#tree a[data-id="${sent.id}"] .title')?.textContent || ""`);
   rows.push(["the send takes the draft over, and arrives", sent.id === draft.id && came && washes === 1 && title === "The draft, sent",
-    sent.id !== draft.id ? "a second row, not the draft" : !came ? "nothing under Waiting" : washes !== 1 ? `${washes < 0 ? "no" : washes} wash on the row` : title !== "The draft, sent" ? `the row says "${title}"`
-      : "one row, under Waiting, washed once, with the agent's title"]);
+    sent.id !== draft.id ? "a second row, not the draft" : !came ? "not marked new, or Recent not lit" : washes !== 1 ? `${washes < 0 ? "no" : washes} wash on the row` : title !== "The draft, sent" ? `the row says "${title}"`
+      : "one row, marked new, Recent lit, washed once, with the agent's title"]);
   await p.ev(`fetch("/api/queue/clear", { method: "POST" }).then(r => r.status)`);
   return rows;
 }
@@ -1051,7 +1048,7 @@ async function queueRows(p, url, arrive) {
   const read = () => p.ev(`(() => {
     const bar = document.querySelector("#queue-bar");
     return { title: document.title, path: location.pathname, bar: bar.hidden ? null : bar.textContent.trim(),
-      side: [...document.querySelectorAll("#queue a.new .title")].map(a => a.textContent), more: document.querySelector("#queue .t-more")?.textContent || null,
+      side: +(document.querySelector("#inbox-row .t-inbox.new .n")?.textContent || 0),
       marked: document.querySelectorAll("#tree a.new").length, waiting: [...document.querySelectorAll(".inbox.waiting .title")].map(a => a.textContent),
       place: window.__ui.place() };
   })()`);
@@ -1071,16 +1068,16 @@ async function queueRows(p, url, arrive) {
   const during = await read();
   dbg("arrival", { before, during });
   const stayed = during.title === before.title && during.place.block === before.place.block && Math.abs(during.place.delta - before.place.delta) < 2;
-  rows.push(["an arrival while reading", barCame && stayed && /^1 waiting/.test(during.bar) && during.bar.includes(first.title) && during.side.length === 1 && during.marked === 1,
+  rows.push(["an arrival while reading", barCame && stayed && /^1 waiting/.test(during.bar) && during.bar.includes(first.title) && during.side === 1 && during.marked === 1,
     !barCame ? "no bar appeared" : during.title !== before.title ? `the page changed to "${during.title}"` : !stayed ? `the document moved: block ${before.place.block} at ${before.place.delta} px, then block ${during.place.block} at ${during.place.delta} px`
-      : !/^1 waiting/.test(during.bar) ? `the bar reads "${during.bar.slice(0, 30)}"` : during.side.length !== 1 ? `${during.side.length} rows in the sidebar's queue` : during.marked !== 1 ? `${during.marked} rows marked in the tree`
-        : `page unmoved at block ${during.place.block}; bar reads "1 waiting", one row in the sidebar, one marked in the tree`]);
+      : !/^1 waiting/.test(during.bar) ? `the bar reads "${during.bar.slice(0, 30)}"` : during.side !== 1 ? `Recent counts ${during.side}` : during.marked !== 1 ? `${during.marked} rows marked in the tree`
+        : `page unmoved at block ${during.place.block}; bar reads "1 waiting", Recent counts 1, one marked in the tree`]);
 
   await p.press("n");
   await sleep(600);
   const opened = await read();
-  rows.push(["n opens it", opened.title === first.title && opened.bar === null && opened.side.length === 0 && opened.marked === 0,
-    opened.title !== first.title ? `n opened "${opened.title}"` : opened.bar !== null ? "the bar is still up" : opened.side.length ? "the sidebar still lists it" : opened.marked ? "the tree still marks it" : "open, off the queue, unmarked in the tree"]);
+  rows.push(["n opens it", opened.title === first.title && opened.bar === null && opened.side === 0 && opened.marked === 0,
+    opened.title !== first.title ? `n opened "${opened.title}"` : opened.bar !== null ? "the bar is still up" : opened.side ? "Recent still counts it" : opened.marked ? "the tree still marks it" : "open, off the queue, unmarked in the tree"]);
 
   await p.press("ArrowLeft", { alt: true });
   await sleep(800);
@@ -1100,56 +1097,60 @@ async function queueRows(p, url, arrive) {
   // Twelve sent at once land in whatever order the daemon took them; the
   // order it keeps is the order the page must show.
   const served = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.map(d => d.title))`);
-  const inOrder = many.side.join("|") === served.slice(0, 6).join("|");
-  rows.push(["twelve at once", twelve && many.side.length === 6 && /6 more/.test(many.more || "") && inOrder,
-    !twelve ? `the bar reads "${many.bar ? many.bar.slice(0, 20) : "nothing"}"` : many.side.length !== 6 ? `${many.side.length} rows in the sidebar` : !/6 more/.test(many.more || "") ? `"${many.more}" under them` : !inOrder ? `the sidebar's order is not the daemon's` : "bar reads 1/12; six rows and \"6 more\" in the sidebar, newest first"]);
+  rows.push(["twelve at once", twelve && many.side === 12 && (many.bar || "").startsWith(`1/12${served[0]}`),
+    !twelve ? `the bar reads "${many.bar ? many.bar.slice(0, 20) : "nothing"}"` : many.side !== 12 ? `Recent counts ${many.side}` : !(many.bar || "").startsWith(`1/12${served[0]}`) ? "the bar does not start where the daemon does" : "bar reads 1/12 from the newest; Recent counts 12"]);
 
   await p.reload();
   const kept = await read();
-  rows.push(["still waiting after a reload", /^1\/12/.test(kept.bar || "") && kept.side.length === 6,
-    `the bar reads "${(kept.bar || "nothing").slice(0, 20)}", ${kept.side.length} rows in the sidebar`]);
+  rows.push(["still waiting after a reload", /^1\/12/.test(kept.bar || "") && kept.side === 12,
+    `the bar reads "${(kept.bar || "nothing").slice(0, 20)}", Recent counts ${kept.side}`]);
 
-  // 1.28.0: the Inbox head is All at its edge, then Recent and Waiting. The
-  // Waiting row folds the list in place and keeps how it was left; Recent is
-  // the newest-first list without the waiting half; All is the whole Inbox.
-  const head = () => p.ev(`({ n: document.querySelector("#inbox-row .t-wait .n")?.textContent || "", open: getComputedStyle(document.querySelector("#queue")).display !== "none",
-    h: document.querySelector("#inbox-row").offsetHeight, all: document.querySelector("#inbox-row .sec-all")?.textContent.trim() || "" })`);
-  const shut0 = await head();
-  await p.clickOn("#inbox-row .t-wait");
-  await sleep(300);
-  const shut1 = await head();
-  await p.reload();
-  const shut2 = await head();
-  await p.clickOn("#inbox-row .t-wait");
-  await sleep(300);
-  const shut3 = await head();
-  rows.push(["Waiting folds its list in place, and keeps it", shut0.open && shut0.n === "12" && !shut1.open && !shut2.open && shut3.open && shut1.h === shut0.h,
-    !shut0.open ? "the list was not open to start with" : shut0.n !== "12" ? `the Waiting row reads "${shut0.n}"` : shut1.open ? "a click did not fold the list" : shut1.h !== shut0.h ? `the head moved: ${shut0.h} px, then ${shut1.h} px`
-      : shut2.open ? "a reload unfolded it" : !shut3.open ? "a second click did not open it" : `Waiting 12 folds and opens, stays folded over a reload, the head ${shut0.h} px throughout`]);
+  // 1.36.1: the Inbox head is All at its edge, then Recent alone. Waiting, the
+  // row that folded the same documents in place, is gone: Recent is lit with
+  // how many are unread, and its page lists them first, then the rest, each
+  // once. All is the whole Inbox.
+  const head = () => p.ev(`({ n: document.querySelector("#inbox-row .t-inbox.new .n")?.textContent || "", rows: document.querySelectorAll("#inbox-row .s-row").length,
+    list: !!document.querySelector("#queue, #inbox-row .t-wait"), all: document.querySelector("#inbox-row .sec-all")?.textContent.trim() || "" })`);
+  const lit = await head();
+  rows.push(["Recent is lit with how many are unread", lit.n === "12" && lit.rows === 1 && !lit.list,
+    lit.list ? "the Waiting row or its list is still drawn" : lit.rows !== 1 ? `${lit.rows} rows under the Inbox head` : lit.n !== "12" ? `Recent reads "${lit.n}"` : "Recent 12, in the accent, the one row under the head"]);
   await p.clickOn("#inbox-row .t-inbox");
   const recent = await until(`location.search === "?recent" && document.querySelector("#doc h1")?.textContent === "Recent"`);
-  const half = await p.ev(`!!document.querySelector("#doc .inbox.waiting")`);
+  const page = await p.ev(`(() => { const t = s => [...document.querySelectorAll(s)].map(a => a.textContent); const un = t("#doc .inbox.waiting .title"), all = [...document.querySelectorAll("#doc .inbox a[data-id]")].map(a => a.dataset.id);
+    return { un, twice: all.length - new Set(all).size, rest: document.querySelectorAll("#doc .inbox:not(.waiting) li").length }; })()`);
   await p.clickOn("#inbox-row .sec-all");
   const whole = await until(`location.search === "" && document.querySelector("#doc h1")?.textContent === "Inbox" && !!document.querySelector("#doc .inbox.waiting")`);
-  rows.push(["Recent is newest first; All is the whole Inbox", recent && !half && whole,
-    !recent ? "Recent did not open /inbox?recent" : half ? "Recent shows the waiting list too" : !whole ? "All did not open the Inbox with what waits" : `Recent at /inbox?recent, All (${shut0.all}) at /inbox with what waits`]);
+  rows.push(["Recent lists the unread first; All is the whole Inbox", recent && page.un.length === 12 && page.un[0] === served[0] && !page.twice && page.rest > 0 && whole,
+    !recent ? "Recent did not open /inbox?recent" : page.un.length !== 12 ? `${page.un.length} unread on Recent` : page.un[0] !== served[0] ? `"${page.un[0]}" first, not the newest`
+      : page.twice ? `${page.twice} listed twice` : !page.rest ? "nothing under the unread" : !whole ? "All did not open the Inbox with what waits" : `Recent: 12 unread, newest first, then ${page.rest} more, each once; All at /inbox`]);
   await p.goto(url);
   await until(`!document.querySelector("#queue-bar").hidden`);
 
-  // ‹ › step the bar through what waits, round the ends, and open nothing (#100).
+  // ‹ › page through what waits, opening each, round the ends; the count is
+  // the place in the batch, so a read does not take the one shown off it.
+  const ids = await p.ev(`fetch("/api/queue").then(r => r.json()).then(q => q.map(d => d.id))`);
+  const on = i => until(`document.title === ${JSON.stringify(served[i])}`);
   await p.clickOn("#queue-bar [data-q=step]");
+  const stepOpened = await on(1);
   await sleep(200);
   const stepped = await read();
   await p.clickOn("#queue-bar [data-q=prev]");
+  await on(0);
   await p.clickOn("#queue-bar [data-q=prev]");
+  const roundOpened = await on(11);
   await sleep(200);
   const round = await read();
   await p.clickOn("#queue-bar [data-q=step]");
+  const homeOpened = await on(0);
   await sleep(200);
   const home = await read();
   const shows = (r, i) => (r.bar || "").startsWith(`${i + 1}/12${served[i]}`);
-  rows.push(["› and ‹ step the bar, round the ends", shows(stepped, 1) && shows(round, 11) && shows(home, 0) && home.side.length === 6,
-    `the bar read "${(stepped.bar || "").slice(0, 16)}", "${(round.bar || "").slice(0, 16)}", "${(home.bar || "").slice(0, 16)}", ${home.side.length} rows still waiting`]);
+  rows.push(["› and ‹ open the next and the one before, round the ends", stepOpened && roundOpened && homeOpened && shows(stepped, 1) && shows(round, 11) && shows(home, 0) && home.side === 9,
+    `opened ${[stepOpened, roundOpened, homeOpened].map(Number).join("")}; the bar read "${(stepped.bar || "").slice(0, 16)}", "${(round.bar || "").slice(0, 16)}", "${(home.bar || "").slice(0, 16)}", ${home.side} still waiting`]);
+  // The three read put back, for the rows below that count twelve.
+  await p.ev(`fetch("/api/queue/unread", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: ${JSON.stringify(ids)} }) }).then(r => r.status)`);
+  await p.goto(url);
+  await until(`/^1\\/12/.test(document.querySelector("#queue-bar").textContent)`);
 
   await p.press("i");
   await sleep(600);
@@ -1164,8 +1165,8 @@ async function queueRows(p, url, arrive) {
   await sleep(500);
   await p.reload();
   const cleared = await read();
-  rows.push(["an inbox with a queue, cleared", still.title === "snyvi" && still.waiting.length === 13 && cleared.waiting.length === 0 && cleared.side.length === 0 && cleared.bar === null,
-    still.title !== "snyvi" ? `the arrival opened itself over the inbox: "${still.title}"` : still.waiting.length !== 13 ? `${still.waiting.length} waiting after the arrival` : cleared.waiting.length || cleared.side.length ? "something is still waiting after Mark all read and a reload" : `the arrival became the 13th row; Mark all read emptied the queue, and a reload agrees`]);
+  rows.push(["an inbox with a queue, cleared", still.title === "snyvi" && still.waiting.length === 13 && cleared.waiting.length === 0 && cleared.side === 0 && cleared.bar === null,
+    still.title !== "snyvi" ? `the arrival opened itself over the inbox: "${still.title}"` : still.waiting.length !== 13 ? `${still.waiting.length} waiting after the arrival` : cleared.waiting.length || cleared.side ? "something is still waiting after Mark all read and a reload" : `the arrival became the 13th row; Mark all read emptied the queue, and a reload agrees`]);
 
   const fresh = await arrive();
   const openedItself = await until(`document.title === ${JSON.stringify(fresh.title)}`);
@@ -1179,20 +1180,25 @@ async function queueRows(p, url, arrive) {
   await p.goto(url);
   const plan = "the-plan.md";
   await arrive({ name: plan, body: "# The plan\n\nFirst draft.\n" });
-  await until(`[...document.querySelectorAll("#queue .title")].some(t => t.textContent === "The plan")`);
+  // What waits, as the bar says it -- the oldest, and how many -- and
+  // Recent's count: an older version still held would be "1/2" and first.
+  const held = `(() => { const qb = document.querySelector("#queue-bar .qb"); return { rows: qb ? [qb.querySelector(".qb-next b")?.textContent || ""].filter(t => t.startsWith("The plan")) : [],
+    one: !!qb && /^1 waiting/.test(qb.querySelector(".qb-n")?.textContent || ""), n: document.querySelector("#inbox-row .t-inbox.new .n")?.textContent }; })()`;
+  const onBar = t => `document.querySelector("#queue-bar .qb-next b")?.textContent === ${JSON.stringify(t)}`;
+  await until(onBar("The plan"));
   await arrive({ name: plan, body: "# The plan, revised\n\nSecond draft.\n" });
-  await until(`[...document.querySelectorAll("#queue .title")].some(t => t.textContent === "The plan, revised")`);
+  await until(onBar("The plan, revised"));
   await sleep(300);
-  const twice = await p.ev(`({ rows: [...document.querySelectorAll("#queue .title")].map(t => t.textContent).filter(t => t.startsWith("The plan")), n: document.querySelector("#queue .t-label .n")?.textContent })`);
+  const twice = await p.ev(held);
   await arrive({ name: plan, body: "# The plan, third\n\nFrom elsewhere.\n", workflow: "ui audit" });
-  await until(`[...document.querySelectorAll("#queue .title")].some(t => t.textContent === "The plan, third")`);
+  await until(onBar("The plan, third"));
   await sleep(300);
-  const thrice = await p.ev(`({ rows: [...document.querySelectorAll("#queue .title")].map(t => t.textContent).filter(t => t.startsWith("The plan")), n: document.querySelector("#queue .t-label .n")?.textContent })`);
+  const thrice = await p.ev(held);
   await p.press("i"); await sleep(600);
   const listed = await p.ev(`[...document.querySelectorAll(".inbox.waiting .title")].map(a => a.textContent).filter(t => t.startsWith("The plan"))`);
-  rows.push(["one file sent three times waits once", twice.rows.join("|") === "The plan, revised" && thrice.rows.join("|") === "The plan, third" && listed.join("|") === "The plan, third" && thrice.n === "1",
-    twice.rows.length !== 1 ? `after two sends the sidebar lists ${twice.rows.join(", ")}` : thrice.rows.length !== 1 ? `after a third from another workflow it lists ${thrice.rows.join(", ")}`
-      : listed.length !== 1 ? `the inbox lists ${listed.join(", ")}` : thrice.n !== "1" ? `the count says ${thrice.n}` : "one row, the newest, in the sidebar and the inbox; the count says 1"]);
+  rows.push(["one file sent three times waits once", twice.rows.join("|") === "The plan, revised" && twice.one && thrice.rows.join("|") === "The plan, third" && thrice.one && listed.join("|") === "The plan, third" && thrice.n === "1",
+    !twice.one || twice.rows.length !== 1 ? `after two sends the bar shows ${twice.rows.join(", ") || "something else"}, not one` : !thrice.one || thrice.rows.length !== 1 ? `after a third from another workflow the bar shows ${thrice.rows.join(", ") || "something else"}, not one`
+      : listed.length !== 1 ? `the inbox lists ${listed.join(", ")}` : thrice.n !== "1" ? `the count says ${thrice.n}` : "one waiting, the newest, on the bar and the inbox; Recent says 1"]);
   void late;
   return rows;
 }
@@ -3887,7 +3893,9 @@ async function motionRows(p, url, arrive) {
   const first = await arrive();
   await until(`!document.querySelector("#queue-bar").hidden`);
   await p.ev(`window.__bar = document.querySelector("#queue-bar .qb")`);
-  const washed = await p.ev(`(() => { const li = document.querySelector('#queue li.t-doc.wash:has(> a[data-id="${first.id}"])'); return li ? li.getAnimations().filter(x => x.animationName === "land").length : -1; })()`);
+  // The tree draws the row once its project's list is fetched, after the bar.
+  await until(`!!document.querySelector('#tree a[data-id="${first.id}"]')`, 7);
+  const washed = await p.ev(`(() => { const li = document.querySelector('#tree li.t-doc.wash:has(> a[data-id="${first.id}"])'); return li ? li.getAnimations().filter(x => x.animationName === "land").length : -1; })()`);
   rows.push(["an arrival washes its row", washed === 1, washed < 0 ? "the row is not marked as washed" : `${washed} wash animation${washed === 1 ? "" : "s"} on the row`]);
 
   // A second arrival 300 ms in rebuilds every row. The first one's wash
@@ -3897,7 +3905,7 @@ async function motionRows(p, url, arrive) {
   await sleep(300);
   const second = await arrive();
   await until(`/^1\\/2/.test(document.querySelector("#queue-bar").textContent)`);
-  const resumed = await p.ev(`(() => { const li = document.querySelector('#queue li.wash:has(> a[data-id="${first.id}"])'); const w = li && li.getAnimations().find(x => x.animationName === "land"); return w ? Math.round(w.currentTime - w.effect.getTiming().delay) : -1; })()`);
+  const resumed = await p.ev(`(() => { const li = document.querySelector('#tree li.wash:has(> a[data-id="${first.id}"])'); const w = li && li.getAnimations().find(x => x.animationName === "land"); return w ? Math.round(w.currentTime - w.effect.getTiming().delay) : -1; })()`);
   rows.push(["once, whatever the tree does under it", resumed >= 250 && resumed < 700, resumed < 0 ? "the wash is gone or was never there" : `the wash is ${resumed} ms in, on a row rebuilt by the next arrival`]);
   const bar = await p.ev(`(() => { const qb = document.querySelector("#queue-bar .qb"); const n = qb && qb.querySelector(".qb-n");
     return { kept: qb === window.__bar, rise: qb ? qb.getAnimations().some(a => a.animationName === "rise") : null, tick: n ? n.classList.contains("tick") || n.getAnimations().some(a => a.animationName === "tick") : null }; })()`);
@@ -3911,17 +3919,14 @@ async function motionRows(p, url, arrive) {
   rows.push(["nothing runs long", running.length > 0 && long.length === 0,
     !running.length ? "nothing is animating at all, which the rows above say is wrong" : long.length ? `${long.map(a => `${a.name} ${a.n === Infinity ? "forever" : a.ms + " ms"}`).join(", ")}` : `${running.length} animations running, the longest ${Math.max(...running.map(a => a.ms))} ms`]);
 
-  // \`n\` opens the newest, the second: its row is drawn closing, briefly,
-  // then gone.
-  // \`void\`: the harness awaits a promise an expression returns, and this one
-  // is meant to be read after the key, not before it.
-  await p.ev(`void (window.__left = new Promise(r => { const t = setTimeout(() => r(null), 2000); new MutationObserver((_, o) => { const li = document.querySelector("#queue li.leaving"); if (li) { clearTimeout(t); o.disconnect(); r({ id: li.querySelector("a").dataset.id, anim: li.getAnimations().some(a => a.animationName === "leave") }); } }).observe(document.querySelector("#queue"), { childList: true, subtree: true, attributes: true }); }))`);
+  // \`n\` opens the newest, the second: its row in the tree is no longer
+  // lit, and Recent counts one fewer. Nothing closes: Waiting's list, where
+  // a read row used to, is gone (1.36.1).
   await p.press("n");
-  const left = await p.ev(`window.__left`);
   await sleep(400);
-  const after = await p.ev(`({ leaving: document.querySelectorAll("#queue li.leaving").length, there: !!document.querySelector('#queue a[data-id="${second.id}"]') })`);
-  rows.push(["a read closes its row where it was", !!left && left.id === second.id && left.anim && !after.leaving && !after.there,
-    !left ? "the row was gone with nothing drawn" : left.id !== second.id ? "a different row was drawn closing" : !left.anim ? "the row was marked but not moving" : after.leaving || after.there ? "the row is still there 400 ms later" : "drawn closing, and gone 400 ms later"]);
+  const after = await p.ev(`({ lit: !!document.querySelector('#tree a.new[data-id="${second.id}"]'), n: document.querySelector("#inbox-row .t-inbox.new .n")?.textContent || "" })`);
+  rows.push(["a read unlights its row, and Recent counts it", !after.lit && after.n === "1",
+    after.lit ? "the tree still marks it unread" : after.n !== "1" ? `Recent reads "${after.n}"` : "unmarked in the tree; Recent 2, then 1"]);
 
   // The \`#\` beside a heading says it copied, itself, and raises no toast.
   // Back on the plan: \`n\` opened the arrival, which is one heading long.
@@ -4071,8 +4076,8 @@ async function costRows(p, url, base, token, tmp, arrive) {
   const quick = ids.filter(id => dwell.has(id) && dwell.get(id) < 140);
   const crossed = (await p.ev(`window.__cost.api.slice()`)).filter(a => a.startsWith("/api/docs/") && quick.includes(a.split("/")[3]));
   const slow = ids.length - quick.length;
-  rows.push(["a sweep over the rows fetches nothing", ids.length >= 6 && quick.length >= 4 && crossed.length === 0,
-    ids.length < 6 ? `only ${ids.length} fresh rows on screen to sweep`
+  rows.push(["a sweep over the rows fetches nothing", ids.length >= 5 && quick.length >= 4 && crossed.length === 0,
+    ids.length < 5 ? `only ${ids.length} fresh rows on screen to sweep`
       : quick.length < 4 ? `only ${quick.length} of ${ids.length} rows crossed under 140 ms, too slow a sweep to judge`
       : crossed.length ? `${crossed.length} documents fetched for ${quick.length} rows crossed under 140 ms`
       : `${quick.length} rows crossed under 140 ms, nothing fetched${slow ? ` (${slow} the runner held longer, not charged)` : ""}`]);

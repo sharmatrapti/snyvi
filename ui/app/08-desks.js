@@ -569,7 +569,6 @@
       const j = parse(ev); if (!j) return;
       const turn = opening;
       state.cache.delete(j.id);
-      depart([j.id]);
       state.queue = state.queue.filter(d => d.id !== j.id);
       if (j.waiting != null) state.waiting = j.waiting;
       await refreshTree();

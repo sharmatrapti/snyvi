@@ -1799,9 +1799,17 @@ export function inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag,
     `<p>What your agents write lands here, filed by project.</p><button type="button" class="btn btn-primary" data-nav="start">How snyvi works</button></div>`;
   // What is waiting comes first, newest first, so the landing page answers
   // "what is new" before "what is there".
-  // Recent is the same list without the waiting half: the newest, read or not.
-  if (recent) return `<div class="inbox-head"><h1>Recent</h1><p>Newest first, across every project.</p></div><ul class="inbox">${items.map(row).join("")}</ul>`;
   const n = state.waiting;
+  // Recent is the sidebar's one row for what came: what is unread first, so
+  // Monday's plan is not under ten documents read since, then the rest,
+  // newest first. Each document once: the unread are not listed again.
+  if (recent) {
+    if (!n) return `<div class="inbox-head"><h1>Recent</h1><p>Newest first, across every project.</p></div><ul class="inbox">${items.map(row).join("")}</ul>`;
+    const held = new Set(state.queue.map(d => d.id));
+    return `<div class="inbox-head"><h1>Recent</h1><p>${plural(n, "document")} unread, then the rest, newest first.</p></div>` +
+      `<h2 class="inbox-sec">Unread<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul>` +
+      `<h2 class="inbox-sec">Earlier</h2><ul class="inbox">${items.filter(d => !held.has(d.id)).map(row).join("")}</ul>`;
+  }
   return `<div class="inbox-head"><h1>Inbox</h1><p>${n ? `${plural(n, "document")} waiting to be read, then everything else, newest first.` : "Newest first, across every project."}</p></div>` +
     (n ? `<h2 class="inbox-sec">Waiting<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul><h2 class="inbox-sec">Recent</h2>` : "") +
     `<ul class="inbox">${items.map(row).join("")}</ul>`;
