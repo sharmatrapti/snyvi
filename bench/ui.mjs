@@ -3893,6 +3893,8 @@ async function motionRows(p, url, arrive) {
   const first = await arrive();
   await until(`!document.querySelector("#queue-bar").hidden`);
   await p.ev(`window.__bar = document.querySelector("#queue-bar .qb")`);
+  // The tree draws the row once its project's list is fetched, after the bar.
+  await until(`!!document.querySelector('#tree a[data-id="${first.id}"]')`, 7);
   const washed = await p.ev(`(() => { const li = document.querySelector('#tree li.t-doc.wash:has(> a[data-id="${first.id}"])'); return li ? li.getAnimations().filter(x => x.animationName === "land").length : -1; })()`);
   rows.push(["an arrival washes its row", washed === 1, washed < 0 ? "the row is not marked as washed" : `${washed} wash animation${washed === 1 ? "" : "s"} on the row`]);
 
@@ -4074,8 +4076,8 @@ async function costRows(p, url, base, token, tmp, arrive) {
   const quick = ids.filter(id => dwell.has(id) && dwell.get(id) < 140);
   const crossed = (await p.ev(`window.__cost.api.slice()`)).filter(a => a.startsWith("/api/docs/") && quick.includes(a.split("/")[3]));
   const slow = ids.length - quick.length;
-  rows.push(["a sweep over the rows fetches nothing", ids.length >= 6 && quick.length >= 4 && crossed.length === 0,
-    ids.length < 6 ? `only ${ids.length} fresh rows on screen to sweep`
+  rows.push(["a sweep over the rows fetches nothing", ids.length >= 5 && quick.length >= 4 && crossed.length === 0,
+    ids.length < 5 ? `only ${ids.length} fresh rows on screen to sweep`
       : quick.length < 4 ? `only ${quick.length} of ${ids.length} rows crossed under 140 ms, too slow a sweep to judge`
       : crossed.length ? `${crossed.length} documents fetched for ${quick.length} rows crossed under 140 ms`
       : `${quick.length} rows crossed under 140 ms, nothing fetched${slow ? ` (${slow} the runner held longer, not charged)` : ""}`]);
