@@ -329,16 +329,18 @@ Pick the **lowest rung** that works:
   │    anchored, when the control   the pointer if it vanished     │
   │    has gone                     (menus, closed popovers)       │
   ├───────────────────────────────────────────────────────────────┤
-  │ 3  IN THE SECTION               queue bar · rail note ·        │
+  │ 3  IN THE SECTION               queue bar · desk note ·        │
   │    a standing surface           "Could not reach snyvi · Retry"│
   ├───────────────────────────────────────────────────────────────┤
-  │ 4  THE CORNER                   arrivals · daemon events       │
-  │    only for news with no click  (nothing was pressed)          │
+  │ 4  THE CORNER (§4.5)            arrivals · asides · friends ·  │
+  │    only for what came from      what waits on you              │
+  │    outside (nothing was pressed)                               │
   └───────────────────────────────────────────────────────────────┘
 ```
 
 Toasts are **anchored bubbles with a tail** pointing at their control or
-point; the corner is only for rung 4. A **tip is not a rung**: it describes
+point; the corner is only for rung 4, and it is not a toast: what rises
+there settles and stays (§4.5). A **tip is not a rung**: it describes
 a control, and gives way to any answer anchored there (§8.1).
 
 ### 4.2 Where an anchored answer goes
@@ -432,6 +434,53 @@ True in 1.7.2, and the rule:
   projects' way-back row); the desk rail shows "N removed" under Notes and
   Panels. Both open a list with Undo on each row.
 
+### 4.5 The corner: where every message lives
+
+Decided 2026-10-14 (design df6879689f, plan b0bca0a11f), after a reader
+lost a "panel sent a document" card: it went at the first click elsewhere,
+with nothing left to find it by. A message used to reach the reader in
+eight places, and three of them forgot it. Now everything that comes from
+outside has **one place**: the bottom-right corner, on every page
+(`ui/corner.js`; on a desk, the rail's column, `ui/desk/10-onyou.js`).
+
+```
+  arrives ──► RISE ──(8 s · a click elsewhere · Later)──► SETTLE ──► STAY
+              a card,            the card shrinks into     in the tray, until
+              one at a time      the pill; its dot lights  read, ✕'d, or 14 days
+```
+
+The pill opens **one tray with two parts**:
+
+- **On you**: what only the reader can do (a turn, an agent's offer to a
+  friend). A to-do list: it **counts, in amber** (`--warn`), and its rows
+  carry their buttons.
+- **Lately**: what came (documents, versions, asides, a friend's line,
+  reply or tick, and the reader's own answers, dimmed). A log, kept by the
+  daemon (`src/lately.rs`): it **never counts**; a **dot in the accent**
+  marks what is unseen. Opening the tray sees it, in every page.
+
+| # | Rule | |
+|---|---|---|
+| R1 | **Place** | From outside: the corner. Caused by the reader: in place, rungs 0–3. Nothing from outside in the middle of the page. |
+| R2 | **Memory** | A card that rises settles into the tray. Nothing that came goes on a timer, a click, or a restart. Only the reader's own answers fade. |
+| R3 | **Rhythm** | One card at a time; a burst (1.5 s) is one card, "+N more". Documents from one sender within 10 minutes are one Lately row. A card rises over the pill, never on a panel's prompt. |
+| R4 | **Colour** | Needs you is counted in amber; unseen is a dot in the accent. Never red, never a number for news (§5.2). |
+| R5 | **Motion** | Rise 220 ms, settle 140 ms, opacity and transform only. Under reduced motion, a fade. Nothing moves the page. |
+| R6 | **Sound and face** | A chime only for what waits on the reader. News is silent. No face on a desk; off a desk at most one, and only behind an aside (§2.3). |
+| R7 | **Reach** | Ctrl Alt Y opens the tray on every page, and ⌘K has "On you and Lately". What it holds survives a restart. |
+| R8 | **Outside the window** | With no snyvi page in front, what waits on the reader raises a desktop notification (one for a burst), as a document does. Never an aside or a tick. |
+
+- **Bylines lead with who spoke**: `claude-code · ledger · panel 2 · 6m`.
+  snyvi's own lines say *snyvi*, in the accent.
+- **Kept**: asides until the reader removes them; the rest for 14 days. A
+  ✕ is the ghost-and-Undo of §4.4, and Removed · Show has it after.
+- **Home** draws Lately large in its side column, the newest five as
+  Arrived did, and "N more" and its "on you" line open the same tray.
+- **Not here**: answers to the reader's own clicks (rungs 0–3), errors, and
+  the badges, which count what a section holds and are status, not
+  messages. A panel's head chip ("sent a page · Read it") stays beside its
+  panel, a mirror of a Lately row.
+
 ---
 
 ## 5. The look: futuristic, minimal, techy
@@ -475,7 +524,9 @@ Components **use** them.
   "current"**, and marks unread; nothing else.
 - Diff colours (`--add`, `--del`) are **for diffs only**. The 7 places they
   stand in for status move to `--ok` / `--danger`.
-- The lit aside gets an LED dot, not a glow around its card.
+- What waits on the reader is **counted in amber**, never in the accent: On
+  you's pill, Home's "on you" line. The accent's dot is Lately's: unseen,
+  never a number (§4.5).
 - Colour is never the only signal: running, waiting and the tabs carry
   visually hidden words.
 
@@ -949,6 +1000,10 @@ Decided 2026-09-28, and folded into the rules above.
 | Q15 | Paper's pure `#fff` raised surface | stays; the rule is "no pure black or white grounds, except Contrast" | §5.1 |
 | Q16 | Tip timing | 450 ms, then instant for 600 ms; overflow tips only when truncated | §8.1 |
 | Q17 | Onboarding before 1.7.2 | moot: already merged | — |
+| Q18 | A notification bell? | no: one corner on every page, its pill and tray; a dot for news, a count only for what waits on the reader (2026-10-14) | §4.5 |
+| Q19 | Where asides speak | the corner, not the sidebar's foot; kept by the daemon until removed | §4.5 |
+| Q20 | An agent's offer to a friend | an On you row with Send and Not now, not a sheet over the page | §4.5 |
+| Q21 | The desktop and what waits on the reader | a notification when no page is in front, one per burst; `SNYVI_NOTIFY=0` still turns it off | §4.5 |
 
 ---
 

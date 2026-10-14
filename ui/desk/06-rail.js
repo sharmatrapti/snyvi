@@ -342,7 +342,7 @@ function stripClick(e) {
 function docRow(x, gone, vs, esc) {
   if (gone) return `<li class="dk-note gone" role="status"><span class="nm">${esc(x.title)}</span><button type="button" class="dk-undo" data-a="doc-back" data-d="${esc(x.id)}">Undo</button></li>` + errLine(`d${x.id}`, esc);
   const on = x.id === reading;
-  return `<li class="dk-doc${on ? " on" : ""}${ew.first && ew.first.id === x.id ? " rose" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? "Back to the panels" : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(sentBy(vs, x.slot))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span><span class="age">${ctx.relShort(x.received_at)}</span></a>` +
+  return `<li class="dk-doc${on ? " on" : ""}${ctx.corner?.()?.rising(x.id) ? " rose" : ""}"><a href="/d/${x.id}" data-read="${x.id}" class="${x.unread ? "new" : ""}" data-tip="${on ? "Back to the panels" : esc(x.title)}" data-tip-sub="${on ? "click again" : `from ${esc(sentBy(vs, x.slot))} · ${ctx.fmt(x.received_at)}${x.pinned ? " · pinned" : ""}${x.unread ? " · waiting to be read" : ""}`}"${on ? ` aria-current="page"` : ""}>${ico("doc")}<span class="title">${esc(x.title)}</span><span class="age">${ctx.relShort(x.received_at)}</span></a>` +
     // Its tools: the path to copy, where there is one; on the row of the
     // document on the page, the way back to the panes, in view at rest; and
     // the ✕ that takes it off this list -- this list only.

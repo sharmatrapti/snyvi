@@ -348,7 +348,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    hears it, since #pop is inside #trees. */
 #rail-nav, #pop[hidden] { display: none; }
 :root[data-side="0"] #rail-nav { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; min-height: 0; padding: 6px 0; }
-:root[data-side="0"] :is(.brand-name, #live, #btn-search, #side > #note, #side .gutter, #trees > :not(#pop)) { display: none; }
+:root[data-side="0"] :is(.brand-name, #live, #btn-search, #side .gutter, #trees > :not(#pop)) { display: none; }
 :root[data-side="0"] .side-head { flex-direction: column; gap: 10px; padding: 14px 0 4px; }
 :root[data-side="0"] #btn-side-hide { margin: 0; }
 /* The mark in a box the size of the rail's icons, so it sits on their
@@ -378,12 +378,6 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .badge.q { color: var(--fg-2); background: color-mix(in srgb, var(--fg) 10%, var(--bg-side)); }
 #rail-nav i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .6; }
 #rail-live.on i { opacity: 1; background: var(--ok); box-shadow: var(--led-glow); }
-/* An aside is its own mark, a speech bubble, and one not yet read is a dot
-   on its corner where a count would be: a bare dot on the rail said nothing. */
-#rail-note i { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; opacity: 0; box-shadow: 0 0 0 2px var(--bg-side); }
-:root[data-note] #rail-note i { opacity: 1; background: var(--accent); }
-#rail-note { display: none; }
-#side:has(#note:not([hidden])) #rail-note { display: inline-grid; }
 @media (max-width: 760px) {
   #btn-side-hide { display: none; }
   :root[data-pop] #scrim { display: block; }
@@ -442,10 +436,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root:not([data-side="0"]) .brand.active { margin: -3px auto -3px -6px; padding: 3px 6px; }
 .brand.active .brand-name { color: var(--accent); }
 /* snyvi itself, the face from icons/icon-small.svg, and the one mascot on
-   screen: the note at the foot of the sidebar is its voice. Calm and awake
-   most of the time; a waiting note perks it up (the nub pulses, it blinks,
-   it hops once when the note arrives); a reader resting on the note gets a
-   smile and a heart. It falls asleep while the page has no daemon to hear --
+   screen: an agent's aside is its voice. Calm and awake most of the time; a
+   waiting aside perks it up (the nub pulses, it blinks, it hops once when
+   the aside arrives, off a desk); a reader resting on one gets a smile and
+   a heart. It falls asleep while the page has no daemon to hear --
    it stopped, or an upgrade replaced it. */
 .brand-mark { width: 20px; height: 20px; display: inline-block; flex: none; }
 .brand-mark svg { display: block; width: 100%; height: 100%; overflow: visible; }

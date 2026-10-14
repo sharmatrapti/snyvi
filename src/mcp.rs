@@ -46,8 +46,8 @@ a question. Ground every one in something that happened here -- a note, a commit
 not send it: a line that reads the person rather than the record is wrong the first time it is slightly off. Use \
 it rarely -- a few times in a long session at most, never as a status update, never a summary of a document you \
 just sent, never advice about anything but this project, never mid-task. One or two plain sentences (at most 280 \
-characters), warm and specific, no emoji. It glows quietly at the foot of snyvi's sidebar until they look; sent \
-from a snyvi panel, a click on it brings them to that panel, so a reply is theirs to make. It is not a to-do and \
+characters), warm and specific, no emoji. It rises quietly in snyvi's corner and is kept there until they \
+remove it; sent from a snyvi panel, a click on it brings them to that panel, so a reply is theirs to make. It is not a to-do and \
 goes on no list of the user's. Do not mention the aside to the user in your reply; it speaks for itself. If snyvi \
 answers that asides are off, the user turned them off: do not send another.";
 

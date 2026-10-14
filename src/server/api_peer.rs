@@ -12,6 +12,7 @@
 //! nothing: it writes an offer the reader answers.
 
 use super::*;
+use crate::lately;
 use crate::peer::{self, Content, Identity, PairState, Peer, Waiting};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -725,6 +726,24 @@ pub(crate) async fn offer_answer(
         return err(e);
     }
     emit(&app, "peeroffers", json!({}));
+    // In Lately, what was offered and what the reader said: theirs, so it
+    // lights nothing (`lately::unseen`).
+    lately_log(
+        &app,
+        lately::New {
+            kind: "offered",
+            text: if o.text.is_empty() {
+                o.title.clone()
+            } else {
+                o.text.clone()
+            },
+            who: o.by.clone(),
+            from: crate::receive::pane_origin(&app.store, Some(o.pane.as_str())),
+            doc: o.doc_id.clone(),
+            data: json!({ "to": o.to, "sent": b.send, "offer": o.id }),
+            lit: false,
+        },
+    );
     if !b.send {
         return Json(json!({ "sent": false })).into_response();
     }
@@ -794,6 +813,7 @@ pub(crate) async fn pane_offer(
                     "peeroffers",
                     json!({ "offer": offer_id, "to": p.name, "text": line, "by": b.by, "desk": placed.desk_name }),
                 );
+                notify_offer(&app, &b.by, &p.name, &line, placed.desk_id);
                 (
                     StatusCode::CREATED,
                     Json(json!({ "to": p.name, "text": line })),
@@ -817,6 +837,7 @@ pub(crate) async fn pane_offer(
                 "peeroffers",
                 json!({ "offer": offer_id, "to": p.name, "title": doc.title, "by": b.by, "desk": placed.desk_name }),
             );
+            notify_offer(&app, &b.by, &p.name, &doc.title, placed.desk_id);
             (
                 StatusCode::CREATED,
                 Json(json!({ "to": p.name, "title": doc.title })),
@@ -825,6 +846,24 @@ pub(crate) async fn pane_offer(
         }
         Err(e) => err(e),
     }
+}
+
+/// An agent's offer waits on the reader's Send, so the desktop hears of it
+/// when no page is in front (`notify_waiting`).
+fn notify_offer(app: &App, by: &str, to: &str, what: &str, desk: i64) {
+    let who = if by.starts_with("claude") {
+        "Claude"
+    } else if by.is_empty() {
+        "An agent"
+    } else {
+        by
+    };
+    notify_waiting(
+        app,
+        &format!("{who} offers to send {to}"),
+        &crate::thread::line(what, 140),
+        Some(desk),
+    );
 }
 
 /// Send everything due, detached: the link on open, a wake, the retry
@@ -1383,6 +1422,19 @@ fn arrived(
                         "peerreply",
                         json!({ "doc": re, "from": p.name, "reply": text, "quiet": p.muted }),
                     );
+                    if !p.muted {
+                        lately_log(
+                            app,
+                            lately::New {
+                                kind: "reply",
+                                text,
+                                who: p.name.clone(),
+                                doc: re,
+                                lit: true,
+                                ..Default::default()
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -1394,11 +1446,29 @@ fn arrived(
                 .peer_done(p.id, &of, commit.as_deref().unwrap_or(""))?
             {
                 peers_moved(app);
+                let done: String = if line.is_empty() {
+                    text.chars().take(peer::NOTE_CHARS).collect()
+                } else {
+                    line
+                };
                 emit(
                     app,
                     "peerdone",
-                    json!({ "from": p.name, "done": if line.is_empty() { text.chars().take(peer::NOTE_CHARS).collect() } else { line }, "commit": commit, "quiet": p.muted }),
+                    json!({ "from": p.name, "done": done, "commit": commit, "quiet": p.muted }),
                 );
+                if !p.muted {
+                    lately_log(
+                        app,
+                        lately::New {
+                            kind: "tick",
+                            text: done,
+                            who: p.name.clone(),
+                            data: json!({ "commit": commit }),
+                            lit: true,
+                            ..Default::default()
+                        },
+                    );
+                }
             }
         }
         Content::Document {
@@ -1445,6 +1515,9 @@ fn arrived(
             ev["from"] = json!(p.name);
             ev["quiet"] = json!(p.muted);
             emit_doc(app, ev);
+            if !p.muted {
+                lately_doc(app, &received);
+            }
             if desk.is_some() {
                 emit(app, "deskdocs", json!({}));
             }
@@ -1467,6 +1540,19 @@ fn arrived(
                         "peernotes",
                         json!({ "from": p.name, "quiet": p.muted, "desk": d.name }),
                     );
+                    if !p.muted {
+                        lately_log(
+                            app,
+                            lately::New {
+                                kind: "line",
+                                text,
+                                who: p.name.clone(),
+                                data: json!({ "desk": d.id, "desk_name": d.name, "note": n.id }),
+                                lit: true,
+                                ..Default::default()
+                            },
+                        );
+                    }
                     return Ok(());
                 }
             }
@@ -1477,6 +1563,18 @@ fn arrived(
                 "peernotes",
                 json!({ "from": p.name, "quiet": p.muted }),
             );
+            if !p.muted {
+                lately_log(
+                    app,
+                    lately::New {
+                        kind: "line",
+                        text,
+                        who: p.name.clone(),
+                        lit: true,
+                        ..Default::default()
+                    },
+                );
+            }
         }
     }
     Ok(())

@@ -176,10 +176,12 @@ fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
     match r {
         Ok(Asked::Turn(t)) => {
             threads_moved(app, desk);
+            notify_turn(app, &t, 0);
             (StatusCode::CREATED, Json(json!({ "turn": t }))).into_response()
         }
         Ok(Asked::Group(ts)) => {
             threads_moved(app, desk);
+            notify_turn(app, &ts[0], ts.len() - 1);
             (
                 StatusCode::CREATED,
                 Json(json!({ "turn": ts[0], "turns": ts })),
@@ -657,23 +659,26 @@ pub(crate) async fn pane_answer_turn(
     let desk = placed.desk_id;
     let r = app.store.clocked(|c, now| {
         let Some(t) = thread::turn(c, desk, turn)? else {
-            return Ok(false);
+            return Ok(None);
         };
         if t.pane != id {
-            return Ok(false);
+            return Ok(None);
         }
         if b.drop {
-            return thread::drop_dialog(c, desk, turn, now);
+            return Ok(thread::drop_dialog(c, desk, turn, now)?.then_some(None));
         }
-        Ok(thread::answer(c, desk, turn, &b.answer, "panel", now)?.is_some())
+        Ok(thread::answer(c, desk, turn, &b.answer, "panel", now)?.map(Some))
     });
     match r {
-        Ok(true) => {
+        Ok(Some(answered)) => {
+            if let Some(t) = answered {
+                log_answered(&app, &t);
+            }
             threads_moved(&app, desk);
             Json(json!({ "ok": true })).into_response()
         }
         // Answered in snyvi first: the first answer stands.
-        Ok(false) => StatusCode::CONFLICT.into_response(),
+        Ok(None) => StatusCode::CONFLICT.into_response(),
         Err(e) => err(e),
     }
 }
@@ -1042,12 +1047,31 @@ pub(crate) async fn desk_answer_turn(
         .clocked(|c, now| thread::answer(c, id, t, &b.answer, "snyvi", now))
     {
         Ok(Some(turn)) => {
+            log_answered(&app, &turn);
             threads_moved(&app, id);
             Json(json!({ "turn": turn })).into_response()
         }
         Ok(None) => refused(StatusCode::CONFLICT, "it was answered already, or put away"),
         Err(e) => err(e),
     }
+}
+
+/// An answered turn, in Lately: what was asked and what the reader said, so
+/// "what did I tell it?" has an answer once the card is gone. The reader's
+/// own doing, so it lights nothing (`lately::unseen`).
+fn log_answered(app: &App, t: &thread::Turn) {
+    lately_log(
+        app,
+        crate::lately::New {
+            kind: "answered",
+            text: t.text.clone(),
+            who: t.by.clone(),
+            from: crate::receive::pane_origin(&app.store, Some(t.pane.as_str())),
+            data: json!({ "answer": t.answer, "turn": t.id, "desk": t.desk_id, "kind": t.kind }),
+            lit: false,
+            ..Default::default()
+        },
+    );
 }
 
 #[cfg(test)]

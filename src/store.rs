@@ -663,10 +663,11 @@ impl Store {
         conn.execute_batch(accounts::SCHEMA)?;
         // Friends, and what is on its way to or from one (`crate::peer`).
         conn.execute_batch(peer::SCHEMA)?;
-        // Threads, turns and suggested panels (`crate::thread`), and the
-        // sidebars' layout and their widgets (`crate::widget`).
+        // Threads, turns and suggested panels (`crate::thread`), the sidebars'
+        // layout and their widgets (`crate::widget`), and Lately (`crate::lately`).
         conn.execute_batch(thread::SCHEMA)?;
         conn.execute_batch(widget::SCHEMA)?;
+        conn.execute_batch(crate::lately::SCHEMA)?;
         migrate(&conn)?;
         // After the columns are there on every database, old or new.
         //
@@ -1121,8 +1122,8 @@ impl Store {
     /// documents, one row per removal -- which is one row per lineage, named
     /// by its newest version, with how many went -- and, with `desks`, the
     /// notes taken off a desk's list, the panels closed on one and the desks closed. Each row
-    /// carries the route that puts it back; the asides the daemon holds in
-    /// memory are the server's to add.
+    /// carries the route that puts it back; Lately's rows (`crate::lately`)
+    /// are the server's to add.
     pub fn removed(&self, limit: usize, desks: bool) -> Result<Vec<Removed>> {
         let conn = self.conn.lock().unwrap();
         let mut out: Vec<Removed> = conn

@@ -306,7 +306,8 @@
   const peerUse = () => import(`/assets/peer.js${boot.v ? `?v=${boot.v}` : ""}`);
   // Saved into a folder: Copy path has a file here to give now (#99).
   const savedHere = (id, path) => { state.cache.delete(id); if (state.doc && state.doc.id === id) { state.doc.local_path = path; renderMeta(); } };
-  const peerCtx = { esc, rel, sayErr, toast, state, refreshDoc, saved: savedHere, peer: peerUse, home: () => showHome(true) };
+  const peerCtx = { esc, rel, sayErr, toast, state, refreshDoc, saved: savedHere, peer: peerUse, home: () => showHome(true),
+    showDoc: id => showDoc(id, true), rise: card => corner(m => m.rise(card)) };
   const removedLine = fresh => homeUse().then(m => m.removedLine(fresh, { view: () => state.view, capability, deskApi, docEl, esc, rel, post, loadDesks, toast }), () => { homeLoading = null; });
 
   // ---------- connect an agent ----------
@@ -370,7 +371,7 @@
     if (state.view !== "home") return;
     if (push) main.scrollTo({ top: 0, behavior: "instant" });
     await homeMod.show({ view: () => state.view, esc, who: whoIco, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates, peerCtx,
-      next: openNext, newDesk: b => askWhere(b, b.matches(":focus-visible")), notes: () => state.notes });
+      next: openNext, newDesk: b => askWhere(b, b.matches(":focus-visible")), corner: cornerUse });
     if (push) swapIn();
     afterRender();
   }

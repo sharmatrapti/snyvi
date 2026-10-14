@@ -207,11 +207,14 @@
       tocEl.innerHTML = metaEl.innerHTML = ""; rail.classList.add("empty");
       return;
     }
-    try { desk = await (deskLoading ||= import(`/assets/desk.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    // The corner with it: the desk's corner draws its pill, tray and card
+    // in corner.js's look, with Lately in its tray.
+    try { [desk] = await Promise.all([deskLoading ||= import(`/assets/desk.js${boot.v ? `?v=${boot.v}` : ""}`), cornerUse()]); }
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, who: whoIco, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, icons: ICONS, who: whoIco, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root, corner: () => cornerMod });
+    cornerMod?.draw();
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -219,6 +222,8 @@
     else if (state.deskBehind != null && desk) desk.close();
     state.deskBehind = null;
     overBar();
+    // The corner is this page's own again, once the view has moved on.
+    if (cornerMod) setTimeout(() => cornerMod.draw(), 0);
   }
   /** A document opened from a desk's own list keeps the desk's rail -- its
    *  panes, its documents with this one marked -- and only the page changes.
@@ -393,8 +398,7 @@
       // Fewer than the page ever holds means these are all there are.
       state.waiting = q.length < QUEUE_HELD ? q.length : Math.max(state.waiting, q.length);
     }
-    const n = await getJson("/api/notes");
-    if (n && Array.isArray(n.notes)) { state.notes = withOwn(n.notes); renderNote(); }
+    cornerMod?.refresh();
     await refreshTree();
     if (state.view === "inbox") showInbox(false);
   }
@@ -418,10 +422,15 @@
   /** An event's body, or null for one that is not JSON. */
   const parse = ev => { try { return JSON.parse(ev.data); } catch { return null; } };
   /** A line from a friend arrived, or an agent offered a document to one:
-   *  peer.js says so where the reader is (`event`). */
-  const onPeer = ev => { const j = parse(ev); j && peerUse().then(m => m.event(peerCtx, j), () => {}); };
+   *  an offer waits on the reader, so it is the corner's, an On you row;
+   *  the rest peer.js says (`event`), as a card that rises there too. */
+  const onPeer = ev => {
+    const j = parse(ev); if (!j) return;
+    if (ev.type === "peeroffers") return void corner(m => j.offer != null ? m.offer(j) : m.moved("peeroffers"));
+    peerUse().then(m => m.event(peerCtx, j), () => {});
+  };
   /** Home shows a little of all of these; each one reads it again, soon. */
-  const HOME_EVENTS = ["panes", "ctx", "desks", "desknotes", "doc", "read", "update", "notes", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing"];
+  const HOME_EVENTS = ["panes", "ctx", "desks", "desknotes", "doc", "read", "update", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing"];
   /** A document in, as the stream tells it (`doc_event`): a save in place,
    *  a draft the hook saved, or an arrival. Out of `connect`, which was long
    *  enough before drafts had a branch of their own. */
@@ -496,17 +505,16 @@
     else if (j.supersedes) snyviSays("version");
     if (opens) {
       await showDoc(d.id, true);
-      // Nobody pressed anything: this one came in on its own, so it keeps
-      // the corner rather than pointing at whatever was last touched.
-      toast(d.title, { sub: `${d.project} · just now`, kind: "news", go: () => showDoc(d.id, true) });
+      // Nobody pressed anything: this one came in on its own, so it rises
+      // in the corner, and settles there, in Lately.
+      corner(m => m.rise({ kind: "doc", key: `d${d.id}`, from: esc(`${d.sender || d.project} · just now`), title: d.title }));
     }
     else if (superseded) {
-      // The rail picks it up either way, so the offer is free to fade: a
-      // reader who misses the button finds the new version at the top of
-      // Versions, and `]` steps to it.
+      // The rail picks it up either way: a reader who misses the card finds
+      // the new version at the top of Versions, `]` steps to it, and it is
+      // in the corner's Lately.
       renderHistory();
-      toast("A newer version arrived", { sub: d.title, kind: "news", go: () => showDoc(d.id, true),
-        action: { label: "Read it", run: () => showDoc(d.id, true) } });
+      corner(m => m.rise({ kind: "version", key: `d${d.id}`, from: "A newer version arrived", title: d.title, label: "Read it", go: () => showDoc(d.id, true) }));
     }
     else if (state.view === "inbox") showInbox(false);
   
@@ -540,11 +548,9 @@
     es.addEventListener("agents", ev => { const j = parse(ev); if (j) setOnline(j.online); });
     // The updater's word: first on every stream, then whenever it changes.
     es.addEventListener("update", ev => { const j = parse(ev); if (j) setUpd(j); });
-    // An agent left a note, or a reader looked at one somewhere.
-    es.addEventListener("notes", ev => {
-      const j = parse(ev); if (!j) return;
-      if (Array.isArray(j.notes)) { state.notes = withOwn(j.notes); renderNote(); }
-    });
+    // Something came, from an agent or a friend, and is kept in Lately; or
+    // a reader looked at the corner somewhere (src/lately.rs).
+    es.addEventListener("lately", ev => { const j = parse(ev); if (j) corner(m => m.event(j)); });
     es.addEventListener("doc", ev => { const j = parse(ev); if (j) docEvent(j); });
     // A document was opened somewhere -- this tab, another, the window -- and
     // is off the queue everywhere.
@@ -605,7 +611,7 @@
     // The reader arranged the sidebars, here or in another window.
     es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
     // An agent ticked a line on a desk's list.
-    es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); });
+    es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); cornerMod?.moved("desknotes"); });
     // A pane started, stopped, or rang for its reader: the dots, at once.
     es.addEventListener("panes", ev => {
       const j = parse(ev); if (!j) return;

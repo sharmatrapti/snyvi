@@ -27,7 +27,7 @@ let wired = false;
  *
  * - a 6 px dot on the mascot, which says there is something (`html[data-upd]`);
  *   its words are the mark's tip and a live line for a screen reader (#upd);
- * - the update card, laid over the foot of the sidebar above the aside card:
+ * - the update card, laid over the foot of the sidebar:
  *   *Update when quiet*, *Now* and *Later*; who a restart waits on, by name;
  *   a confirm in the card when *Now* would end a panel's work; the lines to
  *   run for an install snyvi does not update itself. Home draws the same card
@@ -171,8 +171,8 @@ async function act(what, btn, el) {
   if (what === "notes" || what === "about") return panel("about");
 }
 
-/** The card at the sidebar's foot: over the tree, above the aside card, so
- *  its coming and going moves nothing. The tree keeps room for both. */
+/** The card at the sidebar's foot: over the tree, so its coming and going
+ *  moves nothing. The tree keeps room for it. */
 function drawCard(s) {
   const side = document.getElementById("side");
   if (!side) return;
@@ -614,7 +614,7 @@ async function openAbout(d) {
   if (d.capability) {
     group("In panels");
     fact("Desk brief", switchRow(d, "/api/brief", "Desk brief", "A Claude starting in a panel is told about its desk", "Claude starts in a panel knowing nothing of its desk"));
-    fact("Asides", switchRow(d, "/api/asides", "Asides", "An agent may leave a line at the foot of the sidebar", "An agent's aside is refused; snyvi's own first lines still show"));
+    fact("Asides", switchRow(d, "/api/asides", "Asides", "An agent may leave a line in the corner", "An agent's aside is refused; snyvi's own first lines still show"));
     fact("Claude Code mod", switchRow(d, "/api/claude-mod", "Claude Code mod in panels", "A panel's Claude shows its thread above the prompt, puts its questions on On you, and takes /note", "Panels start Claude Code without the snyvi mod (it needs Claude Code 2.1.287 or later); a panel started before picks this up at its next start"));
   }
   group("This snyvi");
@@ -664,7 +664,7 @@ function noReach(el, again) {
  *  desks, and no row. The desk brief: whether a Claude starting in a desk's
  *  panel is handed where it is, the open notes, what was done and where the
  *  work was left, as context before its first reply. Asides: whether an
- *  agent's line at the foot of the sidebar is taken at all -- the one
+ *  agent's line in the corner is taken at all -- the one
  *  consent for every agent at once, beside each aside's own ✕. */
 function switchRow(d, path, name, onSay, offSay) {
   const box = document.createElement("div"); box.className = "ab-swrow";
@@ -1186,7 +1186,7 @@ const SHOW = {
     none: `Nothing has arrived yet. <a href="/connect" data-nav="connect">Agents</a>` },
   waiting: { at: () => q("#inbox-row .t-inbox.new") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#inbox-row .t-inbox")), none: "Nothing is waiting right now." },
   desks: { at: () => startCap && (folded() ? q('#rail-nav [data-pop="desks"]') : q("#desk-nav .sec-head")), none: "Desks live in the window: <code>snyvi app</code>." },
-  notes: { at: () => !q("#note")?.hidden && (folded() ? q("#rail-note") : q("#note")), none: "No aside right now." },
+  notes: { at: () => q("#cn:not([hidden]) .oy-pill, #onyou .oy-pill"), none: "Nothing in the corner right now. Ctrl Alt Y opens it." },
   keys: { at: () => q("#btn-help"), none: "" },
 };
 let startCap = false, startDocs = false;
@@ -1224,7 +1224,7 @@ export function start({ cap, docs }) {
     sec("notes", "Out of your head: notes, points and asides",
       `<p>Three small things, each going one way. <em>Notes</em> are yours: a list kept with each desk (+ New note), ticked off as things get done. An agent in that desk's panels can read it and tick a line, and nothing more. <em>Points</em> go from you to a panel: select a passage in a document you read over a desk and press + Point for panel 2. They gather under the panel until Put it in panel 2 types them into its input, quoted. Nothing is sent until you press Enter there.</p>` +
       `<ul class="dk-list start-sample" inert aria-hidden="true"><li class="dk-note dk-point"><span class="nm">From PLAN.md: the cache is per project, not per desk</span></li></ul><button type="button" class="dk-new dk-put start-sample" inert aria-hidden="true" tabindex="-1">Put it in panel 2</button>` +
-      `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They sit at the foot of the sidebar. ${showLink("notes")}</p>`,
+      `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They rise in the corner, bottom right, and stay in its tray under Lately until you remove them; Ctrl Alt Y opens it. ${showLink("notes")}</p>`,
       `Right-click anything for what it can do · ${kb("☰")} or ${kb("shift", "F10")} the same menu from the keyboard`) +
     sec("versions", "Versions",
       `<p>A document is never changed. When an agent revises its plan it sends it again, and you keep both: the newest waits for you, the older ones are one key away. ${kb("c")} shows what changed since the one before, in green and red, and ${kb("s")} turns that between side by side and inline. Every version of the same file, from any session, is listed under Versions in the contents.</p>` +
@@ -1311,9 +1311,9 @@ html[data-upd="failed"] .brand-mark::after { background: var(--danger); }
 html[data-upd="waiting"] .brand-mark::after { animation: upd-breathe 1.6s ease-in-out infinite; }
 @keyframes upd-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { html[data-upd="waiting"] .brand-mark::after { animation: none; } }
-#side > #upd-card { position: absolute; left: 8px; right: 8px; bottom: calc(var(--note-foot, 52px) + var(--note-h, 0px)); z-index: 4; margin: 0 0 6px; }
+#side > #upd-card { position: absolute; left: 8px; right: 8px; bottom: var(--note-foot, 52px); z-index: 4; margin: 0 0 6px; }
 :root[data-side="0"] #side > #upd-card { display: none; }
-:root:not([data-side="0"]) #app #side:has(> #upd-card:not([hidden])) #trees { padding-bottom: calc(8px + var(--note-h, 0px) + var(--upd-h, 0px)); }
+:root:not([data-side="0"]) #app #side:has(> #upd-card:not([hidden])) #trees { padding-bottom: calc(8px + var(--upd-h, 0px)); }
 .uc { position: relative; overflow: hidden; isolation: isolate; padding: 10px 12px; border-radius: var(--r-md); background: color-mix(in srgb, var(--accent) 6%, var(--bg-side)); border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--rule)); box-shadow: var(--shadow); font-size: var(--fs-small); }
 .uc[data-state="failed"] { border-color: color-mix(in srgb, var(--danger) 35%, var(--rule)); }
 /* The peek: 72 px, tilted, faint, rising from the card's corner -- the aside

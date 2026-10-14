@@ -219,7 +219,7 @@ pub fn spawn_ui_watcher(app: Arc<App>) {
             "themes.css",
             "palette.js",
             "look.js",
-            "note.js",
+            "corner.js",
             "tip.js",
             "home.js",
             "toast.js",

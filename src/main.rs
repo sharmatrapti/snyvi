@@ -14,6 +14,7 @@ mod desktop;
 mod frontmatter;
 mod git;
 mod hook;
+mod lately;
 mod mcp;
 mod pane;
 mod peer;

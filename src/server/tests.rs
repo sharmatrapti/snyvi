@@ -2,8 +2,9 @@
 
 use super::{
     desk_key, desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
-    BOOT_JS, BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML, KEYS_JS,
-    LOOK_JS, MENU_JS, MMD_JS, NAV_JS, NOTE_JS, PALETTE_JS, PATHS_JS, PEER_JS, TIP_JS, TOAST_JS,
+    BOOT_JS, BROWSE_JS, CORNER_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS,
+    INDEX_HTML, KEYS_JS, LOOK_JS, MENU_JS, MMD_JS, NAV_JS, PALETTE_JS, PATHS_JS, PEER_JS, TIP_JS,
+    TOAST_JS,
 };
 use super::{
     new_app, router, App, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER, NOT_THIS_HOST,
@@ -701,7 +702,7 @@ fn every_id_the_script_uses_unguarded_is_in_the_page() {
         ("palette.js", PALETTE_JS),
         ("look.js", LOOK_JS),
         ("nav.js", NAV_JS),
-        ("note.js", NOTE_JS),
+        ("corner.js", CORNER_JS),
         ("tip.js", TIP_JS),
         ("home.js", HOME_JS),
         ("peer.js", PEER_JS),
@@ -1875,3 +1876,122 @@ mod keys;
 mod routes;
 mod widgets;
 use routes::{Gate, ROUTES};
+
+/// Lately keeps what came: an aside is a row there, listed newest first,
+/// and it is still there for the next daemon on the same database -- an
+/// update restarts the daemon, and asides used to go with it. A ✕ takes it
+/// out of the list and into Removed, whose restore brings it back.
+#[tokio::test]
+async fn an_aside_outlives_a_restart_and_a_removed_row_comes_back() {
+    let (tmp, _app, router, l) = gated_app_with("snyvi-lately", |_| {});
+    let call = |method: &str, path: &str, body: Option<serde_json::Value>, token: bool| {
+        let mut req = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", &l.host)
+            .header("origin", &l.origin)
+            .header(CAPABILITY_HEADER, &l.cap)
+            .header("content-type", "application/json");
+        if token {
+            req = req.header("authorization", &l.bearer);
+        }
+        let body = body.map_or(Body::empty(), |b| Body::from(b.to_string()));
+        router.clone().oneshot(req.body(body).unwrap())
+    };
+    async fn json(resp: axum::response::Response) -> serde_json::Value {
+        assert!(resp.status().is_success(), "{}", resp.status());
+        let bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap_or_default()
+    }
+    let said = json(
+        call(
+            "POST",
+            "/api/notes",
+            Some(serde_json::json!({ "text": "It held.", "sender": "claude-code" })),
+            true,
+        )
+        .await
+        .unwrap(),
+    )
+    .await;
+    let id = said["note"]["id"].as_i64().unwrap();
+    let lately = json(call("GET", "/api/lately", None, false).await.unwrap()).await;
+    assert_eq!(lately["rows"][0]["kind"], "aside");
+    assert_eq!(lately["rows"][0]["who"], "claude-code");
+    assert_eq!(lately["unseen"], true);
+    json(call("POST", "/api/lately/seen", None, false).await.unwrap()).await;
+    let lately = json(call("GET", "/api/lately", None, false).await.unwrap()).await;
+    assert_eq!(lately["unseen"], false);
+    assert_eq!(lately["rows"][0]["seen"], true);
+
+    // The next daemon, on the same database.
+    let paths = Paths {
+        data_dir: tmp.path.join("data"),
+        config_dir: tmp.path.join("config"),
+        docs_dir: tmp.path.join("data").join("docs"),
+        db_path: tmp.path.join("data").join("snyvi.db"),
+        token_path: tmp.path.join("config").join("token"),
+    };
+    let store = Store::open(&paths).unwrap();
+    let kept = store.clocked(|c, _| Ok(crate::aside::list(c))).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].text, "It held.");
+    assert!(kept[0].seen);
+    drop(store);
+
+    json(
+        call(
+            "POST",
+            "/api/lately/remove",
+            Some(serde_json::json!({ "ids": [id] })),
+            false,
+        )
+        .await
+        .unwrap(),
+    )
+    .await;
+    let lately = json(call("GET", "/api/lately", None, false).await.unwrap()).await;
+    assert!(lately["rows"].as_array().unwrap().is_empty());
+    let removed = json(call("GET", "/api/removed", None, false).await.unwrap()).await;
+    let row = removed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["kind"] == "aside")
+        .cloned()
+        .unwrap();
+    assert_eq!(row["restore"], "/api/lately/restore");
+    json(
+        call(
+            "POST",
+            "/api/lately/restore",
+            Some(serde_json::json!({ "ids": [id] })),
+            false,
+        )
+        .await
+        .unwrap(),
+    )
+    .await;
+    let lately = json(call("GET", "/api/lately", None, false).await.unwrap()).await;
+    assert_eq!(lately["rows"][0]["id"], id);
+}
+
+/// An ask raises a desktop notification only with no page in front, not
+/// when the reader turned them off, and once for a burst.
+#[test]
+fn an_ask_reaches_the_desktop_only_when_no_page_is_in_front() {
+    assert!(super::ask_notifies(false, false, 0, 1_000));
+    assert!(
+        !super::ask_notifies(false, true, 0, 1_000),
+        "a page is in front: its corner says it"
+    );
+    assert!(
+        !super::ask_notifies(true, false, 0, 1_000),
+        "SNYVI_NOTIFY=0"
+    );
+    assert!(
+        !super::ask_notifies(false, false, 990, 1_000),
+        "a burst is one"
+    );
+    assert!(super::ask_notifies(false, false, 900, 1_000));
+}

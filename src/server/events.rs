@@ -165,6 +165,72 @@ pub(crate) fn notify_desktop(app: &App, doc: &Doc) {
     );
 }
 
+/// When an ask last raised a desktop notification: a burst of them is one.
+static ASKED_AT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+/// Asks this close after the one that raised a notification raise none.
+const ASK_BURST_SECS: i64 = 30;
+
+/// Whether something that waits on the reader raises a desktop notification:
+/// not when they turned them off, not while a page is in front -- its corner
+/// rises and chimes -- and once for a burst.
+pub(crate) fn ask_notifies(off: bool, focused: bool, last: i64, now: i64) -> bool {
+    !off && !focused && now - last >= ASK_BURST_SECS
+}
+
+/// What waits on the reader -- a turn an agent put on On you, an offer to a
+/// friend -- told to the desktop when no snyvi page is in front: the chime
+/// plays only in a page, so the one thing that blocks an agent was the one
+/// thing the desktop never said (plan b0bca0a11f). A click opens its desk
+/// with the corner's tray open (`#onyou`, `ui/corner.js`).
+pub(crate) fn notify_waiting(app: &App, title: &str, body: &str, desk: Option<i64>) {
+    let off = std::env::var("SNYVI_NOTIFY").is_ok_and(|v| v == "0");
+    let now = crate::store::now();
+    if !ask_notifies(off, focused(app), ASKED_AT.load(Ordering::Relaxed), now) {
+        return;
+    }
+    ASKED_AT.store(now, Ordering::Relaxed);
+    let url = match desk {
+        Some(d) => format!("{}/desk/{d}#onyou", config::base_url()),
+        None => format!("{}/#onyou", config::base_url()),
+    };
+    let has_window = app.has_window();
+    crate::platform::notify_open(title, body, move || {
+        if has_window && crate::desktop::hand_to_window(&url) {
+            return;
+        }
+        platform::open_url(&url);
+    });
+}
+
+/// A turn put on On you, said to the desktop: who, what they want, where.
+/// Claude's own question dialog is its panel's, already on screen there.
+pub(crate) fn notify_turn(app: &App, t: &crate::thread::Turn, more: usize) {
+    if t.via == "dialog" {
+        return;
+    }
+    let from = crate::receive::pane_origin(&app.store, Some(t.pane.as_str()));
+    let who = if t.by.starts_with("claude") {
+        "Claude".to_string()
+    } else {
+        from.as_ref()
+            .map_or("An agent".into(), |o| format!("Panel {}", o.slot))
+    };
+    let does = if t.kind == "decide" {
+        "asks"
+    } else {
+        "hands you"
+    };
+    let title = match more {
+        0 => format!("{who} {does}"),
+        n => format!("{who} {does} (+{n} more)"),
+    };
+    let body = match &from {
+        Some(o) => format!("{} · {}", crate::thread::line(&t.text, 140), o.name),
+        None => crate::thread::line(&t.text, 140),
+    };
+    notify_waiting(app, &title, &body, Some(t.desk_id));
+}
+
 #[derive(Deserialize)]
 pub(crate) struct EventsQ {
     /// Set by a page that is inside the native window, so the daemon knows
