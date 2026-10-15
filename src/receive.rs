@@ -371,6 +371,18 @@ pub fn desk_project(root: &str) -> (String, String, Option<String>) {
     (proj.root.to_string_lossy().to_string(), proj.name, branch)
 }
 
+/// The store as the daemon opens it, with what a desk sent before its folder
+/// bounded the walk up moved out of the folder above it. Once it has run
+/// there is nothing left for it to find.
+pub fn refiled(store: Store) -> Store {
+    match refile_desks(&store) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("snyvi: {n} document(s) moved to the desk they came from"),
+        Err(e) => eprintln!("snyvi: refiling documents onto their desks: {e:#}"),
+    }
+    store
+}
+
 /// Move what a desk sent out of a project above the desk's folder and into
 /// the desk's own (`store::refile`): what `place` files there now, done once
 /// for what came before it. Nothing is deleted or re-dated; each document

@@ -662,14 +662,7 @@ async fn asked_to_stop(mut stop_rx: broadcast::Receiver<()>, told: broadcast::Se
 pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let token = config::load_or_create_token(&paths)?;
     let window = config::load_or_create_window_secret(&paths)?;
-    let store = Store::open(&paths)?;
-    // What a desk sent before its folder bounded the walk up, out of the
-    // folder above it. Once it has run there is nothing left for it to find.
-    match crate::receive::refile_desks(&store) {
-        Ok(0) => {}
-        Ok(n) => eprintln!("snyvi: {n} document(s) moved to the desk they came from"),
-        Err(e) => eprintln!("snyvi: refiling documents onto their desks: {e:#}"),
-    }
+    let store = crate::receive::refiled(Store::open(&paths)?);
     // A planned restart left a marker and marks; a crash left neither. Both
     // are read now, before anything can ask, and cleared once the port is
     // held: a successor that dies before then is started again, and must
