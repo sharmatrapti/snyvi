@@ -34,6 +34,75 @@ pub fn resolve(start: &Path) -> ProjectInfo {
     }
 }
 
+/// `resolve`, with a desk's folder as the floor of the walk up. A repository
+/// *above* the desk that holds other repositories -- one made a folder too
+/// high, around every project the reader keeps beside it, or a home folder's
+/// dotfiles -- is not the desk's project: the desk's folder is. What the
+/// reader gave a desk is what they called the project, and the walk up from
+/// it otherwise filed a desk with no `.git` of its own under its parent
+/// folder's name. A monorepo holds no repository of its own below it, so a
+/// desk on one of its folders still files under the monorepo, as before. A
+/// repository inside the desk still wins: the floor only stops the walk
+/// going past it.
+pub fn resolve_on_desk(start: &Path, desk: &Path) -> ProjectInfo {
+    let found = resolve(start);
+    let desk = desk.canonicalize().unwrap_or_else(|_| desk.to_path_buf());
+    let start = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    if start.starts_with(&desk)
+        && desk != found.root
+        && desk.starts_with(&found.root)
+        && holds_a_repository(&found.root)
+    {
+        return ProjectInfo {
+            name: dir_name(&desk),
+            root: desk,
+        };
+    }
+    found
+}
+
+/// How far down, and how many folders, `holds_a_repository` looks: a folder
+/// of projects has them near the top, and a send must not walk a disk.
+const HOLD_DEPTH: usize = 3;
+const HOLD_DIRS: usize = 2000;
+
+/// Whether a repository has another one in it: a `.git` folder below its
+/// root, near the top. A `.git` *file* is a submodule or a worktree, which a
+/// monorepo may well have, and says nothing. Dependencies and build output
+/// are not looked in.
+fn holds_a_repository(root: &Path) -> bool {
+    let mut seen = 0;
+    let mut level = vec![root.to_path_buf()];
+    for _ in 0..HOLD_DEPTH {
+        let mut next = Vec::new();
+        for dir in level {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for e in rd.flatten() {
+                if !e.file_type().is_ok_and(|t| t.is_dir()) {
+                    continue;
+                }
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with('.') || name == "node_modules" || name == "target" {
+                    continue;
+                }
+                if e.path().join(".git").is_dir() {
+                    return true;
+                }
+                seen += 1;
+                if seen >= HOLD_DIRS {
+                    return false;
+                }
+                next.push(e.path());
+            }
+        }
+        level = next;
+    }
+    false
+}
+
 fn dir_name(p: &Path) -> String {
     p.file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -162,6 +231,52 @@ mod tests {
         // And a project there says its branch, as a document's head shows it.
         assert_eq!(branch(&tree).as_deref(), Some("side"));
         assert_eq!(branch(&tree.join("sub")), None, "only the root's own");
+    }
+
+    #[test]
+    fn a_desk_under_a_repository_a_folder_too_high_is_its_own_project() {
+        // D:\workspaces\.git, a desk on D:\workspaces\taskflow with none, and
+        // taskflow\app with its own.
+        let dir = crate::store::tempdir::Dir::new("snyvi-floor");
+        let desk = dir.path.join("taskflow");
+        let app = desk.join("app");
+        std::fs::create_dir_all(dir.path.join(".git")).unwrap();
+        std::fs::create_dir_all(app.join(".git")).unwrap();
+        std::fs::create_dir_all(desk.join("supabase")).unwrap();
+        let on = |p: &Path| resolve_on_desk(p, &desk);
+        assert_eq!(on(&desk).name, "taskflow");
+        assert_eq!(on(&desk.join("supabase")).name, "taskflow");
+        assert_eq!(
+            on(&app).name,
+            "app",
+            "a repository inside the desk still wins"
+        );
+        // Outside the desk the floor says nothing.
+        assert_eq!(on(&dir.path).root, resolve(&dir.path).root);
+        // And a desk on its repository's own folder is that repository.
+        assert_eq!(resolve_on_desk(&app, &app).root, resolve(&app).root);
+    }
+
+    #[test]
+    fn a_desk_on_a_monorepos_folder_is_the_monorepo() {
+        // One repository, no other inside it: its folders are its own.
+        let dir = crate::store::tempdir::Dir::new("snyvi-mono");
+        let web = dir.path.join("packages/web");
+        std::fs::create_dir_all(dir.path.join(".git")).unwrap();
+        std::fs::create_dir_all(web.join("src")).unwrap();
+        // A submodule keeps `.git` as a file, and says nothing.
+        std::fs::create_dir_all(dir.path.join("vendor/lib")).unwrap();
+        std::fs::write(
+            dir.path.join("vendor/lib/.git"),
+            "gitdir: ../../.git/modules/lib
+",
+        )
+        .unwrap();
+        // Nor does a dependency that came with its own.
+        std::fs::create_dir_all(web.join("node_modules/dep/.git")).unwrap();
+        let got = resolve_on_desk(&web.join("src"), &web);
+        assert_eq!(got.root, resolve(&web).root);
+        assert_ne!(got.name, "web");
     }
 
     #[test]

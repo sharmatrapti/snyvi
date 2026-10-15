@@ -2458,11 +2458,11 @@ pub fn new_id(hash: &str) -> String {
 
 mod keys;
 mod queue;
+mod refile;
 mod sends;
-pub use sends::Promotion;
 mod talk;
-pub use keys::Held;
 use talk::local_path;
+pub use {keys::Held, sends::Promotion};
 
 #[cfg(test)]
 mod tests;

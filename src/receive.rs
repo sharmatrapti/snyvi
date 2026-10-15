@@ -310,7 +310,9 @@ fn workflow(
 /// the friend's own project, whose root is no folder on this machine
 /// (`peer::Peer::project_root`), so the sidebar gains one row per friend and
 /// nothing else -- or, when the reader gave them a desk, to that desk's.
-fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
+/// A desk's folder is the floor of the walk up (`project::resolve_on_desk`):
+/// the sending pane's desk, else the deepest desk the folder is in.
+fn place(store: &Store, p: &Payload, b: &Body) -> (String, String, Option<String>) {
     if let Some(root) = p.peer.as_ref().and_then(|fp| fp.root.as_ref()) {
         return desk_project(root);
     }
@@ -330,17 +332,78 @@ fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
         .map(PathBuf::from)
         .or_else(|| b.path.as_deref().map(PathBuf::from))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
-    let proj = project::resolve(&anchor);
+    let proj = match desk_floor(store, p.pane.as_deref(), &anchor) {
+        Some(desk) => project::resolve_on_desk(&anchor, &desk),
+        None => project::resolve(&anchor),
+    };
     let branch = project::branch(&proj.root);
     (proj.root.to_string_lossy().to_string(), proj.name, branch)
+}
+
+/// The desk folder a sender's walk up stops at: its pane's desk when it was
+/// sent from one, else the deepest desk whose folder holds `anchor` -- Claude
+/// in the reader's own terminal, in a desk's folder, files where the desk's
+/// panes would.
+fn desk_floor(store: &Store, pane: Option<&str>, anchor: &Path) -> Option<PathBuf> {
+    if let Some(placed) = pane
+        .filter(|id| crate::pane::valid_id(id))
+        .and_then(|id| store.pane(id).ok().flatten())
+    {
+        return Some(PathBuf::from(placed.root));
+    }
+    let anchor = anchor
+        .canonicalize()
+        .unwrap_or_else(|_| anchor.to_path_buf());
+    store
+        .desks()
+        .ok()?
+        .into_iter()
+        .filter_map(|d| PathBuf::from(&d.root).canonicalize().ok())
+        .filter(|r| anchor.starts_with(r))
+        .max_by_key(|r| r.components().count())
 }
 
 /// The project a desk's folder is, as `place` gives it: what a friend's
 /// document kept on that desk joins.
 pub fn desk_project(root: &str) -> (String, String, Option<String>) {
-    let proj = project::resolve(Path::new(root));
+    let proj = project::resolve_on_desk(Path::new(root), Path::new(root));
     let branch = project::branch(&proj.root);
     (proj.root.to_string_lossy().to_string(), proj.name, branch)
+}
+
+/// The store as the daemon opens it, with what a desk sent before its folder
+/// bounded the walk up moved out of the folder above it. Once it has run
+/// there is nothing left for it to find.
+pub fn refiled(store: Store) -> Store {
+    match refile_desks(&store) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("snyvi: {n} document(s) moved to the desk they came from"),
+        Err(e) => eprintln!("snyvi: refiling documents onto their desks: {e:#}"),
+    }
+    store
+}
+
+/// Move what a desk sent out of a project above the desk's folder and into
+/// the desk's own (`store::refile`): what `place` files there now, done once
+/// for what came before it. Nothing is deleted or re-dated; each document
+/// keeps its versions, workflow and desk. A project left with nothing in it
+/// leaves the sidebar, as an emptied one always has. How many moved.
+pub fn refile_desks(store: &Store) -> Result<usize> {
+    let mut moved = 0;
+    for d in store.docs_on_desks()? {
+        let (root, name, _) = desk_project(&d.desk_root);
+        let (to, from) = (Path::new(&root), Path::new(&d.project_root));
+        if to != from
+            && to.starts_with(from)
+            && store.move_lineage(&d.id, &root, &name, &d.desk)?.is_some()
+        {
+            if d.off != 0 {
+                store.keep_desk_off(&d.id, d.off)?;
+            }
+            moved += 1;
+        }
+    }
+    Ok(moved)
 }
 
 /// The desk and slot a sender's pane is on, when it names one snyvi knows. A
@@ -379,7 +442,7 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
     let origin = p.origin.as_deref().unwrap_or("cli");
     // Attribution only. Which workflow a document joins is still the
     // session's, as it always was; the pane says where it was sent from.
-    let (root, proj_name, branch) = place(&p, &b);
+    let (root, proj_name, branch) = place(store, &p, &b);
     let from = pane_origin(store, p.pane.as_deref())
         .or_else(|| {
             p.peer
@@ -1075,6 +1138,97 @@ mod tests {
             Some(other.id),
             "the pane's desk wins"
         );
+    }
+
+    /// A `.git` made a folder too high -- D:\workspaces\.git, around the
+    /// reader's every project -- does not take a desk's documents: a desk on
+    /// a folder with no repository of its own is its own project, from its
+    /// panels and from a terminal in its folder. What an older snyvi filed
+    /// above the desk is moved there once, ✕ and all, and the project above
+    /// is left with nothing.
+    #[test]
+    fn a_repository_above_a_desk_does_not_take_its_documents() {
+        let (s, r, _d) = setup();
+        let ws = Dir::new("snyvi-recv-ws");
+        let flow = ws.path.join("taskflow");
+        std::fs::create_dir_all(ws.path.join(".git")).unwrap();
+        // A folder of projects: another repository beside the desk's.
+        std::fs::create_dir_all(ws.path.join("snyvi/.git")).unwrap();
+        std::fs::create_dir_all(flow.join("supabase")).unwrap();
+        let desk = s
+            .create_desk(&flow.to_string_lossy(), Some("taskflow"))
+            .unwrap();
+        let crate::desk::Opened::Pane(p) = s
+            .open_pane(desk.id, &flow.to_string_lossy(), "", false)
+            .unwrap()
+        else {
+            panic!("a pane")
+        };
+        let send = |text: &str, cwd: &std::path::Path, pane: Option<String>| {
+            receive(
+                &s,
+                &r,
+                Payload {
+                    content: Some(text.into()),
+                    cwd: Some(cwd.to_string_lossy().to_string()),
+                    origin: Some("cli".into()),
+                    pane,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .doc
+        };
+        assert_eq!(desk_project(&flow.to_string_lossy()).1, "taskflow");
+        let pasted = send(
+            "# Pasted
+
+one",
+            &flow,
+            Some(p.id.clone()),
+        );
+        assert_eq!(pasted.project, "taskflow");
+        let setup_md = send(
+            "# Supabase Setup
+
+two",
+            &flow.join("supabase"),
+            None,
+        );
+        assert_eq!(
+            setup_md.project_id, pasted.project_id,
+            "a terminal in the desk's folder files there too"
+        );
+        assert_eq!(setup_md.desk.as_ref().map(|o| o.id), Some(desk.id));
+
+        // As 1.36.1 filed them: under the folder above, still on the desk.
+        let above = crate::project::resolve(&flow)
+            .root
+            .to_string_lossy()
+            .to_string();
+        let on = crate::desk::Origin {
+            id: desk.id,
+            name: "taskflow".into(),
+            slot: 0,
+        };
+        for d in [&pasted, &setup_md] {
+            s.move_lineage(&d.id, &above, "workspaces", &on).unwrap();
+        }
+        assert!(s.set_desk_doc_off(desk.id, &setup_md.id, true).unwrap());
+        assert_eq!(refile_desks(&s).unwrap(), 2);
+        for d in [&pasted, &setup_md] {
+            assert_eq!(s.get(&d.id).unwrap().unwrap().project, "taskflow");
+        }
+        assert!(
+            s.projects().unwrap().iter().all(|p| p.name != "workspaces"),
+            "nothing left above"
+        );
+        assert_eq!(
+            s.desk_docs(desk.id, 10, true).unwrap().len(),
+            1,
+            "the ✕ stays"
+        );
+        assert_eq!(refile_desks(&s).unwrap(), 0, "once");
     }
 
     /// A friend's document about a repository the reader has: into the
