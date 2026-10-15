@@ -87,7 +87,8 @@ struct Event {
     /// Stop: the text of the reply that just ended the turn.
     last_assistant_message: Str,
     /// Every event: the session's transcript, which Stop reads back to the
-    /// reader's last prompt for a `send_document` (`sent_this_turn`).
+    /// reader's last prompt for a `send_document` (`sent_this_turn`), and a
+    /// pipeline's runner for its `/goal` (`crate::pipeline::transcript`).
     transcript_path: Str,
     /// Stop: true when Claude Code is already going on because a Stop hook
     /// asked it to. Taken as any value, so a shape nobody expected is only
@@ -262,7 +263,7 @@ pub fn run(paths: &Paths) -> Result<()> {
         // without taking it, and one that did not answer at all -- slow,
         // or the pane unknown to it -- may not have taken it either: both
         // are told the way they know, after. Telling twice sets it twice.
-        let asks = starting || name == "UserPromptSubmit";
+        let asks = starting || name == "UserPromptSubmit" || name == "Stop";
         if said && !asks {
             client::agent_state(paths, pane, state, session, stop_reason(&event));
         }
@@ -294,9 +295,7 @@ pub fn run(paths: &Paths) -> Result<()> {
         // printed. It rides on the reader's own message, so snyvi still
         // never starts a turn.
         if name == "Stop" {
-            if let Some(out) = stop_output(&event) {
-                println!("{out}");
-            }
+            stopped(paths, pane, session, &event);
             return Ok(());
         }
         if name == "UserPromptSubmit" {
@@ -616,6 +615,38 @@ fn sent_this_turn(path: &str) -> bool {
         }
     }
     false
+}
+
+/// A turn's end in a panel: the daemon told in one request that also
+/// carries what a pipeline's runner reads, and its answer -- the panel's
+/// stage is to hand over -- keeps the turn going for that; otherwise the
+/// nudge about a `! command`, when the reply had one.
+fn stopped(paths: &Paths, pane: &str, session: Option<&str>, event: &Event) {
+    let active = event.stop_hook_active.as_ref().and_then(Value::as_bool) == Some(true);
+    let handoff = client::agent_stop(
+        paths,
+        pane,
+        session,
+        event.transcript_path.get(),
+        event.last_assistant_message.get(),
+        active,
+    );
+    if let Some(out) = handoff
+        .map(|said| stop_feedback(&said))
+        .or_else(|| stop_output(event))
+    {
+        println!("{out}");
+    }
+}
+
+/// What a Stop hook prints to keep the turn going with `said` as what
+/// Claude is told: a pipeline's handoff (`server::pipeline_run`). Feedback
+/// rather than a `block`, which Claude Code shows the reader as a "Stop hook
+/// error"; this continues the turn the same way and reads as "Stop hook
+/// feedback" (hooks.md, Stop decision control).
+fn stop_feedback(said: &str) -> String {
+    json!({ "hookSpecificOutput": { "hookEventName": "Stop", "additionalContext": said } })
+        .to_string()
 }
 
 /// A `! command` for the reader to type, as Claude Code's shell mode takes
@@ -1602,7 +1633,16 @@ mod tests {
     #[test]
     fn the_hook_never_reaches_a_function_that_starts_a_daemon() {
         let src = include_str!("hook.rs");
-        let allowed = ["send_quick", "agent_state", "brief", "changes", "Said"];
+        // `agent_stop` starts nothing and waits a second and a half at most:
+        // a pipeline's handoff is decided in that request (1.40).
+        let allowed = [
+            "send_quick",
+            "agent_state",
+            "agent_stop",
+            "brief",
+            "changes",
+            "Said",
+        ];
         for (i, line) in src.lines().enumerate() {
             let mut rest = line;
             while let Some(at) = rest.find("client::") {

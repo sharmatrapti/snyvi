@@ -975,6 +975,8 @@ async function getNotes(id, again) {
   if (id == null || !ctx) return;
   if (!again && (notesAt === id || notesGet === id)) return;
   notesGet = id;
+  // The panels' pipelines move with the same event (13-pipeline.js).
+  pipesGet(id);
   let j;
   try { j = await ctx.api(`/api/desks/${id}/notes`); }
   catch { notesGet = null; if (id === deskId) { notesOff = id; if (current()) rail(); } return; }

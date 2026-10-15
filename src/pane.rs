@@ -257,6 +257,11 @@ pub struct Status {
     /// the page's; 0 is "never", and a pane at 0 is told nothing but stamped.
     #[serde(skip)]
     pub told_at: i64,
+    /// When the reader last pressed Enter in this pane, in seconds since the
+    /// epoch, or 0: a pipeline's stage pauses after a turn they spoke in
+    /// (`crate::pipeline`). Their own, so never sent.
+    #[serde(skip)]
+    pub entered_at: i64,
 }
 
 fn is_login(account: &i64) -> bool {
@@ -535,6 +540,11 @@ pub struct Start<'a> {
     /// The desk's folder: see `Inner.root`.
     pub root: &'a str,
     pub cmd: &'a str,
+    /// Arguments after `cmd`, each one argv entry as it is -- never read by
+    /// a shell: a pipeline's step (`crate::pipeline`) is text a model may
+    /// have written, and `$(…)` in it must stay those characters. Empty for
+    /// everything the reader types, which runs as typed.
+    pub args: &'a [String],
     pub desk: &'a str,
     pub slot: i64,
     pub cols: u16,
@@ -1531,6 +1541,9 @@ impl Live {
         let Some(p) = i.proc.as_ref() else { return };
         let _ = p.input.send(bytes.to_vec());
         i.typed = Some(Instant::now());
+        if bytes.contains(&b'\r') {
+            i.status.entered_at = crate::store::now();
+        }
         if i.status.blocked {
             i.status.blocked = false;
             i.status.blocked_since = None;
@@ -1539,6 +1552,13 @@ impl Live {
             drop(i);
             panes.changed(&self.id, &s);
         }
+    }
+
+    /// The size the screen is now, as the page last asked for it: what a
+    /// process the daemon starts on its own (a pipeline's stage) is given.
+    pub fn size(&self) -> (u16, u16) {
+        let (c, r) = self.inner.lock().unwrap().screen.size();
+        (c as u16, r as u16)
     }
 
     /// The page's pane changed size. Resize-and-clear on both sides, which
@@ -1588,7 +1608,7 @@ impl Live {
             pixel_height: 0,
         };
         let pair = pty.openpty(size).context("opening a terminal")?;
-        let (mut cmd, born) = command(s.cmd, s.accent);
+        let (mut cmd, born) = command(s.cmd, s.args, s.accent);
         // cmd.exe takes a stored `\\?\D:\…` for UNC and starts in C:\Windows:
         // the process gets the plain spelling; what is stored stays as it is.
         cmd.cwd(dunce::simplified(std::path::Path::new(s.cwd)));
@@ -2077,7 +2097,7 @@ fn fresh_env(cmd: &mut CommandBuilder, inside: bool) {
     cmd.env("TERM_PROGRAM", "snyvi");
 }
 
-fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {
+fn command(typed: &str, args: &[String], accent: &str) -> (CommandBuilder, String) {
     let typed = typed.trim();
     #[cfg(unix)]
     {
@@ -2085,6 +2105,9 @@ fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "/bin/sh".to_string());
+        if !args.is_empty() {
+            return (with_args(&shell, typed, args), String::new());
+        }
         let mut c = CommandBuilder::new(&shell);
         let dress = if typed.is_empty() {
             crate::prompt::dress(std::path::Path::new(&shell), accent)
@@ -2108,6 +2131,16 @@ fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {
     }
     #[cfg(windows)]
     {
+        // `cmd /C` reads the whole line again, `%VAR%` and all: arguments
+        // that must stay as they are go to the program itself, found on
+        // `PATH` as an `.exe`.
+        if !args.is_empty() {
+            let mut c = CommandBuilder::new(typed);
+            for a in args {
+                c.arg(a);
+            }
+            return (c, String::new());
+        }
         if !typed.is_empty() {
             let mut c = CommandBuilder::new("cmd.exe");
             c.arg("/C");
@@ -2131,6 +2164,38 @@ fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {
             None => (c, String::new()),
         }
     }
+}
+
+/// A program and its arguments through the reader's login shell, for its
+/// `PATH`, without the shell reading the arguments: they are the shell's
+/// positional parameters, and the line it runs names them as `"$@"` (fish:
+/// `$argv`), which expands each to exactly what it was. A shell that is
+/// neither kind runs it through `/bin/sh` the same way.
+#[cfg(unix)]
+fn with_args(shell: &str, program: &str, args: &[String]) -> CommandBuilder {
+    let name = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    let fish = name == "fish";
+    let posix = matches!(
+        name,
+        "sh" | "bash" | "zsh" | "dash" | "ksh" | "mksh" | "ash" | "yash"
+    );
+    let mut c = CommandBuilder::new(if fish || posix { shell } else { "/bin/sh" });
+    c.arg("-l");
+    c.arg("-c");
+    if fish {
+        c.arg(format!("{program} $argv"));
+    } else {
+        c.arg(format!("{program} \"$@\""));
+        // `$0`, which `"$@"` leaves out.
+        c.arg("snyvi");
+    }
+    for a in args {
+        c.arg(a);
+    }
+    c
 }
 
 fn display_cmd(typed: &str) -> &str {

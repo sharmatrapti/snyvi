@@ -92,6 +92,9 @@ pub(crate) struct AgentBody {
     /// (`crate::statusline::Limit`): Home's quota.
     #[serde(default)]
     pub(crate) limits: Option<LimitsBody>,
+    /// A turn's end, for the panel's pipeline (`pipeline_run::heard`).
+    #[serde(default)]
+    pub(crate) stop: Option<super::pipeline_run::StopBody>,
 }
 
 #[derive(Deserialize, Default)]
@@ -220,6 +223,11 @@ pub(crate) async fn pane_agent(
         if let Ok(true) = app.store.set_pane_session(&id, session) {
             desks_moved(&app);
         }
+    }
+    let (session, stopped) = (b.session.as_deref(), b.stopped.as_deref());
+    if let Some(handoff) = super::pipeline_run::heard(&app, &id, session, stopped, b.stop.as_ref())
+    {
+        return Json(handoff).into_response();
     }
     StatusCode::NO_CONTENT.into_response()
 }

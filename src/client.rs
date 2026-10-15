@@ -832,6 +832,52 @@ pub fn agent_state(
     tell_agent(paths, pane, body);
 }
 
+/// A turn's end in a panel: the state, and what a pipeline's runner reads
+/// of it (`server::pipeline_run`) -- the transcript's path, the reply and
+/// whether a Stop hook already kept this turn going. The answer is a reason
+/// to keep going when the panel's pipeline asks for one: its stage is past
+/// the context limit, and is to say where it is (`leave_off`) before a
+/// fresh session takes it on. A daemon from before 1.40 answers nothing,
+/// and a slow one is not waited on past a second and a half.
+pub fn agent_stop(
+    paths: &Paths,
+    pane: &str,
+    session: Option<&str>,
+    transcript: Option<&str>,
+    reply: Option<&str>,
+    active: bool,
+) -> Option<String> {
+    let token = config::read_token(paths)?;
+    let reply: String = reply
+        .unwrap_or("")
+        .chars()
+        .rev()
+        .take(6000)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let body = serde_json::json!({
+        "state": "done",
+        "session": session,
+        "stop": { "transcript": transcript.unwrap_or(""), "reply": reply, "active": active },
+    });
+    let mut resp = agent()
+        .post(&format!("{}/api/panes/{pane}/agent", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_millis(1500)))
+        .http_status_as_error(false)
+        .build()
+        .send_json(body)
+        .ok()?;
+    if resp.status().as_u16() != 200 {
+        return None;
+    }
+    let v: Value = resp.body_mut().read_json().ok()?;
+    v.get("handoff")?.as_str().map(str::to_string)
+}
+
 /// One word about a pane's agent to `/api/panes/{pane}/agent`, waited on
 /// for half a second at most: a hook runs inside Claude's turn.
 fn tell_agent(paths: &Paths, pane: &str, body: serde_json::Value) {
