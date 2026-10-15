@@ -137,7 +137,10 @@ which types `claude --resume <id>` at the prompt without Enter. A crash or a
    and no run-this-block, and nothing derived from a document is ever typed.
    Bytes reach a PTY from exactly one place: `input()` in `ui/desk.js`, which
    is called only from a key event or a paste event. The daemon accepts `in`
-   only for a pane that socket is watching (`desk_session`).
+   only for a pane that socket is watching (`desk_session`). A pipeline's
+   stage (1.40) is not input: it is a new process with the step as one argv
+   entry, started by the runner (`server/pipeline_run.rs`) for a pipeline the
+   window made and started. `docs/TERMINAL.md` §9a has the rule as rewritten.
 4. **The query string is refused as a transport for the capability.** A
    request path lands in logs. The fragment never leaves the browser, but it
    is not unlogged either: it arrives as `snyvi-app` argv, where `ps` can see

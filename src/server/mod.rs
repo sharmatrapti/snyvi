@@ -15,6 +15,7 @@ mod api_browse;
 mod api_desk;
 mod api_docs;
 mod api_peer;
+mod api_pipeline;
 mod api_thread;
 mod api_widget;
 mod assets;
@@ -22,6 +23,7 @@ mod auth;
 mod events;
 mod lifecycle;
 mod peer_link;
+mod pipeline_run;
 #[cfg(test)]
 mod tests;
 mod widget_run;
@@ -33,6 +35,7 @@ use api_browse::*;
 use api_desk::*;
 use api_docs::*;
 use api_peer::*;
+use api_pipeline::*;
 use api_thread::*;
 use api_widget::*;
 use assets::*;
@@ -433,6 +436,17 @@ fn widget_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/propose-widget", post(pane_propose_widget))
 }
 
+/// Pipelines (`api_pipeline`): the window's alone, on the desk gate.
+fn pipeline_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route(
+            "/api/desks/{id}/pipelines",
+            get(desk_pipelines).post(new_pipeline),
+        )
+        .route("/api/desks/{id}/pipelines/{row}/edit", post(edit_pipeline))
+        .route("/api/desks/{id}/pipelines/{row}/{act}", post(pipeline_act))
+}
+
 /// Claude accounts (`api_accounts`): the list, adding one with its token,
 /// and which one a desk or a panel starts as. The page's, on the desk gate.
 fn account_routes() -> Router<Arc<App>> {
@@ -602,6 +616,7 @@ fn router(app: Arc<App>) -> Router {
         .merge(account_routes())
         .merge(thread_routes())
         .merge(widget_routes())
+        .merge(pipeline_routes())
         .merge(peer_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
@@ -659,6 +674,16 @@ async fn asked_to_stop(mut stop_rx: broadcast::Receiver<()>, told: broadcast::Se
     let _ = told.send(());
 }
 
+/// What runs beside the router for as long as the daemon does: the
+/// watchers, widget files' commands while their widgets are in view, and
+/// pipelines' stages, one after another in their panels.
+fn spawn_runners(app: &Arc<App>) {
+    crate::watch::spawn_browse_watcher(app.clone());
+    crate::watch::spawn_ui_watcher(app.clone());
+    widget_run::spawn(app.clone());
+    pipeline_run::spawn(app.clone());
+}
+
 pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let token = config::load_or_create_token(&paths)?;
     let window = config::load_or_create_window_secret(&paths)?;
@@ -711,10 +736,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // way out needs the panes.
     let leaving = app.clone();
     let told = app.shutdown.clone();
-    crate::watch::spawn_browse_watcher(app.clone());
-    crate::watch::spawn_ui_watcher(app.clone());
-    // Widget files' commands, while their widgets are in view.
-    widget_run::spawn(app.clone());
+    spawn_runners(&app);
     crate::claude_mod::start(&paths);
     let router = router(app);
 

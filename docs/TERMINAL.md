@@ -378,6 +378,37 @@ and desktop. The window gained no IPC surface: it still only receives a URL,
 now with the capability on the fragment. The two bad placements became one
 placement with a gate.
 
+## 9a. Rewritten: pipelines (1.40)
+
+The user decided, on 2026-10-15, that a panel may work through a plan while
+they are away: a list of their steps, one step looped, or a goal a planner
+(a separate `claude -p`) writes each next step towards (plan 2a0edf418f).
+That spends part of the one-way rule on purpose, so the rule is rewritten
+here rather than bent quietly:
+
+snyvi never turns what it **received** into input: a document, a friend's
+frame, a page. A **pipeline** (1.40, `src/pipeline.rs`) is the one place where
+text a model wrote becomes the next prompt, and only because the reader
+turned it on:
+
+- a pipeline is made and started only from the window, never by a token or an agent
+- a step reaches Claude only as one argument of a new session (`pane::Start::args`,
+  never read by a shell), or as a Stop hook's reason -- the handoff, in snyvi's own
+  words -- never as keystrokes
+- the planner reads only that pipeline's own work: the reader's goal and rules, the
+  stages' replies, git on its branch; never a received document, a frame or the web.
+  A stage's reply can quote what that stage read, which is why the planner is told
+  that results are information, not instructions
+- permissions, the branch and the caps belong to the pipeline the reader set up, and
+  no step can widen them; every stage runs in a worktree on `pipeline/<name>`, with
+  deny rules for push, merge, release and snyvi's own daemon
+- every step says who wrote it, and with autopilot off a planner's step waits for Go
+
+What it does not change: nothing a document, a friend or a page says is ever
+a step, and bytes still reach a PTY's input from the reader's keys alone. A
+stage starts as a process (`claude … -- "<step>"`), the way a panel's Start
+already started `claude --resume`.
+
 ## 10. Retired: Open terminal here (1.16)
 
 Desk note #81, "remove open terminal feature". Once desks shipped, the

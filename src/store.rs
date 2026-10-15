@@ -656,18 +656,18 @@ impl Store {
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;",
         )?;
         conn.execute_batch(SCHEMA)?;
-        // Desks live in the same database and in tables of their own; see
-        // `crate::desk` for why that separation is the whole of the boundary.
+        // Desks have tables of their own: `crate::desk` says why that is the boundary.
         conn.execute_batch(desk::SCHEMA)?;
         // Claude accounts by label; their tokens are in `crate::secrets`.
         conn.execute_batch(accounts::SCHEMA)?;
         // Friends, and what is on its way to or from one (`crate::peer`).
         conn.execute_batch(peer::SCHEMA)?;
         // Threads, turns and suggested panels (`crate::thread`), the sidebars'
-        // layout and their widgets (`crate::widget`), and Lately (`crate::lately`).
+        // widgets (`crate::widget`), Lately, and pipelines (`crate::pipeline`).
         conn.execute_batch(thread::SCHEMA)?;
         conn.execute_batch(widget::SCHEMA)?;
         conn.execute_batch(crate::lately::SCHEMA)?;
+        conn.execute_batch(crate::pipeline::SCHEMA)?;
         migrate(&conn)?;
         // After the columns are there on every database, old or new.
         //

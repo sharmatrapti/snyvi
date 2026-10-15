@@ -18,6 +18,7 @@ mod lately;
 mod mcp;
 mod pane;
 mod peer;
+mod pipeline;
 mod platform;
 mod project;
 mod prompt;

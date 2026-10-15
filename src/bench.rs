@@ -518,8 +518,11 @@ fn files_under(dir: &Path) -> Vec<String> {
 /// 19 until 1.36.0: On you's settling and stale turns, and widgets an agent
 /// reads and proposes (`read_widgets`, the card's hash, the skill
 /// `init-claude` writes, compiled in from src/skill/), took the musl build
-/// from 18.9 to 19.1 MB.
-const BINARY_MB: f64 = 19.5;
+/// from 18.9 to 19.1 MB. 19.5 until 1.40.0: pipelines (src/pipeline.rs,
+/// the runner in src/server/pipeline_run.rs, their routes, the planner's
+/// schema and the transcript reader) took the musl build from 19.2 to just
+/// over 19.5 MB, with no crate added.
+const BINARY_MB: f64 = 20.0;
 
 /// Returns whether any row was over budget.
 ///

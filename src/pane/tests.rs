@@ -252,6 +252,7 @@ async fn a_resume_mark_rides_the_status_until_the_pane_starts_or_it_lapses() {
             rows: 10,
             accent: "",
             offer: false,
+            args: &[],
             env: &[],
             account: 0,
         };
@@ -321,6 +322,7 @@ async fn a_pane_runs_a_process_and_its_output_arrives_as_frames() {
             rows: 10,
             accent: "",
             offer: false,
+            args: &[],
             env: &[("SNYVI_T".to_string(), "x".to_string())],
             account: 0,
         },
@@ -505,6 +507,7 @@ async fn a_verbatim_folder_starts_the_panel_in_that_folder() {
             rows: 10,
             accent: "",
             offer: false,
+            args: &[],
             env: &[],
             account: 0,
         },
@@ -616,6 +619,7 @@ async fn an_unwatched_pane_is_caught_up_when_a_page_attaches() {
             rows: 10,
             accent: "",
             offer: false,
+            args: &[],
             env: &[],
             account: 0,
         },
@@ -661,6 +665,7 @@ async fn a_folder_through_a_link_is_not_a_move() {
             rows: 10,
             accent: "",
             offer: false,
+            args: &[],
             env: &[],
             account: 0,
         },
@@ -713,6 +718,7 @@ async fn an_agent_state_is_set_on_a_running_pane_once_per_change() {
             rows: 10,
             accent: "",
             offer: false,
+            args: &[],
             env: &[],
             account: 0,
         },
@@ -793,6 +799,7 @@ async fn an_agent_is_in_from_its_start_to_its_end() {
             rows: 10,
             accent: "",
             offer: false,
+            args: &[],
             env: &[],
             account: 0,
         },
@@ -840,6 +847,7 @@ async fn a_new_title_reaches_the_desk_and_not_the_sidebar() {
             rows: 10,
             accent: "",
             offer: false,
+            args: &[],
             env: &[],
             account: 0,
         },
@@ -917,4 +925,70 @@ fn a_shell_that_moved_is_found_where_it_went() {
     let _ = child.wait();
     assert_eq!(seen.as_deref(), Some(want.as_path()));
     assert_eq!(folder_of(u32::MAX), None, "no such process, no folder");
+}
+
+/// A pipeline's step reaches the program as one argument, byte for byte,
+/// and the shell that finds the program on `PATH` never reads it: a step a
+/// model wrote with `$(…)`, backquotes, quotes, a `;` or a newline in it
+/// runs nothing (plan 2a0edf418f §5).
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_step_is_one_argument_and_no_shell_reads_it() {
+    let dir = crate::store::tempdir::Dir::new("snyvi-pane-args");
+    let (events, _) = broadcast::channel(16);
+    let panes = Panes::new(&dir.path, events);
+    let id = "a0112233445566778899aabbccddeeff";
+    let live = panes.get(id);
+    let (_, mut rx) = live.attach();
+    let cwd = dir.path.to_string_lossy().to_string();
+    let args: Vec<String> = [
+        "$(touch pwned1)",
+        "`touch pwned2`",
+        "; touch pwned3",
+        "it's \"quoted\" and $HOME",
+        "line one\nline two",
+        "--model",
+        "",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    live.start(
+        Start {
+            cwd: &cwd,
+            root: &cwd,
+            cmd: "printf '%s\\0' >got.bin",
+            args: &args,
+            desk: "d",
+            slot: 1,
+            cols: 80,
+            rows: 10,
+            accent: "",
+            offer: false,
+            env: &[],
+            account: 0,
+        },
+        &panes,
+    )
+    .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while tokio::time::Instant::now() < deadline {
+        let Ok(Ok(msg)) = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await else {
+            break;
+        };
+        let v: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        if v["t"] == "status" && v["s"]["running"] == false {
+            break;
+        }
+    }
+    let got = std::fs::read(dir.path.join("got.bin")).unwrap();
+    let got: Vec<String> = got
+        .split(|b| *b == 0)
+        .map(|a| String::from_utf8_lossy(a).to_string())
+        .collect();
+    // `printf '%s\0'` ends every argument with a NUL: one empty piece after.
+    assert_eq!(&got[..got.len() - 1], &args[..]);
+    for f in ["pwned1", "pwned2", "pwned3"] {
+        assert!(!dir.path.join(f).exists(), "{f} was run");
+    }
 }

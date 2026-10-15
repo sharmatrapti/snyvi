@@ -15,6 +15,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | the library API, the receive endpoint, asides, folders | `src/server/api_docs.rs` | — |
 | the page's side of a desk: Home, desks, panels, notes, keys | `src/server/api_desk.rs` | skip `refuse_desk` |
 | the agent's side: `/api/panes/{id}/*`, agents | `src/server/api_agent.rs` | reach the store before `agent_pane` |
+| pipelines: rows (`src/pipeline.rs`), planner, transcript reader; the runner (`src/server/pipeline_run.rs`); the window's routes (`src/server/api_pipeline.rs`) | | start one from a token route; put a step through a shell |
 | a friend's snyvi: pairing, Send to…, offers, the link | `src/server/api_peer.rs`, `src/server/peer_link.rs` (the socket to the relay), `src/peer.rs` (keys, code, frame, relay client, tables), `relay/` (the Worker) | send on an agent's word; parse a frame before its key is pinned; wait at the relay with anything but the one socket |
 | the desk socket · SSE · browse mode · restart, update, reset | `src/server/{ws,events,api_browse,lifecycle}.rs` | — |
 | the route table test | `src/server/tests.rs` | lag the router: the count must match |
@@ -44,7 +45,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 
 - Local only. Bind 127.0.0.1; every route checks `Host`/`Origin`; no accounts, no telemetry. The one thing that leaves the machine is a frame the reader pressed Send on, sealed to a friend's pinned key (`docs/PEER.md`); the relay reads none of it.
 - **Capability ≠ token.** The capability is the window's (desk routes, reader actions). The token is the agent's (`send`, `aside`, `panes/{id}/*`). A token never mints a capability and never starts a command.
-- snyvi never makes input from content it received. Agents send, snyvi shows. No command runner.
+- snyvi never makes input from content it received. Agents send, snyvi shows. No command runner. A pipeline (1.40) is the one place a model's text becomes a prompt: made and started only from the window, each step one argv entry of a new session in a worktree, never keystrokes (`docs/TERMINAL.md` §9a).
 - Nothing is deleted. A ✕ removes from view and stays recoverable. Documents are immutable; a resend is a new version.
 - No layout shift: nothing that comes and goes may move the page.
 - First paint ≤ the budget in `bench/bytes.mjs`. Files ≤ 2,500 lines, functions ≤ 120 (`bench/size.mjs`); what is over may only shrink.

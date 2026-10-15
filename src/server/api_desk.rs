@@ -1527,6 +1527,58 @@ pub(crate) async fn start_pane(
     } else {
         placed.root.as_str()
     };
+    let PaneEnv {
+        env,
+        account,
+        account_missing,
+        outranked,
+    } = pane_env(&app, &placed).await;
+    let start = crate::pane::Start {
+        cwd,
+        root: &placed.root,
+        cmd: &cmd,
+        args: &[],
+        desk: &placed.desk_name,
+        slot: placed.pane.slot,
+        cols: b.cols,
+        rows: b.rows,
+        accent: &b.accent,
+        offer,
+        env: &env,
+        account,
+    };
+    match live.start(start, &app.panes) {
+        Ok(status) => {
+            let mut said = json!({ "status": status });
+            if account_missing {
+                said["account_missing"] = json!(true);
+            }
+            if !outranked.is_empty() {
+                said["outranked"] = json!(outranked);
+            }
+            Json(said).into_response()
+        }
+        Err(e) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// What a panel's process is started with besides its command: the desk's
+/// keys, the snyvi mod's folder, and the Claude account's token -- for the
+/// reader's Start (`start_pane`) and a pipeline's stage alike
+/// (`pipeline_run`), so a stage runs as its panel would.
+pub(crate) struct PaneEnv {
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) account: i64,
+    pub(crate) account_missing: bool,
+    /// What Claude Code takes over that token, by name only.
+    pub(crate) outranked: Vec<&'static str>,
+}
+
+pub(crate) async fn pane_env(app: &App, placed: &crate::desk::Placed) -> PaneEnv {
     // The desk's keys: names from the store, values from the keychain on a
     // blocking thread, into the child's environment and nowhere else. A key
     // whose value is nowhere is not set at all.
@@ -1550,7 +1602,7 @@ pub(crate) async fn start_pane(
     }
     // The snyvi mod, for a Claude Code started in this panel: its folder is
     // named here and nowhere else (`crate::claude_mod`).
-    if mod_on(&app) {
+    if mod_on(app) {
         env.push((
             "CLAUDE_CODE_PLUGIN_DIRS".into(),
             crate::claude_mod::plugin_dirs(&crate::claude_mod::dir(&app.paths)),
@@ -1584,7 +1636,7 @@ pub(crate) async fn start_pane(
     }
     // What Claude Code takes over that token, by name only: a desk key, or
     // the daemon's own environment, which a panel inherits.
-    let outranked: Vec<&str> = if account == crate::accounts::DEFAULT {
+    let outranked: Vec<&'static str> = if account == crate::accounts::DEFAULT {
         Vec::new()
     } else {
         crate::accounts::OUTRANKS
@@ -1592,35 +1644,11 @@ pub(crate) async fn start_pane(
             .filter(|n| env.iter().any(|(k, _)| k == n) || std::env::var_os(n).is_some())
             .collect()
     };
-    let start = crate::pane::Start {
-        cwd,
-        root: &placed.root,
-        cmd: &cmd,
-        desk: &placed.desk_name,
-        slot: placed.pane.slot,
-        cols: b.cols,
-        rows: b.rows,
-        accent: &b.accent,
-        offer,
-        env: &env,
+    PaneEnv {
+        env,
         account,
-    };
-    match live.start(start, &app.panes) {
-        Ok(status) => {
-            let mut said = json!({ "status": status });
-            if account_missing {
-                said["account_missing"] = json!(true);
-            }
-            if !outranked.is_empty() {
-                said["outranked"] = json!(outranked);
-            }
-            Json(said).into_response()
-        }
-        Err(e) => (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+        account_missing,
+        outranked,
     }
 }
 
