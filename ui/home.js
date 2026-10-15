@@ -662,8 +662,9 @@ function status(j) {
     bits.push(n ? `${plural(n, "Claude")} working` : claudeIs === "missing" ? "Claude Code not installed"
       : claudeIs === "unconnected" ? `<a href="/connect" data-nav="connect">Claude not connected</a>` : "Claude idle");
   }
-  const w = windowLeft(j.quota?.five_hour);
-  if (w) bits.push(`<span data-tip="Claude's five-hour window" data-tip-sub="${esc(w.text)}">5 h window ${w.fresh ? "full" : `${w.left}% left`}</span>`);
+  // With more than one account, the one with the least left, by its name.
+  const qs = quotasOf(j), lq = leastOf(qs, "five_hour"), w = windowLeft(lq?.five_hour);
+  if (w) bits.push(`<span data-tip="Claude's five-hour window${qs.length > 1 ? `, as ${esc(lq.label)}` : ""}" data-tip-sub="${esc(w.text)}">${qs.length > 1 ? `${esc(lq.label)}: ` : ""}5 h window ${w.fresh ? "full" : `${w.left}% left`}</span>`);
   return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.join(" · ")}</p>`;
 }
 
@@ -1287,14 +1288,21 @@ function windowLeft(l) {
   return { left, hot: left <= 20, text: `${left}% left · resets ${resets(l.resets_at)}` };
 }
 
-/** What is left of the account's quota and when that was read, what the
+/** Every Claude account's windows, as the daemon heard them, by account
+ *  (`api_accounts::Usage`); the one `quota` an older daemon sent. */
+const quotasOf = j => (j.quotas && j.quotas.length ? j.quotas : j.quota ? [j.quota] : []).filter(q => q.five_hour || q.seven_day);
+/** The account with the least left in window `k`. */
+const leastOf = (qs, k) => qs.reduce((b, q) => (!b || (windowLeft(q[k])?.left ?? 101) < (windowLeft(b[k])?.left ?? 101) ? q : b), null);
+
+/** What is left of each account's quota and when that was read, what the
  *  Claudes in panels are doing, and the fullest context window. The bar is
- *  what is left, and turns amber at a fifth. */
+ *  what is left, and turns amber at a fifth. With one account its bars are
+ *  unnamed, as they always were. */
 function claude(j) {
   const { esc, plural } = c;
-  const q = j.quota, out = [];
+  const qs = quotasOf(j), out = [];
   const bar = (label, l) => { const w = windowLeft(l); return w ? `<div><span class="hm-k">${label}</span><div class="hm-bar${w.hot ? " hot" : ""}"><i style="width:${w.left}%"></i></div><span class="fact">${w.text}</span></div>` : ""; };
-  if (q && (q.five_hour || q.seven_day)) out.push(`<div class="hm-q">${bar("5 hours", q.five_hour)}${bar("7 days", q.seven_day)}</div>${q.at ? `<p class="hm-meta fact">As of ${age(q.at)} ago, from the last Claude that answered.</p>` : ""}`);
+  for (const q of qs) out.push(`${qs.length > 1 ? `<p class="hm-meta">${esc(q.label || "your login")}</p>` : ""}<div class="hm-q">${bar("5 hours", q.five_hour)}${bar("7 days", q.seven_day)}</div>${q.at ? `<p class="hm-meta fact">As of ${age(q.at)} ago, from the last Claude that answered${qs.length > 1 ? " as it" : ""}.</p>` : ""}`);
   if (j.desks) {
     const ps = j.desks.flatMap(d => d.panes.map(p => ({ ...p, desk: d.name, deskId: d.id })));
     const working = ps.filter(p => p.agent === "working").length, done = ps.filter(p => p.agent === "done").length;

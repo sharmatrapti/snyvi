@@ -181,9 +181,9 @@ pub struct App {
     /// The `update` block last sent, so the watcher's tick sends it again
     /// only when something in it moved. See `emit_update_if_changed`.
     update_sent: std::sync::Mutex<String>,
-    /// The account's rate-limit windows, as the last status line in a panel
-    /// said them: account-wide, so the latest is the one. Home's quota.
-    pub quota: std::sync::Mutex<Option<serde_json::Value>>,
+    /// Per Claude account: its rate-limit windows as a status line last said
+    /// them, and whether its sign-in stopped working (`api_accounts::Usage`).
+    pub usage: api_accounts::Usage,
     /// Friends: the daemon's own keys once read, the pairings under way, and
     /// the link's wake-up. See `api_peer`, `peer_link` and `crate::peer`.
     pub peers: api_peer::Peers,
@@ -334,7 +334,7 @@ fn new_app(
         relaunch_window: std::sync::atomic::AtomicBool::new(false),
         restarting: std::sync::atomic::AtomicBool::new(false),
         update_sent: Default::default(),
-        quota: Default::default(),
+        usage: Default::default(),
         peers: Default::default(),
     })
 }

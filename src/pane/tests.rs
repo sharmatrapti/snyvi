@@ -542,6 +542,7 @@ fn a_panel_starts_outside_the_session_that_started_the_daemon() {
         for k in [
             "CLAUDECODE",
             "CLAUDE_CODE_CHILD_SESSION",
+            "CLAUDE_CODE_OAUTH_TOKEN",
             "NO_COLOR",
             "PATH_KEPT",
         ] {
@@ -553,6 +554,7 @@ fn a_panel_starts_outside_the_session_that_started_the_daemon() {
     fresh_env(&mut c, true);
     assert!(c.get_env("CLAUDECODE").is_none());
     assert!(c.get_env("CLAUDE_CODE_CHILD_SESSION").is_none());
+    assert!(c.get_env("CLAUDE_CODE_OAUTH_TOKEN").is_none());
     assert!(c.get_env("NO_COLOR").is_none());
     assert!(c.get_env("PATH_KEPT").is_some());
     let mut c = made();

@@ -2931,8 +2931,8 @@ async function nestRows(cdp, base, token, tmp) {
 }
 
 /** The keys sheet (audit 67d008cb6f): the desk's head names the account
- *  its Claude runs as; the sheet opens on that account, not in a form; its
- *  two "Add …" rows are folded and only one opens at a time; and an
+ *  its Claude runs as; the sheet opens on that account, not in a form; "+
+ *  Claude account" is one button and Add a key a folded row; and an
  *  account's ⋯ puts Rename, Renew and Remove from every desk in its row.
  *  Its desk is parked after, so Home's Pick up is still home-bench. */
 async function keysSheetRows(cdp, base) {
@@ -2958,10 +2958,13 @@ async function keysSheetRows(cdp, base) {
     const at = opened ? await p.ev(`({ on: document.activeElement?.matches(".dk-acc-rows input:checked") ? document.activeElement.value : "", open: document.querySelectorAll(".dk-keys-sheet .dk-add[open]").length, renew: document.querySelectorAll(".dk-keys-sheet .dk-acc-rows [data-a=acc-renew]").length })`) : null;
     rows.push(["it opens on the account picked, its forms folded, Renew out of sight", !!at && at.on === String(acc?.id) && !at.open && !at.renew,
       !at ? "no sheet" : at.on !== String(acc?.id) ? `the hand is on ${at.on || "something else"}` : at.open ? `${at.open} form open` : at.renew ? "Renew shows a year early" : "on Work, both Add rows shut"]);
-    await p.clickOn(".dk-keys-sheet .dk-acc-more > summary");
+    // Not pressed: it would run the real `claude setup-token`.
+    const click = await p.ev(`({ b: !!document.querySelector(".dk-keys-sheet .dk-acc-new[data-a=acc-in]"), name: !!document.querySelector(".dk-keys-sheet input[name=label]"), paste: getComputedStyle(document.querySelector(".dk-keys-sheet .dk-acc-paste")).display === "none" })`);
+    rows.push(["+ Claude account is one button: no Name, and the paste only once a sign-in fails", click.b && !click.name && click.paste === true,
+      !click.b ? "no + Claude account" : click.name ? "a Name field is still there" : click.paste ? "one button, no Name, the paste out of sight" : "the paste field shows"]);
     await p.clickOn(".dk-keys-sheet .dk-key-more > summary");
-    const one = await until(`document.querySelector(".dk-key-more").open && !document.querySelector(".dk-acc-more").open && document.activeElement?.name === "name"`);
-    rows.push(["one Add row open at a time, the hand in its first field", one, one ? "Add a key open, Add a Claude account shut, the hand on Name" : "both open, or the hand is elsewhere"]);
+    const one = await until(`document.querySelector(".dk-key-more").open && document.activeElement?.name === "name"`);
+    rows.push(["Add a key opens with the hand in its first field", one, one ? "Add a key open, the hand on Name" : "the hand is elsewhere"]);
     if (acc) {
       await p.clickOn(`.dk-acc-dots[data-n="${acc.id}"]`);
       const acts = await until(`/Remove from every desk/.test(document.querySelector(".dk-acc-acts")?.textContent || "") && !!document.querySelector('.dk-acc-acts [data-a=acc-name]')`);

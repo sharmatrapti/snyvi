@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS;
+  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS;
   document.head.append(s);
 }
 
@@ -100,12 +100,16 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-add > summary::-webkit-details-marker { display: none; }
 .dk-add > summary:hover, .dk-add[open] > summary { color: var(--fg); }
 .dk-add > summary:hover { background: var(--rule); }
+/* "+ Claude account": a row like "Add a key", that starts the sign-in at
+   once; under it the sign-in's own line (12-signin.js), the paste a failed
+   one offers, and what came of it. */
+.dk-acc-add { display: grid; gap: 6px; }
+.dk-acc-new { display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 2px; border: 0; border-radius: var(--r-sm); background: none; font: inherit; color: var(--fg-2); text-align: left; cursor: pointer; }
+.dk-acc-new:hover { background: var(--rule); color: var(--fg); }
+.dk-acc-add:has([data-sg="x"]) .dk-acc-new { opacity: .5; pointer-events: none; }
+.dk-acc-said:empty, .dk-acc-paste[hidden] { display: none; }
 .dk-acc-add label button { padding: 2px 10px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-small); color: var(--accent); cursor: pointer; }
 .dk-acc-add label button:disabled { opacity: .5; cursor: default; }
-.dk-acc-live { display: grid; gap: 6px; color: var(--fg-2); font-size: var(--fs-small); }
-.dk-acc-live > button { justify-self: start; padding: 0; border: 0; background: none; font: inherit; color: var(--accent); cursor: pointer; }
-.dk-acc-live label button + button { border-color: var(--rule-2); color: var(--fg-3); }
-.dk-acc-link { padding: 0; border: 0; background: none; font: inherit; color: var(--accent); text-decoration: underline; cursor: pointer; }
 /* The account a desk runs as, leading its key button when it is not your login:
    "as Trapti" in the button's own quiet colour, never bold -- bold, beside the
    desk's name, it read as the desk's title. */
@@ -286,7 +290,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 :is(.pn-offer, .pn-switch) > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pn-offer > span.why { color: var(--warn); }
 :is(.pn-offer, .pn-switch) button { flex: none; padding: 3px 8px; border-radius: var(--r-xs); color: var(--fg-2); }
-.pn-offer [data-offer="go"], .pn-switch [data-sw="as"] { color: var(--accent); font-weight: 600; }
+.pn-offer [data-offer="go"], .pn-switch :is([data-sw="as"], [data-sw="add"], [data-sw="renew"]) { color: var(--accent); font-weight: 600; }
+/* An account that is out too: still there to pick, but not the way out. */
+.pn-switch [data-sw="as"].out { color: var(--fg-3); font-weight: 500; }
 :is(.pn-offer, .pn-switch) button:hover { background: var(--rule-2); color: var(--fg); }
 .pn-offer button:disabled { opacity: .55; cursor: progress; }
 .pn-offer button:disabled:hover { background: none; }

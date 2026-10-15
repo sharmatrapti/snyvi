@@ -605,57 +605,26 @@ const accounts = () => [{ id: 0, label: "your login" }, ...(ctx.desks.accounts |
  *  switch restarts it into that conversation. A shell is not restarted. */
 const continuable = v => v.status.running && v.pane.resume && (v.status.agent_in || talked(v));
 
-/** A panel's "Run as" entries, one an account, and only once a second
- *  account exists. Claude open in it, with a conversation to go back to:
- *  "Continue as", which restarts it into that conversation. Anything else:
- *  "Run as", which a stopped panel starts as and a running shell takes at
- *  its next start. The desk's own account is picked by following it. */
-function accountItems(v, d) {
-  const all = accounts();
-  if (all.length < 2) return [];
-  const s = v.status, on = v.pane.account ?? d.account;
-  const cont = continuable(v);
-  const was = cont ? s.account || 0 : on;
-  return [...all.filter(a => a.id !== was).map(a => ({ label: `${cont ? "Continue" : "Run"} as ${a.label}`, run: () => runAs(v, d, a, cont) })), "rule"];
-}
-
-/** A panel as another account: `a` picked from its menu, the desk's own
- *  picked by following it. */
-async function runAs(v, d, a, cont) {
-  const account = a.id === d.account ? null : a.id;
-  if (!v.status.running) {
-    await ctx.api(`/api/panes/${v.id}/account`, { account });
-    v.pane.account = account;
-    return run(v, v.start.querySelector("input").value);
-  }
-  if (!cont) {
-    await ctx.api(`/api/panes/${v.id}/account`, { account });
-    v.pane.account = account;
-    return ctx.toast(`Panel ${v.pane.slot} runs as ${a.label}`, "from its next start");
-  }
-  return switchSoon(v, account, a.label);
-}
-
 /** A switch, or, while Claude is answering -- which the daemon refuses, a
  *  restart mid-answer losing the answer -- the same switch the moment the
  *  answer is done. The reader asked for it once; a refusal they had to
  *  remember to ask again was a dead end (note #113). */
-async function switchSoon(v, account, label) {
-  try { await switchPanel(v, account, label); }
+async function switchSoon(v, account, label, renewed = false) {
+  try { await switchPanel(v, account, label, renewed); }
   catch (e) {
     if (!/answering/i.test(String(e))) throw e;
     // Said on the panel until it happens (`switchStrip`), by the account's
     // name as it is when it does: a toast said it once, cut short, and went.
     const p = v.pending = { account };
     const fail = e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e);
-    v.whenDone = () => switchPanel(v, account, labelOf(account)).catch(fail);
+    v.whenDone = () => switchPanel(v, account, labelOf(account), renewed).catch(fail);
     // And asked again now and then: a turn whose end the hook never said is
     // over once Claude has been quiet a while (`pane::is_answering`), and a
     // status that still says `working` would otherwise hold it for ever.
     const settle = () => { clearInterval(t); if (v.pending === p) { v.pending = null; v.whenDone = null; header(v); } };
     const t = setInterval(() => {
       if (v.pending !== p) return clearInterval(t);
-      switchPanel(v, account, labelOf(account)).then(settle, e => { if (!/answering/i.test(String(e))) { settle(); fail(e); } });
+      switchPanel(v, account, labelOf(account), renewed).then(settle, e => { if (!/answering/i.test(String(e))) { settle(); fail(e); } });
     }, SWITCH_RETRY_MS);
     header(v);
   }
@@ -669,12 +638,13 @@ function labelOf(account) {
 }
 
 /** A running panel restarted as `account` (null: its desk's), back into its
- *  conversation. The daemon keeps the choice and refuses while Claude is
- *  answering; the stop and the start are this page's, as a restart's resume
- *  is, since it holds the panel's size. */
-async function switchPanel(v, account, label) {
+ *  conversation; `renewed`, also as the account it is already on, whose
+ *  new token only a start takes. The daemon keeps the choice and refuses
+ *  while Claude is answering; the stop and the start are this page's, as a
+ *  restart's resume is, since it holds the panel's size. */
+async function switchPanel(v, account, label, renewed) {
   const cmd = v.status.cmd || v.pane.cmd || "";
-  const j = await ctx.api(`/api/panes/${v.id}/account`, { account, switch: true });
+  const j = await ctx.api(`/api/panes/${v.id}/account`, { account, switch: true, ...(renewed ? { renewed } : {}) });
   v.pane.account = account;
   if (!j.restart) return;
   // The head says what is happening for the stop and the start: a blank
@@ -720,7 +690,6 @@ export function actions(el) {
       s.running ? { label: "Stop", run: does("stop") } : { label: "Start", run: () => run(v, v.start.querySelector("input").value) },
       !s.running && talked(v) && { label: "Resume conversation", run: () => run(v, "", false, true) },
       R,
-      ...accountItems(v, d),
       { label: "Copy folder path", run: () => { navigator.clipboard?.writeText(v.pane.cwd); ctx.toast("Copied", v.pane.cwd); } },
       { label: "Open in file manager", run: () => ctx.reveal({ desk: d.id }) },
       R,

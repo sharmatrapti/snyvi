@@ -149,6 +149,27 @@ pub(crate) async fn pane_agent(
         None if b.session.is_some() => app.panes.agent_in(&id),
         None => app.panes.is_running(&id),
     };
+    // A turn that ended because the account's sign-in no longer works: the
+    // panel offers Renew (`Usage::broke`), until a status line comes from it.
+    let auth = b.stopped.as_deref().and_then(|w| {
+        crate::accounts::AUTH_REASONS
+            .into_iter()
+            .find(|r| *r == w)
+    });
+    // A turn that ended with its answer says the sign-in works again.
+    if live && b.state.as_deref() == Some("done") {
+        let account = app.panes.status(&id).account;
+        let moved = match auth {
+            Some(why) => app.usage.broke(account, why),
+            None if b.stopped.as_deref().unwrap_or("").is_empty() => {
+                app.usage.mended(account)
+            }
+            None => false,
+        };
+        if moved {
+            super::api_accounts::accounts_moved(&app);
+        }
+    }
     if live && (b.model.is_some() || b.ctx.is_some()) {
         let c = b.ctx.unwrap_or_default();
         let pct = c
@@ -179,13 +200,19 @@ pub(crate) async fn pane_agent(
     if !live {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if let Some(l) = &b.limits {
-        if l.five_hour.is_some() || l.seven_day.is_some() {
-            *app.quota.lock().unwrap_or_else(|e| e.into_inner()) = Some(json!({
-                "five_hour": l.five_hour,
-                "seven_day": l.seven_day,
-                "at": crate::store::now(),
-            }));
+    // The windows are the account's the panel runs as, not the panel's.
+    // Claude Code has them from an answer, so they also say the account's
+    // sign-in works; a model's name alone does not, being the panel's own.
+    if let Some(l) = b.limits.as_ref().filter(|l| l.five_hour.is_some() || l.seven_day.is_some()) {
+        let account = app.panes.status(&id).account;
+        if app
+            .usage
+            .heard(account, l.five_hour, l.seven_day, crate::store::now())
+        {
+            emit(&app, "quota", json!({ "account": account }));
+        }
+        if app.usage.mended(account) {
+            super::api_accounts::accounts_moved(&app);
         }
     }
     if let Some(session) = &b.session {

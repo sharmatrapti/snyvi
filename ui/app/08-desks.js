@@ -430,7 +430,7 @@
     peerUse().then(m => m.event(peerCtx, j), () => {});
   };
   /** Home shows a little of all of these; each one reads it again, soon. */
-  const HOME_EVENTS = ["panes", "ctx", "desks", "desknotes", "doc", "read", "update", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing"];
+  const HOME_EVENTS = ["panes", "ctx", "quota", "desks", "desknotes", "doc", "read", "update", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing"];
   /** A document in, as the stream tells it (`doc_event`): a save in place,
    *  a draft the hook saved, or an arrival. Out of `connect`, which was long
    *  enough before drafts had a branch of their own. */
