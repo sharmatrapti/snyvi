@@ -360,6 +360,7 @@ pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
                 }
                 "merge" => format!("You merged: \"{q}\"."),
                 "key" => format!("You added the key: \"{q}\"."),
+                "do" => format!("You did: \"{q}\"."),
                 _ => format!("You answered \"{q}\": {a}."),
             }
         })
@@ -1022,6 +1023,13 @@ mod tests {
             answered_at: 150,
             ..Turn::default()
         };
+        let did = Turn {
+            kind: "do".into(),
+            text: "Add OpenRouter credits".into(),
+            answer: "Done".into(),
+            answered_at: 150,
+            ..Turn::default()
+        };
         let parked = Thread {
             name: "Home + friends".into(),
             stage: "parked".into(),
@@ -1058,7 +1066,7 @@ mod tests {
             since: 100,
             now: 200,
             panes: &[],
-            answers: &[answered, tried],
+            answers: &[answered, tried, did],
             threads: &[parked, merged, own],
             opened: &[],
         });
@@ -1068,6 +1076,7 @@ mod tests {
                 CHANGES_HEAD,
                 "You answered \"Search box after how many docs?\": After 10.",
                 "You tried \"Try it on 7871\": needs changes: the box jumps.",
+                "You did: \"Add OpenRouter credits\".",
                 "Thread \"Home + friends\" is parked (by you; next: rebase first).",
                 "PR #57 merged as 7e1c0a2 (thread \"Relay\").",
             ]

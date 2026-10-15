@@ -12,7 +12,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/server/mod.rs` | 653 | the `App`, `new_app`, the router (one layer in front: the host gate), `run`, the one `doc` event every arrival ends in |
 | `src/server/auth.rs` | 259 | the three leaves (token, capability, window secret), the host gate, `refuse_desk`, `refuse_reader` |
 | `src/server/assets.rs` | 648 | the shell pages, the `ASSETS` table (routes, hashes and the live read all come from it), fonts, Mermaid, a document's files |
-| `src/server/api_docs.rs` | 815 | the library over HTTP, the receive endpoint, asides, terminal and reveal |
+| `src/server/api_docs.rs` | 1105 | the library over HTTP, the receive endpoint, asides, Lately's routes and `lately_log` (what every writer calls beside its event), terminal and reveal |
 | `src/server/api_desk.rs` | 1535 | Home, desks, panels, notes, keys, pastes, Ctrl-clicked paths; every route behind `refuse_desk` |
 | `src/server/api_agent.rs` | 638 | `/api/agents`, connect, and what an agent in a panel says (`/api/panes/{id}/*`, token + running pane) |
 | `src/server/api_peer.rs` | 820 | a friend's snyvi: pairing, the friends list, Send to…, a line, an agent's offer, what is done with a frame (`docs/PEER.md`) |
@@ -28,7 +28,8 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/render.rs` | 1760 | Markdown → HTML once, at receive time; outline; code; Mermaid left to the page |
 | `src/browse.rs` | 818 | a folder read from disk, nothing stored |
 | `src/watch.rs` | 357 | mtime change detection for browse and `snyvi watch` |
-| `src/aside.rs` | 217 | a line beside the work |
+| `src/aside.rs` | 264 | a line beside the work: its checks and its quiet, kept as Lately rows |
+| `src/lately.rs` | 438 | Lately: everything that came from outside, kept (documents, versions, asides, a friend's line, reply, tick, answers), one seen watermark, news pruned after 14 days (`docs/DESIGN.md` §4.5) |
 | `src/thread.rs` | 1151 | threads, turns (Your turn) and suggested panels: the tables, the stages, who is told what (#90) |
 | `src/server/api_thread.rs` | 734 | threads over HTTP: the agent's and the mod's on `/api/panes/{id}/…`, the page's on `/api/desks/{id}/…`, the held question's long-poll |
 | `src/claude_mod.rs` | 144 | the snyvi mod (`mod/`) built in, written to the data folder, named in a panel's `CLAUDE_CODE_PLUGIN_DIRS` |
@@ -89,7 +90,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `ui/game.js` | 701 | lazy | the rocket |
 | `ui/menu.js` | 571 | lazy | context menus |
 | `ui/look.js` | 358 | lazy | theme, accent, Aa |
-| `ui/note.js` | 330 | lazy | the aside card |
+| `ui/corner.js` | 743 | lazy | the corner on every page: the card that rises, the pill, the tray (On you and Lately), snyvi's own lines, the chime; a desk's corner draws its parts (`docs/DESIGN.md` §4.5) |
 | `ui/palette.js` | 304 | lazy | ⌘K |
 | `ui/toast.js`, `ui/tip.js`, `ui/keys.js`, `ui/paths.js`, `ui/frame.js`, `ui/find.js`, `ui/browse.js`, `ui/diff.js` | < 200 each | lazy | one thing each |
 

@@ -1248,7 +1248,7 @@ fn said(resp: &mut ureq::http::Response<ureq::Body>) -> String {
         .unwrap_or_else(|| "snyvi refused it".to_string())
 }
 
-/// Leave an aside at the foot of the sidebar.
+/// Leave an aside in the corner (`ui/corner.js`).
 pub fn aside(paths: &Paths, aside: &crate::aside::NewAside) -> Result<Value> {
     ensure_daemon()?;
     let token = config::read_token(paths).ok_or_else(|| {

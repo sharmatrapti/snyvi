@@ -32,7 +32,6 @@
     previewOn: false,
     previewKey: null,           // what previewOn belongs to, so a toggle survives a re-render
     online: boot.online || {},  // agent name -> how many of it hold a stream on the daemon now
-    notes: boot.notes || [],    // the last few lines agents left, newest first
     desks: null,                // what /api/desks said, for a window; a tab never has any
     deskId: null,               // the desk on screen, or null for the list of them
   };

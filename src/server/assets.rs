@@ -68,7 +68,7 @@ pub(crate) const NAV_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/nav.js")
 
 /// The aside card at the sidebar's foot, fetched when there is an aside to
 /// show: a reader no agent has spoken to never pays for it.
-pub(crate) const NOTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/note.js"));
+pub(crate) const CORNER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/corner.js"));
 
 /// The tip every control names itself with (docs/DESIGN.md §8.1), fetched on
 /// the first pointer resting on one, or the first Tab.
@@ -343,8 +343,26 @@ pub(crate) fn shell(
         o.insert("waiting".into(), json!(waiting(app)));
         // Who is here, for the count beside the brand mark on the first paint.
         o.insert("online".into(), app.online());
-        // The aside showing at the foot of the sidebar, and the trail under it.
-        o.insert("notes".into(), json!(app.asides.list()));
+        // The newest asides, and whether the corner has anything to say:
+        // Lately's dot and how much waits on the reader across desks, fresh,
+        // so the first paint knows whether to fetch it (`ui/corner.js`). A
+        // count only: the rows are behind the desk gate (`lately`), and a
+        // tab, which has no desks, does not show it.
+        o.insert("notes".into(), json!(aside_list(app)));
+        let (unseen, on_you) = app
+            .store
+            .clocked(|c, now| {
+                Ok((
+                    crate::lately::unseen(c, now)?,
+                    crate::thread::waiting(c, now)?
+                        .iter()
+                        .filter(|t| !t.stale && t.via != "dialog")
+                        .count(),
+                ))
+            })
+            .unwrap_or_default();
+        o.insert("lately_unseen".into(), json!(unseen));
+        o.insert("on_you".into(), json!(on_you));
         // Whether there is a friend, so a menu offers Send to a friend… only
         // then; the menu asks again as it opens (`ui/menu.js`).
         o.insert("friends".into(), json!(friend_count(app)));
@@ -765,7 +783,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("palette.js", PALETTE_JS, JS),
     ("look.js", LOOK_JS, JS),
     ("nav.js", NAV_JS, JS),
-    ("note.js", NOTE_JS, JS),
+    ("corner.js", CORNER_JS, JS),
     ("tip.js", TIP_JS, JS),
     ("home.js", HOME_JS, JS),
     ("peer.js", PEER_JS, JS),

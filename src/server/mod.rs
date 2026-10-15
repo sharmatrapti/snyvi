@@ -144,8 +144,6 @@ pub struct App {
     /// The panes that have been woken since this daemon started: their
     /// screens, and their processes while they run. See `crate::pane`.
     pub panes: Arc<crate::pane::Panes>,
-    /// The last few lines agents left beside the work. See `crate::aside`.
-    pub asides: crate::aside::Asides,
     /// What git last said about each desk's folder, kept briefly: Home is
     /// drawn again on every event it shows. See `crate::git`.
     pub git: crate::git::Cache,
@@ -325,7 +323,6 @@ fn new_app(
         online: std::sync::Mutex::new(Default::default()),
         capabilities: crate::capability::Capabilities::load(paths.config_dir.join("capabilities")),
         panes,
-        asides: Default::default(),
         git: Default::default(),
         exe,
         started_at: crate::store::now(),
@@ -542,6 +539,11 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/notes/seen", post(see_asides))
         .route("/api/notes/dismiss", post(dismiss_asides))
         .route("/api/notes/restore", post(restore_asides))
+        // Lately, the corner's kept list (`crate::lately`).
+        .route("/api/lately", get(lately))
+        .route("/api/lately/seen", post(see_lately))
+        .route("/api/lately/remove", post(remove_lately))
+        .route("/api/lately/restore", post(restore_lately))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
         .route("/api/restart", post(restart).delete(cancel_restart))

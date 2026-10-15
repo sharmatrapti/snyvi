@@ -843,9 +843,10 @@ def idle_rows(env, base):
 
         post(base, "/api/notes", {"text": "The bench left this, and nobody has read it.", "sender": "bench"},
              {"authorization": f"Bearer {token}"})
-        ok = until(v, "!!document.documentElement.dataset.note && !!document.querySelector('#note')")
+        ok = until(v, "!!document.documentElement.dataset.note && !!document.querySelector('#cn .cn-card, #cn .oy-pill')")
         # The face perks up when a note comes -- two blinks, four pulses, under
-        # ten seconds (app.css) -- and the row is what it costs after that.
+        # ten seconds (app.css) -- and its card rises in the corner and settles
+        # into the pill (ui/corner.js); the row is what it costs after that.
         v.wait(10000)
         note = v.js("document.documentElement.dataset.note || 'none'")
         rows.append(quiet("an unread note, idle", measure(v, pid, dpid), f"note {note}") if ok

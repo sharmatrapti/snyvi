@@ -677,7 +677,6 @@ const CSS = `
 #pop { position: fixed; left: 50px; top: 8px; z-index: var(--z-pop); width: var(--side-w); max-height: calc(100vh - 16px); overflow: auto; overscroll-behavior: contain;
   padding: 2px 8px 8px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-sm); box-shadow: var(--shadow);
   animation: sheet-l var(--dur-quick) var(--ease-out); }
-#pop > #note { margin: 6px 0 0; }
 #pop > :first-child .sec-head { margin-top: 4px; }
 @media (max-width: 760px) { #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; } }
 #ctx { position: fixed; z-index: var(--z-pop); min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-ui); transform-origin: 0 0; animation: ctx-in var(--dur-instant) ease-out; }
@@ -764,7 +763,7 @@ function install(ctx) {
  * it is fetched on the first press of a rail icon, and a reader whose
  * sidebar is never folded never pays for it. */
 const $ = s => document.querySelector(s), root = document.documentElement;
-const POPS = { inbox: ["#inbox-row"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], note: ["#note"] };
+const POPS = { inbox: ["#inbox-row"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"] };
 /** #trees' order: the reader's (app.js `placeLeft` writes it), or index.html's. */
 const home = () => ($("#trees").dataset.order || "#inbox-row #tree #desk-nav #browse-nav #widgets-nav").split(" ");
 let popBtn = null, popWired = false;
@@ -796,7 +795,6 @@ export function unpop(back = true) {
   // Each back before the first section that follows it in #trees' order,
   // whatever else is still at home: the end is not its place.
   for (const id of POPS[sec]) {
-    if (id === "#note") { $("#side").insertBefore($(id), $(".side-foot")); continue; }
     const order = home(), after = order.slice(order.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
     treesEl.insertBefore($(id), after || popEl);
   }
@@ -847,15 +845,6 @@ function wirePop(popEl) {
     e.preventDefault(); e.stopPropagation();
   });
   popEl.addEventListener("focusout", e => { const t = e.relatedTarget; if (t && !popEl.contains(t) && !t.closest("#ctx")) unpop(false); });
-  // The aside's section empties when its last line goes, and its icon with
-  // it: the popover goes too, and a keyboard that was in it lands on the
-  // rail rather than on nothing.
-  new MutationObserver(() => {
-    if (root.dataset.pop !== "note" || !$("#note").hidden) return;
-    const had = popEl.contains(document.activeElement) || document.activeElement === document.body;
-    unpop(false);
-    if (had) [...railNav.querySelectorAll(".icon")].find(x => x.offsetParent)?.focus({ preventScroll: true });
-  }).observe($("#note"), { attributes: true, attributeFilter: ["hidden"] });
   // Following a link in it is being done with it; opening a row's fold is not.
   popEl.addEventListener("click", e => { if (e.target.closest("a[href]")) queueMicrotask(() => unpop()); });
   // The context menu is on <body>, but a row's menu is the popover's own: an

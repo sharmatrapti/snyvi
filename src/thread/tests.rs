@@ -578,6 +578,23 @@ fn a_run_turn_carries_one_line_it_can_type() {
         panic!()
     };
     assert_eq!(m.cmd, "");
+    // What only the reader can do elsewhere is a `do`: a top-up filed as a
+    // `try` asked whether adding credits Looks good. Any other word is refused.
+    let top_up = Ask {
+        kind: "do".into(),
+        text: "Add OpenRouter credits".into(),
+        link: "https://openrouter.ai/settings/credits".into(),
+        ..run("")
+    };
+    assert!(matches!(
+        ask(&mut conn, d, &top_up, 5).unwrap(),
+        Asked::Turn(_)
+    ));
+    let pay = Ask {
+        kind: "pay".into(),
+        ..run("")
+    };
+    assert_eq!(ask(&mut conn, d, &pay, 6).unwrap(), Asked::BadKind);
 }
 
 /// A suggested desk for a folder that has one points at it instead; three

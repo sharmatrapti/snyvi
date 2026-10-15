@@ -24,9 +24,9 @@ the user's next message and are kept on the thread. Your own question tool stays
 user is at it; Home lists it too.";
 
 const HAND_OVER: &str = "Put what blocks you and only the user can do on their On you list: merge (a PR), key \
-(pass key, its name), try (a change only they can try; else say it in your reply), or run (a command you were \
-blocked from: pass cmd, one line; their Run types it here and you get its output). Never ask them to paste a \
-command. One sentence, a link if any.";
+(pass key, its name), try (a change only they can try), run (a command you were blocked from: pass cmd, one \
+line; their Run types it here, you get its output), or do (all else: pay, sign in, approve). Never ask \
+them to paste a command. One sentence, a link if any.";
 
 const SETTLE_ASKS: &str = "Take your open questions off the user's On you list when their message in this \
 conversation answered them. Your hand-overs stay. snyvi says, at their next message, which questions of \
@@ -83,7 +83,7 @@ pub(super) fn specs() -> Vec<Value> {
             "name": "hand_over", "title": "Hand something to the user", "description": HAND_OVER,
             "inputSchema": { "type": "object", "properties": {
                 "text": { "type": "string", "description": "One sentence: what to do." },
-                "kind": { "type": "string", "enum": ["try", "merge", "key", "run"] },
+                "kind": { "type": "string", "enum": ["try", "merge", "key", "run", "do"] },
                 "link": { "type": "string", "description": "A URL or a port, if there is one." },
                 "cmd": { "type": "string", "description": "run only: one command line, exactly as it should run." },
                 "key": { "type": "string", "description": "key only: its name, e.g. CLOUDFLARE_API_TOKEN. Adding it settles this." }

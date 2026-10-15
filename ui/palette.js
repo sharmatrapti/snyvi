@@ -126,6 +126,7 @@ function deskItems(q) {
 const COMMANDS = [
   { cmd: "home", t: "Home", key: "h", s: "What needs you, the desks, and what is waiting" },
   { cmd: "inbox", t: "Inbox", key: "i", s: "Every document, newest first" },
+  { cmd: "corner", t: "On you and Lately", s: `What waits on you, and what came: ${/Mac/.test(navigator.platform) ? "⌃⌥Y" : "Ctrl Alt Y"}`, k: "notifications messages asides" },
   { cmd: "theme", t: "Theme…", s: "The eight, each tried on the window as you move" },
   { cmd: "desk", t: "New desk…", s: "For a project, another folder, or a shell", window: true },
   { cmd: "folder", t: "Open folder…", s: "Read a folder as it is on disk", window: true },
@@ -225,7 +226,7 @@ function pick(it) {
   if (it.cmd === "pair" || it.cmd === "join") { const p = d.peerCtx, m = it.cmd === "join" ? "join" : ""; p.peer().then(x => x.pair(p, "", m), () => p.toast("Could not open the pairing sheet")); return; }
   if (it.cmd) {
     const c = it.cmd;
-    c === "home" ? d.showHome(true) : c === "inbox" ? d.showInbox(true) : c === "quiet" ? d.toggleQuiet() : c === "updates" ? d.checkUpdates() : c === "about" ? d.panel("about") : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
+    c === "home" ? d.showHome(true) : c === "corner" ? d.openCorner() : c === "inbox" ? d.showInbox(true) : c === "quiet" ? d.toggleQuiet() : c === "updates" ? d.checkUpdates() : c === "about" ? d.panel("about") : c === "folder" ? d.act("pick") : c === "connect" ? d.showConnect(true)
       : c === "sidebars" ? d.showSidebars(true) : c === "start" ? d.showStart(true, "") : c === "welcome" ? d.showWelcome(true) : d.openHelp();
     return;
   }

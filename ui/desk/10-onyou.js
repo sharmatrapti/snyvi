@@ -19,8 +19,13 @@
  * (09-thread.js `shown`), and a turn that has gone quiet -- its panel
  * closed, half an hour old, or its panel prompted since -- never rises or
  * rings. With no rail in view (folded, or a narrow window) nothing rises
- * over a panel: the pill lights, in the window's corner. Home lists them
- * all, as it did.
+ * over a panel: the pill lights, in the window's corner.
+ *
+ * It is the one corner every page has (ui/corner.js, plan b0bca0a11f): the
+ * look is corner.js's, and so are the cards that rise from outside -- a page
+ * from another desk, an aside, a friend's word -- an agent's offer, which
+ * is On you here too, and Lately under it in the tray. This file draws them
+ * where the desk's corner is, and hands their clicks back.
  */
 
 /** How long a risen card stays before it settles into the pill. */
@@ -72,12 +77,12 @@ function oyNode() {
   return oyEl;
 }
 
-/** What the pill counts: fresh waiting turns and suggestions, which are in
- *  the accent; and the older ones, which are not. */
+/** What the pill counts: fresh waiting turns, suggestions and an agent's
+ *  offers, which are in amber; and the older ones, which are not. */
 function oyCounts(d, f) {
   const waiting = f.turns.filter(w => shown(w) && !w.answered_at);
   const now = waiting.filter(w => fresh(d, w)).length;
-  return { now: now + f.suggestions.length, old: waiting.length - now };
+  return { now: now + f.suggestions.length + (ctx.corner?.()?.offerCount() || 0), old: waiting.length - now };
 }
 
 /** The pin, in the tray's head (#115): pinned, the tray stays open while
@@ -117,12 +122,13 @@ function trayHtml(d, f, esc, old) {
     : !rows ? `<ul class="dk-turn-list">${turnRows(d, f, esc, true)}</ul>`
     : `<button type="button" class="oy-older" data-a="oy-older" aria-expanded="${oy.older}" ${why}>${old} older</button>` +
       (oy.older ? `<ul class="dk-turn-list">${turnRows(d, f, esc, true)}</ul>` : "");
-  const all = said + older + sugRows(f, d);
+  const K = ctx.corner?.(), offers = K ? K.offersHtml() : "";
+  const all = said + older + (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + sugRows(f, d);
   const title = olderOnly ? `<h3 class="oy-h" ${why}>On you · older</h3>`
     : `<h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>`;
   const close = `<button type="button" class="oy-x" data-a="oy-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${ico("x")}</button>`;
   const head = `<div class="oy-head">${title}<span class="oy-gap"></span>${pinBtn()}${close}</div>`;
-  return `<div class="oy-tray" role="dialog" aria-label="On you" tabindex="-1">${head}<div class="oy-scroll">${all || `<p class="oy-none">Nothing is on you here.</p>`}</div></div>`;
+  return `<div class="oy-tray" role="dialog" aria-label="On you and Lately" tabindex="-1">${head}<div class="oy-scroll">${all || `<p class="oy-none">Nothing is on you here.</p>`}${K ? K.trayHtml() : ""}</div></div>`;
 }
 
 /** Where the corner sits: in the rail's column, at its width, its foot just
@@ -160,17 +166,20 @@ function onYou(d) {
   const card = oy.rise ? riseHtml(d, f, esc) : "";
   if (oy.rise && !card) { oy.rise = 0; oy.more = 0; clearTimeout(oy.timer); }
   const tray = oy.open ? trayHtml(d, f, esc, n.old) : "";
-  const say = n.now ? `On you <span class="n">${n.now}</span>` : n.old ? `${n.old} older` : "On you";
+  // What came from outside rises here too, over a turn's card never.
+  const K = ctx.corner?.(), news = K && !tray && !card ? K.cardHtml(true) : "", lit = !!K?.dot();
+  const say = (n.now ? `On you <span class="n">${n.now}</span>` : n.old ? `${n.old} older` : lit || K?.keep() ? "Lately" : "On you") +
+    (lit ? `<span class="cn-dot" aria-label="something new in Lately"></span>` : "");
   // The open tray is closed by its head's ✕: a pill under it as well said
   // "1 older" a second time, over the rail's last row (the notes' field).
-  const pill = !tray && (card || n.now || n.old)
-    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" data-tip="On you" data-tip-sub="What only you can do on this desk" data-key="ctrl+alt+y">${say}</button>` : "";
+  const pill = !tray && (card || news || n.now || n.old || lit || K?.keep())
+    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" data-tip="On you" data-tip-sub="What only you can do on this desk, and what came lately" data-key="ctrl+alt+y">${say}</button>` : "";
   // A redraw replaces every button: the one the keyboard was on gets the
   // focus back, by what it does and to which row, or a press on a card
   // button dropped the hand to the page's body (W24).
   const was = el.contains(document.activeElement) && document.activeElement.dataset?.a ? keyOf(document.activeElement) : "";
   drawing = true;
-  const drew = drawIn(el, ewHtml(esc) + card + tray + pill);
+  const drew = drawIn(el, news + card + tray + pill);
   drawing = false;
   if (drew && was && !el.contains(document.activeElement)) el.querySelector(was)?.focus({ preventScroll: true });
   // The corner's toasts sit above it while it shows, not on it (toast.js,
@@ -246,14 +255,18 @@ function oyToggle() {
   const at = document.activeElement;
   oy.back = at && !oyEl?.contains(at) ? at : null;
   oy.open = true; oy.rise = 0; clearTimeout(oy.timer);
+  ctx.corner?.()?.opened();
   rail();
   oyEl?.querySelector(".oy-tray")?.focus({ preventScroll: true });
 }
+/** The tray asked for from outside the desk's own buttons: a desktop
+ *  notification's click (`#onyou`), ⌘K. */
+export function openTray() { if (!oy.open && current()) oyToggle(); }
 /** The pin: on, the tray opens if it was a risen card, and stays; off, it
  *  stays open until a click elsewhere, as an unpinned tray does. */
 function oyPin(d) {
   setPinned(d.id, !oy.pin);
-  if (oy.pin && !oy.open) { oy.open = true; oy.rise = 0; clearTimeout(oy.timer); }
+  if (oy.pin && !oy.open) { oy.open = true; oy.rise = 0; clearTimeout(oy.timer); ctx.corner?.()?.opened(); }
   rail();
   oyEl?.querySelector(".oy-pin")?.focus({ preventScroll: true });
 }
@@ -289,77 +302,37 @@ document.addEventListener("keydown", e => {
   oyClose(true);
 }, true);
 
-/** Leaving the desk: the corner goes with it, and a document from elsewhere
- *  it held (11-elsewhere.js). What it has seen stays, in `oySeen`, and the
- *  pin, in this browser. */
+/** Leaving the desk: the corner goes with it, to be the page's own again
+ *  (ui/corner.js). What it has seen stays, in `oySeen`, and the pin, in
+ *  this browser. */
 function forgetOnYou() {
-  clearTimeout(oy.timer); clearTimeout(ew.timer); ew.docs = []; ew.first = null;
+  clearTimeout(oy.timer);
   Object.assign(oy, { open: false, older: false, rise: 0, drawnRise: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, more: 0 });
   oyEl?.remove(); oyEl = null;
   document.documentElement.style.setProperty("--oy-h", "0px");
 }
 
-/** A new turn's sound, and in the desktop window, when it is not the one in
- *  front, the taskbar's nudge: once, the desktop's quiet kind, which a click
- *  on the window clears. A window older than this page has no such
- *  permission and says no; nothing else changes. */
-function ring() {
-  chime();
-  if (!document.hasFocus()) window.__TAURI_INTERNALS__?.invoke("plugin:window|request_user_attention", { label: "main", value: { type: "Informational" } }).catch(() => {});
-}
-
-/** A soft two-note chime, made here rather than loaded: quiet, short, and
- *  never in quiet mode. A page may sound only after the reader has clicked
- *  in it; before that the card still rises, silently. */
-let audio = null;
-function chime() {
-  if (document.documentElement.dataset.mascot === "quiet") return;
-  try {
-    audio ||= new AudioContext();
-    if (audio.state === "suspended") audio.resume().catch(() => {});
-    const t = audio.currentTime;
-    for (const [hz, at] of [[880, 0], [1318.5, 0.1]]) {
-      const o = audio.createOscillator(), g = audio.createGain();
-      o.type = "sine"; o.frequency.value = hz;
-      g.gain.setValueAtTime(0.0001, t + at);
-      g.gain.exponentialRampToValueAtTime(0.05, t + at + 0.012);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.22);
-      o.connect(g).connect(audio.destination);
-      o.start(t + at); o.stop(t + at + 0.24);
-    }
-  } catch {}
-}
+/** A new turn's sound, and the taskbar's nudge in a window not in front:
+ *  the corner's, one chime for every page (ui/corner.js `ring`). */
+function ring() { ctx.corner?.()?.ring(); }
 
 const ONYOU_CSS = `
-.oy { position: fixed; right: 20px; bottom: 20px; z-index: var(--z-toast); display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
-.oy > * { pointer-events: auto; }
 /* In the rail's column (oyPlace): its width, its foot above the rail's own
    last lines; the card and the tray as wide as the column. */
 .oy.in-rail { left: var(--oy-l); right: auto; bottom: var(--oy-b); width: var(--oy-w); align-items: stretch; }
-.oy.in-rail > .oy-card, .oy.in-rail > .oy-tray, .oy.in-rail > .oy-doc { width: auto; }
+.oy.in-rail > .oy-card, .oy.in-rail > .oy-tray { width: auto; }
 .oy.in-rail > .oy-pill { align-self: flex-end; }
 .oy.in-rail .oy-scroll { max-height: calc(var(--oy-max) - 40px); }
-.oy-pill { padding: 3px 10px; border: 1px solid var(--rule-2); border-radius: var(--r-pill); background: var(--bg-raise); box-shadow: var(--shadow); font-size: var(--fs-micro); color: var(--fg-2); }
-.oy-pill.on { border-color: var(--accent); color: var(--fg); }
-.oy-pill .n { font-weight: 600; color: var(--accent); }
-.oy-pill:hover, .oy-pill[aria-expanded="true"] { color: var(--fg); border-color: var(--accent); }
 /* The card that rises: one turn, small. Its question is said whole (#114):
    cut at two lines, a key's steps ended in "then..." with no way to read on.
    A long one scrolls in its card rather than push the card off the screen. */
-.oy-card { position: relative; width: 300px; box-shadow: var(--shadow); border-radius: var(--r-sm); }
 .oy-card > .dk-turn-list { margin: 0; }
-.oy-card.rise { animation: oy-in var(--dur-move) var(--ease-out); }
 .oy-card .tn-q { max-height: 9.6em; overflow-y: auto; overflow-wrap: anywhere; }
 .oy.in-rail .oy-card .tn-q { max-height: 16em; }
 .oy-more { display: block; width: 100%; padding: 3px 8px; border: 1px solid var(--rule); border-top: 0; border-radius: 0 0 var(--r-sm) var(--r-sm); background: var(--bg-raise); font-size: var(--fs-micro); color: var(--fg-2); text-align: left; }
 .oy-more:hover { color: var(--fg); }
-@keyframes oy-in { from { opacity: 0; transform: translateY(12px) scale(.96); } to { opacity: 1; transform: none; } }
-/* The tray: its head (On you, and the pin) stays; the rest scrolls under it. */
-.oy-tray { position: relative; width: 320px; box-sizing: border-box; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--bg); box-shadow: var(--shadow); animation: oy-in var(--dur-move) var(--ease-out); }
-.oy-head { display: flex; align-items: center; gap: 2px; padding: 6px 6px 2px 10px; }
-.oy-gap { flex: 1; }
-.oy-head .oy-h { margin: 0; }
-.oy-scroll { max-height: 60vh; overflow-y: auto; padding: 0 10px 4px; }
+/* The tray's look is corner.js's: its head (On you, and the pin) stays;
+   the rest scrolls under it. */
 /* In the tray a turn is a row, ruled off from the next, not a card in the
    tray's box: a box in a box, at the rail's width, wrapped its answers onto
    two lines. The risen card, alone over the rail, keeps its card. */
@@ -367,19 +340,14 @@ const ONYOU_CSS = `
 .oy-tray .dk-turn, .oy-tray .dk-sugcard { padding: 8px 0; border: 0; border-radius: 0; background: none; }
 .oy-tray .dk-turn-list > li + li, .oy-tray .dk-turn-list + .dk-turn-list > li:first-child { border-top: 1px solid var(--rule); }
 .oy-tray .dk-turn:not(.grp) > .tn-acts > .tn-x, .oy-tray .tn-gx { top: 6px; right: -4px; }
-.oy-pin, .oy-x { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
-.oy-pin:hover, .oy-x:hover { background: var(--rule-2); color: var(--fg); }
+.oy-pin { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
+.oy-pin:hover { background: var(--rule-2); color: var(--fg); }
 .oy-pin.on { color: var(--accent); }
 .oy-pin.on svg { fill: currentColor; }
-.oy-h { margin: 2px 2px 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); text-transform: uppercase; letter-spacing: .04em; }
-.oy-scroll .oy-h { margin-top: 10px; }
-.oy-scroll > .oy-h:first-child { margin-top: 2px; }
 .oy-older { display: block; margin: 8px 2px 0; font-size: var(--fs-micro); color: var(--fg-3); text-decoration: underline dotted; }
-.oy-none { margin: 4px; font-size: var(--fs-small); color: var(--fg-3); }
 /* The pill floats over the rail's foot: the rail keeps that much room at
    its end, always, so its last row -- the notes' field -- scrolls clear of
    the pill rather than sit under it, and nothing moves as the pill comes. */
 #toc:has(> .dk-rail) { padding-bottom: 40px; }
 .oy .dk-note.gone { list-style: none; display: flex; align-items: center; gap: 6px; border: 1px dashed var(--rule-2); background: var(--bg-raise); }
-@media (prefers-reduced-motion: reduce) { .oy-card.rise, .oy-tray { animation: none; } }
 `;

@@ -267,12 +267,14 @@ async function main() {
     await section("arrivals, while reading", () => queueRows(p, url, arrive));
     await section("a draft, then the send", () => draftRows(p, url, arrive));
     await section("a delete, and the way back", () => deleteRows(p, arrive));
+    // Before any other section sends an aside: only the first in ten minutes
+    // lights up, and only one that lights up rises (src/aside.rs).
+    await section("an aside, in the corner", () => asideRows(p, base, token));
     await section("nothing lost when snyvi says no", () => lossRows(p, base, token, arrive, browsed));
     await section("by keyboard, and back", () => reachRows(p, base, token, arrive));
     await section("the ✕ over what is read", () => backRows(p, browsed));
     await section("back and forward", () => navRows(p));
     await section("the sidebars, arranged", () => sidebarsRows(p));
-    await section("an aside, closed", () => asideRows(p, base, token));
     await section("one system: tips, answers, one Undo", () => designRows(p, url, arrive));
     await section("a folder, in the file manager", () => revealRows(p, browsed, folder, tmp));
     await section("a link into a folder", () => browseRows(p, browsed));
@@ -759,8 +761,8 @@ async function sideRailRows(p, url, arrive) {
     folded.side !== "0" ? "\\ did not fold it" : folded.width !== 44 ? `the rail is ${folded.width} px` : !folded.icons ? "no icons on it" : folded.tree ? "the tree is still drawn in 44 px" : "44 px, icons only"]);
 
   const opened = [], broke = [];
-  for (const [sec, id] of [["inbox", "inbox-row"], ["tree", "tree"], ["desks", "desk-nav"], ["browse", "browse-nav"], ["note", "note"]]) {
-    if (!(await p.ui("vis", `#rail-nav [data-pop="${sec}"]`))) { if (sec !== "note") broke.push(`${sec}: no icon`); continue; }
+  for (const [sec, id] of [["inbox", "inbox-row"], ["tree", "tree"], ["desks", "desk-nav"], ["browse", "browse-nav"]]) {
+    if (!(await p.ui("vis", `#rail-nav [data-pop="${sec}"]`))) { broke.push(`${sec}: no icon`); continue; }
     await p.clickOn(`#rail-nav [data-pop="${sec}"]`);
     const m = await p.ev(`({ in: !!document.querySelector("#pop > #${id}"), shown: window.__ui.vis("#pop"), left: Math.round(document.querySelector("#pop").getBoundingClientRect().left), focus: window.__ui.focus() })`);
     await p.press("Escape");
@@ -1031,8 +1033,10 @@ async function draftRows(p, url, arrive) {
       : "in the tree, unmarked; no bar, Recent not lit, no wash, nothing counted"]);
 
   const sent = await arrive({ name: "draft.md", body, origin: "mcp", title: "The draft, sent" });
+  // The mark comes with the event; the title with the project's rows, a read later.
   const came = await until(`!!document.querySelector('#tree a.new[data-id="${sent.id}"]') && !!document.querySelector("#inbox-row .t-inbox.new")`, 30);
   const washes = await p.ev(`(() => { const li = document.querySelector('#tree li.t-doc.wash:has(> a[data-id="${sent.id}"])'); return li ? li.getAnimations().filter(x => x.animationName === "land").length : -1; })()`);
+  await until(`document.querySelector('#tree a[data-id="${sent.id}"] .title')?.textContent === "The draft, sent"`, 30);
   const title = await p.ev(`document.querySelector('#tree a[data-id="${sent.id}"] .title')?.textContent || ""`);
   rows.push(["the send takes the draft over, and arrives", sent.id === draft.id && came && washes === 1 && title === "The draft, sent",
     sent.id !== draft.id ? "a second row, not the draft" : !came ? "not marked new, or Recent not lit" : washes !== 1 ? `${washes < 0 ? "no" : washes} wash on the row` : title !== "The draft, sent" ? `the row says "${title}"`
@@ -1411,14 +1415,14 @@ async function lossRows(p, base, token, arrive, browsed) {
   rows.push(["mark all read refused → queue still there", await refused(p) && !!t1?.alert && !t1.face && bar1 && w1 === before,
     !(await refused(p)) ? "the click never asked the daemon" : !t1 ? "nothing was said" : !t1.alert ? `it said "${t1.text}", as if it had worked` : t1.face ? "the error wears a face" : !bar1 ? "the queue bar went anyway" : `"${t1.text}", no face, the bar and ${w1} waiting still there`]);
 
-  // News while the error stands: a newer version of the open document.
+  // News while the error stands: a newer version of the open document. It
+  // rises in the corner (1.38), so the error is not pushed out by it.
   await arrive({ name: "loss-a.md", body: "# Loss A\n\nThe document being read, again.\n" });
-  await sleep(1500);
+  const news = await until(`/newer version/i.test(document.querySelector("#cn")?.textContent || "")`, 30);
   const t2 = await said();
   await p.clickOn("#toasts .toast .tx");
-  const news = await until(`/newer version/.test(document.querySelector("#toasts .toast .t")?.textContent || "")`, 20);
-  rows.push(["error toast survives an arrival", t2?.alert && news,
-    !t2?.alert ? `the arrival took its place: "${t2?.text}"` : news ? "the error stayed until its ✕, and then the arrival was said" : "the arrival was dropped, not held"]);
+  rows.push(["error toast survives an arrival, which rises in the corner", t2?.alert && news,
+    !t2?.alert ? `the arrival took its place: "${t2?.text}"` : news ? "the error stayed until its ✕, and the newer version rose in the corner" : "the arrival was dropped: not in the corner"]);
 
   // Mark all read, done: the bar that was clicked says so and holds the
   // Undo; it holds against news too, and brings them back.
@@ -1528,8 +1532,8 @@ async function lossRows(p, base, token, arrive, browsed) {
   rows.push(["inbox fetch refused → Retry line, not Welcome", await refused(p) && !!inbox.line && !inbox.welcome && listed,
     !(await refused(p)) ? "the Inbox never asked the daemon" : inbox.welcome ? "the page is Welcome, as if the library were empty" : !inbox.line ? "nothing says it could not load" : listed ? `"${inbox.line}", and the Retry brought the list` : "the Retry did not bring the list"]);
 
-  // An aside's Undo, refused: the daemon still holds it closed, so the card
-  // must not show it again; it shows the ghost, saying so.
+  // An aside's Undo, refused: the daemon still holds it removed, so the
+  // corner's row must not show it again; it says so, where the Undo was.
   const say = async text => {
     const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ text, sender: "bench-agent" }) });
     return (await r.json()).note;
@@ -1537,18 +1541,21 @@ async function lossRows(p, base, token, arrive, browsed) {
   const aside = await say("An aside whose Undo will be refused.");
   await p.goto(`${origin}/`);
   await p.pointerAway();
-  await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(aside.text)}`);
-  await p.hoverOn("#note .note-now");
+  await until(`!!document.querySelector("#cn .oy-pill, #cn .cn-card")`);
+  await p.ev(`document.querySelector("#cn [data-a=cn-later]")?.click(); 1`);
+  await p.clickOn("#cn .oy-pill");
+  const row = `#cn .cn-row:has(.cn-t) .cn-rx[data-r="${aside.id}"]`;
+  await until(`!!document.querySelector(${JSON.stringify(row)})`);
+  await p.ev(`document.querySelector(${JSON.stringify(row)}).click(); 1`);
+  await sleep(500);
+  await refuse(p, "POST", /^\/api\/lately\/restore$/);
+  await p.ev(`document.querySelector("#cn .cn-gone .cn-undo")?.click(); 1`);
   await sleep(300);
-  await p.clickOn("#note .note-x");
-  await sleep(500);   // past the first moments, when a second click is the double-click's, not an Undo
-  await refuse(p, "POST", /^\/api\/notes\/restore$/);
-  await p.clickOn("#note [data-note-undo]");
-  await sleep(300);
-  const card = await p.ev(`(() => { const g = document.querySelector("#note .note-ghost"); return g ? g.textContent : document.querySelector("#note .note-now p")?.textContent || null; })()`);
+  const card = await p.ev(`document.querySelector("#cn .cn-gone")?.textContent || null`);
   const still = (await (await fetch(`${base}/api/notes`)).json()).notes.find(n => n.id === aside.id)?.dismissed === true;
-  rows.push(["aside undo refused → card still shows the ghost", await refused(p) && /Could not bring it back/.test(card || "") && still,
-    !(await refused(p)) ? "the Undo never asked the daemon" : !/Could not bring it back/.test(card || "") ? `the card reads "${card}"` : "the ghost says so, and the daemon still has it closed"]);
+  rows.push(["aside undo refused → its row says so, the Undo a Retry", await refused(p) && /Could not bring it back/.test(card || "") && still,
+    !(await refused(p)) ? "the Undo never asked the daemon" : !/Could not bring it back/.test(card || "") ? `the row reads "${card}"` : "the row says so, and the daemon still has it removed"]);
+  await p.press("Escape");
   await p.pointerAway();
   return rows;
 }
@@ -1601,26 +1608,29 @@ async function reachRows(p, base, token, arrive) {
   rows.push(["Del on a row → focus on Undo; Enter brings it back", !!undone,
     !onUndo ? `the focus is on ${JSON.stringify(await p.ui("focus"))}, not the Undo` : undone ? "the hand was on the Undo, and Enter brought the document back" : "Enter on the Undo did not bring it back"]);
 
-  // An older aside in the trail is reached by Tab and opened by Enter.
+  // An older aside in Lately is reached by Ctrl Alt Y and Tab, and opened
+  // by Enter (the corner, plan b0bca0a11f).
   const say = async (text, about) => {
     const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify({ text, sender: "bench-agent", ...(about ? { about } : {}) }) });
     return (await r.json()).note;
   };
   await say("The first older aside, about the reach document.", d.id);
   await say("The second older aside, about it too.", d.id);
-  const now = await say("The newest aside, on the card.");
+  await say("The newest aside.");
   await p.goto(`${origin}/`);
   await p.pointerAway();
-  await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(now.text)}`);
-  await p.ev(`document.querySelector("#note .note-now").focus()`);
-  await sleep(500);
-  await p.press("⇧Tab", { raw: true });   // Close all
-  await p.press("⇧Tab", { raw: true });   // the aside nearest the card, the first one sent
-  const on = await p.ev(`document.activeElement?.closest(".note-trail li")?.querySelector(".note-t")?.textContent || null`);
+  await until(`!!document.querySelector("#cn .oy-pill, #cn .cn-card")`);
+  await p.press("y", { ctrl: true, alt: true });
+  await until(`!!document.querySelector("#cn .oy-tray")`);
+  let on = null;
+  for (let i = 0; i < 12 && !/first older aside/.test(on || ""); i++) {
+    await p.press("Tab", { raw: true });
+    on = await p.ev(`document.activeElement?.matches("#cn .cn-t") ? document.activeElement.textContent : null`);
+  }
   await p.press("Enter");
   const went = await until(`document.title === ${JSON.stringify(d.title)}`);
-  rows.push(["Tab reaches an older aside in the trail; Enter opens it", /first older aside/.test(on || "") && went,
-    !on ? `Tab went to ${JSON.stringify(await p.ui("focus"))}, not the trail` : !/first older aside/.test(on) ? `Tab reached "${on}"` : went ? "reached, and Enter opened the document it is about" : `Enter left the page on "${await p.ev("document.title")}"`]);
+  rows.push(["Ctrl Alt Y and Tab reach an older aside in Lately; Enter opens it", /first older aside/.test(on || "") && went,
+    !on ? `Tab went to ${JSON.stringify(await p.ui("focus"))}, not Lately` : !/first older aside/.test(on) ? `Tab reached "${on}"` : went ? "reached, and Enter opened the document it is about" : `Enter left the page on "${await p.ev("document.title")}"`]);
   await p.pointerAway();
   return rows;
 }
@@ -1754,10 +1764,6 @@ async function navRows(p) {
   return rows;
 }
 
-/** An aside can be closed: the ✕ on its card, or Esc on it, and the card
- *  stands as one line holding the Undo for 6 s, as a removed document's row
- *  does. The daemon only flags it, so Undo is real, and a closed one is
- *  closed in every page. The next aside takes the card once the offer ends. */
 /** /sidebars: a move saves, the left sidebar follows, and the page read
  *  again says the same. 1.27.0 moved the row and saved nothing: the page's
  *  stylesheet was named CSS, which hid the browser's CSS.escape, and the
@@ -1812,6 +1818,10 @@ async function sidebarsRows(p) {
   return rows;
 }
 
+/** An aside in the corner (plan b0bca0a11f): it rises, a click elsewhere
+ *  settles it into the pill with a dot, and the pill's tray lists it under
+ *  Lately. Its ✕ there leaves one line holding the Undo, as a removed
+ *  document's row does; the daemon only flags it, so Undo is real. */
 async function asideRows(p, base, token) {
   const rows = [];
   const until = async (expr, tries = 40) => { for (let i = 0; i < tries; i++) { if (await p.ev(expr)) return true; await sleep(100); } return false; };
@@ -1825,64 +1835,66 @@ async function asideRows(p, base, token) {
     return (await r.json()).note;
   };
   const daemon = async () => (await (await fetch(`${base}/api/notes`)).json()).notes;
-  const card = () => p.ev(`(() => { const n = document.querySelector("#note"); if (n.hidden) return null;
-    const g = n.querySelector(".note-ghost"), c = n.querySelector(".note-now p");
-    return { ghost: g ? g.textContent : null, text: c ? c.textContent : null }; })()`);
-
-  const older = await say("An older aside, for the trail.");
-  const newer = await say("A newer aside, to close.");
+  const lately = async () => (await (await fetch(`${base}/api/lately`)).json());
+  const row = id => `#cn .cn-rx[data-r="${id}"]`;
+  // The quiet is the daemon's: an aside within ten minutes of one that lit
+  // up does not light up, and does not rise. Seen, so the dot starts out.
   await p.goto(`${base}/`);
   await p.pointerAway();
-  await until(`!!document.querySelector("#note .note-now")`);
-  await p.hoverOn("#note .note-now");
-  await sleep(300);
-  await p.clickOn("#note .note-x");
-  await sleep(300);
-  const c1 = await card(), d1 = await daemon();
-  const flagged = d1.find(n => n.id === newer.id)?.dismissed === true;
-  rows.push(["the ✕ closes the aside, and Undo stands in its place", !!c1 && /Aside closed/.test(c1.ghost || "") && flagged,
-    !c1 ? "the card went with nothing in its place" : !c1.ghost ? `the card still reads "${c1.text}"` : !flagged ? "the daemon was not told" : "one line, \"Aside closed · Undo\", and the daemon keeps it flagged"]);
+  await p.ev(`fetch("/api/lately/seen", { method: "POST" }).then(r => r.status)`);
 
-  await p.clickOn("#note [data-note-undo]");
-  await sleep(300);
-  const c2 = await card(), d2 = await daemon();
-  const back = c2?.text === newer.text && d2.find(n => n.id === newer.id)?.dismissed === false;
-  rows.push(["Undo puts it back", back, back ? "the same aside on the card, and unflagged in the daemon" : `the card reads ${JSON.stringify(c2)}`]);
+  const lit = await say("An aside that rises in the corner.");
+  const rose = await until(`document.querySelector("#cn .cn-card .cn-text")?.textContent === ${JSON.stringify(lit.text)}`);
+  const by = await p.ev(`document.querySelector("#cn .cn-card .cn-from")?.textContent || ""`);
+  rows.push(["an aside rises in the corner, its byline first who spoke", rose && /^bench-agent/.test(by),
+    !rose ? `the corner reads ${JSON.stringify(await p.ev(`document.querySelector("#cn")?.textContent || null`))}` : !/^bench-agent/.test(by) ? `the byline reads "${by}"` : `"${by}"`]);
 
-  await p.ev(`document.querySelector("#note .note-now").focus()`);
+  // A click elsewhere settles it into the pill, its dot lit: nothing that
+  // came goes on a timer, or on a click (plan b0bca0a11f).
+  await p.click(400, 300);
+  const settled = await until(`!document.querySelector("#cn .cn-card") && !!document.querySelector("#cn .oy-pill .cn-dot")`);
+  rows.push(["a click elsewhere settles it into the pill, the dot lit", settled,
+    settled ? "the card went into the pill, which holds a dot and no number" : `the corner reads ${JSON.stringify(await p.ev(`document.querySelector("#cn")?.innerHTML.slice(0, 160) || null`))}`]);
+
+  await p.clickOn("#cn .oy-pill");
+  const listed = await until(`!!document.querySelector(${JSON.stringify(row(lit.id))})`);
+  await sleep(300);
+  const seen = !(await lately()).unseen;
+  rows.push(["the pill opens the tray: the aside is in Lately, and seen", listed && seen,
+    !listed ? "the tray has no row for it" : !seen ? "the daemon still has it unseen" : "listed under Lately, and the daemon has it seen"]);
+
+  await p.ev(`document.querySelector(${JSON.stringify(row(lit.id))}).click(); 1`);
+  await sleep(300);
+  const gone = await p.ev(`document.querySelector("#cn .cn-gone")?.textContent || null`);
+  const flagged = (await daemon()).find(n => n.id === lit.id)?.dismissed === true;
+  rows.push(["✕ removes it, and Undo stands in its row", /Removed/.test(gone || "") && flagged,
+    !gone ? "the row went with nothing in its place" : !flagged ? "the daemon was not told" : "one line, \"Removed · Undo\", and the daemon keeps it flagged"]);
+
+  await p.ev(`document.querySelector("#cn .cn-gone .cn-undo").click(); 1`);
+  await sleep(300);
+  const back = !!(await p.ev(`!!document.querySelector(${JSON.stringify(row(lit.id))})`)) && (await daemon()).find(n => n.id === lit.id)?.dismissed === false;
+  rows.push(["Undo puts it back", back, back ? "the row is back, and unflagged in the daemon" : "the row did not come back"]);
+
+  await p.ev(`document.querySelector("#cn .oy-tray")?.focus(); 1`);
   const was = await p.ev("location.pathname");
   await p.press("Escape");
   await sleep(300);
-  const c3 = await card(), stayed = await p.ev(`location.pathname === ${JSON.stringify(was)}`);
-  const onUndo = await p.ev(`!!document.activeElement?.matches("#note [data-note-undo]")`);
-  rows.push(["Esc on the card closes it, and only that", /Aside closed/.test(c3?.ghost || "") && stayed && onUndo,
-    !stayed ? `Esc also left the page for ${await p.ev("location.pathname")}` : !c3?.ghost ? "Esc did not close it" : onUndo ? "closed, the page stayed, and the hand is on Undo" : "closed, but the focus went back to the page's start"]);
+  const closed = await p.ev(`!document.querySelector("#cn .oy-tray")`), stayed = await p.ev(`location.pathname === ${JSON.stringify(was)}`);
+  rows.push(["Esc closes the tray, and only that", closed && stayed,
+    !stayed ? `Esc also left the page for ${await p.ev("location.pathname")}` : !closed ? "Esc did not close it" : "closed, and the page stayed"]);
 
-  await p.pointerAway();
-  await p.ev(`document.activeElement?.blur()`);
-  const next = await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(older.text)}`, 90);
-  rows.push(["when the offer ends, the next aside has the card", next, next ? "the older aside, after 6 s" : `the card reads ${JSON.stringify(await card())}`]);
-
-  await say("One more, so there is a trail to close.");
-  await until(`!!document.querySelector("#note .note-all")`);
-  await p.hoverOn("#note .note-now");
-  await sleep(500);
-  await p.clickOn("#note [data-note-all]");
-  await sleep(300);
-  const c4 = await card();
-  await p.pointerAway();
-  const empty = await until(`document.querySelector("#note").hidden`, 70);
-  const allFlagged = (await daemon()).every(n => n.dismissed);
-  rows.push(["Close all, from the trail", /Asides closed/.test(c4?.ghost || "") && empty && allFlagged,
-    !c4?.ghost ? "no Undo stood after Close all" : !empty ? "the card is still there after the offer" : !allFlagged ? "the daemon still has one open" : "one Undo for all of them, then no card at all"]);
-
-  const fresh = await say("A new aside after closing them all.");
-  const shows = await until(`document.querySelector("#note .note-now p")?.textContent === ${JSON.stringify(fresh.text)}`);
-  rows.push(["a new aside still shows", shows, shows ? "closing is not muting" : `the card reads ${JSON.stringify(await card())}`]);
-  // Read, the way a reader does: an aside left waiting keeps the logo
+  // Within the quiet: kept, the dot lit, and nothing rises.
+  const quiet = await say("A quiet aside, inside the ten minutes.");
+  const dotted = await until(`!!document.querySelector("#cn .oy-pill .cn-dot")`);
+  const roseQuiet = await p.ev(`!!document.querySelector("#cn .cn-card")`);
+  const kept = (await lately()).rows.some(r => r.id === quiet.id);
+  rows.push(["a quiet aside is kept and dotted, and does not rise", dotted && !roseQuiet && kept,
+    !kept ? "the daemon did not keep it" : roseQuiet ? "it rose, inside the quiet" : !dotted ? "the pill has no dot" : "in Lately, the pill dotted, no card"]);
+  // Seen, the way a reader does: an aside left waiting keeps the logo
   // blinking, and the rows after this one count every animation that runs.
-  await p.hoverOn("#note .note-now");
-  await sleep(1000);
+  await p.clickOn("#cn .oy-pill");
+  await sleep(300);
+  await p.press("Escape");
   await p.pointerAway();
   return rows;
 }
@@ -2347,15 +2359,21 @@ async function deskRows(cdp, base, token) {
       !rang ? "no ! on the desk or the head" : !after.rowA ? "the desk's row was drawn again rather than its mark" : !after.row || !after.lit ? "the row under the pointer was replaced" : "the ! on the desk and on the head, and every row is the row it was"]);
 
     // An aside sent from a panel is a way back to it. From the other
-    // desk, a click on the card opens this one with that panel focused.
+    // desk, a click on its row in the corner's Lately opens this one with
+    // that panel focused (it may be inside the daemon's quiet, so it is
+    // opened from the tray rather than waited for as a card).
     second = (await post(`/api/desks/${da}/panes`)).pane.id;
     await p.clickOn(`a[data-desk="${db}"]`);
     await until(`location.pathname === "/desk/${db}"`);
     const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify({ text: "Four evenings on that one, and it held.", sender: "bench-agent", pane: second }) });
-    const from = r.ok && (await r.json()).note.from;
-    const led = await until(`!!document.querySelector('#note .note-now[data-desk="${da}"][data-slot="2"]')`);
-    if (led) await p.clickOn("#note .note-now p");
+    const note = r.ok && (await r.json()).note, from = note && note.from;
+    await until(`!!document.querySelector("#onyou .oy-pill, #onyou .cn-card")`);
+    await p.ev(`document.querySelector("#onyou [data-a=cn-later]")?.click(); 1`);
+    await p.press("y", { ctrl: true, alt: true });
+    const go = `#onyou .cn-t[data-a="cn-go"][data-r="${note && note.id}"]`;
+    const led = !!from && from.id === da && from.slot === 2 && await until(`!!document.querySelector(${JSON.stringify(go)})`);
+    if (led) await p.clickOn(go);
     const there = led && await until(`location.pathname === "/desk/${da}" && document.querySelector(".pn.on .pn-body")?.getAttribute("aria-label") === "Panel 2"`);
     rows.push(["an aside from a panel goes back to that panel", !!there,
       !from ? "the daemon did not say where the aside came from" : !led ? "the card does not lead to the panel" : !there ? `the click landed on ${await p.ev("location.pathname")}, not panel 2 of still-a` : "the click opened still-a with panel 2 focused"]);
@@ -2371,10 +2389,10 @@ async function deskRows(cdp, base, token) {
     rows.push(["a desk has no arrivals bar or slot; its rail lists what it sent", listed && !hd.bar && !hd.slot,
       hd.bar ? "the queue bar lay over the desk's head" : hd.slot ? "the head still has an arrivals slot" : !listed ? "the rail's Documents did not list the panel's document" : "no bar, no slot, and the rail lists it"]);
     // 1.35: that was still-a's first page, and a desk's first rises once,
-    // saying where pages stay (desk/11-elsewhere.js `firstHtml`). Later
+    // saying where pages stay (desk/11-elsewhere.js, ui/corner.js). Later
     // takes it down, so the rows below start from a quiet corner.
     const firstRose = !!mine && await until(`/sent this desk's first page/.test(document.querySelector("#onyou .oy-doc .oy-from")?.textContent || "")`, 40);
-    if (firstRose) { await sleep(500); await p.clickOn('#onyou [data-a="ew-later"]'); }
+    if (firstRose) { await sleep(500); await p.clickOn('#onyou [data-a="cn-later"]'); }
     const firstSettled = firstRose && await until(`!document.querySelector("#onyou .oy-doc")`, 30);
     rows.push(["a desk's first page rises once and says where pages stay; Later takes it down", firstRose && firstSettled,
       !firstRose ? "no card said it was this desk's first page" : !firstSettled ? "Later left the card up" : "it rose, said Documents, and Later took it down"]);
@@ -2391,18 +2409,36 @@ async function deskRows(cdp, base, token) {
     const away = (await post("/api/docs", { content: "# There\n\nFrom still-b.", title: "Sent from still-b", origin: "mcp", pane: third }, TK)).doc;
     const rose = !!away && await until(`/still-b · panel 1 sent a document/.test(document.querySelector("#onyou .oy-doc .oy-from")?.textContent || "") && /Sent from still-b/.test(document.querySelector("#onyou .oy-doc .oy-title")?.textContent || "")`, 40);
     // Once it has risen: a press mid-rise lands where the button is going.
-    if (rose) { await sleep(500); await p.clickOn('#onyou [data-a="ew-later"]'); }
+    if (rose) { await sleep(500); await p.clickOn('#onyou [data-a="cn-later"]'); }
     const settled = rose && await until(`!document.querySelector("#onyou .oy-doc") && document.querySelector('a[data-desk="${db}"] .end .k')?.textContent === "1"`, 30);
     const settledSaid = settled ? "" : JSON.stringify(await p.ev(`({ card: !!document.querySelector("#onyou .oy-doc"), row: document.querySelector('a[data-desk="${db}"] .end')?.textContent || "" })`));
     const away2 = (await post("/api/docs", { content: "# Again\n\nFrom still-b.", title: "Again from still-b", origin: "mcp", pane: third }, TK)).doc;
-    const rose2 = !!away2 && await until(`!!document.querySelector('#onyou [data-a="ew-open"]')`, 40);
-    if (rose2) { await sleep(500); await p.clickOn('#onyou [data-a="ew-open"]'); }
+    const rose2 = !!away2 && await until(`!!document.querySelector('#onyou [data-a="cn-card-go"]')`, 40);
+    if (rose2) { await sleep(500); await p.clickOn('#onyou [data-a="cn-card-go"]'); }
     const opened2 = rose2 && await until(`location.pathname === "/d/${away2 && away2.id}"`, 40);
     rows.push(["a document from another desk rises here; Later leaves it counted on its desk, Open reads it", !ownRose && rose && settled && opened2,
       ownRose ? "this desk's own document rose in the corner" : !rose ? "no card said still-b's panel sent a document" : !settled ? `Later did not leave a count of 1 on still-b's row: ${settledSaid}` :
       !opened2 ? `Open landed on ${await p.ev("location.pathname")}` : "it rose over this desk, Later left a count of 1 on still-b, and Open read the next one"]);
     if (opened2) { await p.ev("history.back(), 1"); await until(`location.pathname === "/desk/${da}"`, 30); }
     await p.ev(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), 1`);
+    await p.pointerAway();
+
+    // 1.38, the one the reader lost: a page from another desk rises while
+    // they work in a panel, and a click into the panel used to take it away
+    // for good. Now it settles into the pill, dotted, and the tray holds it
+    // under Lately, where Open reads it (plan b0bca0a11f).
+    const lost = (await post("/api/docs", { content: "# Missed\n\nFrom still-b.", title: "Missed from still-b", origin: "mcp", pane: third }, TK)).doc;
+    const rose3 = !!lost && await until(`/Missed from still-b/.test(document.querySelector("#onyou .oy-doc .oy-title")?.textContent || "")`, 40);
+    if (rose3) { await sleep(400); await p.clickOn(".dk .pn .pn-body"); }
+    const dotted = rose3 && await until(`!document.querySelector("#onyou .oy-doc") && !!document.querySelector("#onyou .oy-pill .cn-dot")`, 30);
+    if (dotted) await p.clickOn("#onyou .oy-pill");
+    const inTray = `#onyou .oy-tray .cn-lately [data-a="cn-go"][data-r]`;
+    const kept = dotted && await until(`[...document.querySelectorAll(${JSON.stringify(inTray)})].some(b => /Missed from still-b/.test(b.textContent))`, 30);
+    if (kept) await p.ev(`[...document.querySelectorAll(${JSON.stringify(inTray)})].find(b => /Missed from still-b/.test(b.textContent)).click(), 1`);
+    const read = kept && await until(`location.pathname === "/d/${lost && lost.id}"`, 30);
+    rows.push(["a page from another desk, missed, settles into the pill; the tray holds it, Open reads it", !!read,
+      !rose3 ? "it never rose" : !dotted ? "a click into the panel left no dotted pill" : !kept ? "the tray has no Lately row for it" : !read ? `its row opened ${await p.ev("location.pathname")}` : "settled, dotted, kept under Lately, and read from there"]);
+    if (read) { await p.ev("history.back(), 1"); await until(`location.pathname === "/desk/${da}"`, 30); }
     await p.pointerAway();
   } finally {
     if (second) await post(`/api/panes/${second}/stop`).catch(() => {});
@@ -2733,16 +2769,19 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     const framed = await until(`!!document.querySelector("#doc .preview iframe")`);
     rows.push(["an HTML page sent as content opens as the page", framed, framed ? "framed, its source one click away" : "it opened as its source"]);
 
-    // The aside card over the tree: nothing in the tree moves when it comes.
+    // An aside rises in the corner, over the page: nothing in the tree, or
+    // in the Inbox, moves when it comes.
     await p.goto(`${base}/inbox`);
     await sleep(400);
-    const before = await p.ev(`(() => { const t = document.querySelector("#trees"); return { h: t.getBoundingClientRect().height, top: [...t.querySelectorAll("a")].slice(-1)[0]?.getBoundingClientRect().top }; })()`);
-    await post("/api/notes", { text: "An aside over the tree.", sender: "bench-agent" }, T);
-    await until(`!document.querySelector("#note").hidden && !!document.querySelector("#note .note-now")`);
+    const place = `(() => { const t = document.querySelector("#trees"), d = document.querySelector("#doc"); return { h: t.getBoundingClientRect().height, top: [...t.querySelectorAll("a")].slice(-1)[0]?.getBoundingClientRect().top, doc: Math.round(d.getBoundingClientRect().height) }; })()`;
+    const before = await p.ev(place);
+    await post("/api/notes", { text: "An aside over the page.", sender: "bench-agent" }, T);
+    await until(`!!document.querySelector("#cn .cn-card, #cn .oy-pill")`);
     await sleep(400);
-    const after = await p.ev(`(() => { const t = document.querySelector("#trees"); return { h: t.getBoundingClientRect().height, top: [...t.querySelectorAll("a")].slice(-1)[0]?.getBoundingClientRect().top }; })()`);
-    rows.push(["an aside arriving moves nothing in the tree", before.h === after.h && before.top === after.top,
-      before.h === after.h && before.top === after.top ? "the tree's height and its last row stayed where they were" : `#trees ${before.h} → ${after.h} px, last row ${before.top} → ${after.top}`]);
+    const after = await p.ev(place);
+    const still = before.h === after.h && before.top === after.top && before.doc === after.doc;
+    rows.push(["an aside arriving moves nothing on the page", still,
+      still ? "the tree, its last row and the Inbox stayed where they were" : `#trees ${before.h} → ${after.h} px, last row ${before.top} → ${after.top}, #doc ${before.doc} → ${after.doc}`]);
 
     // A long document reopened from the Inbox opens where it was left.
     const long = await arrive({ name: "long-read.md", body: "# Long\n\n" + Array.from({ length: 120 }, (_, i) => `Paragraph ${i + 1}, to be read past.`).join("\n\n") + "\n" });
@@ -2758,11 +2797,11 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     const at = await p.ev(`(document.querySelector("#main") || document.querySelector("main")).scrollTop`);
     rows.push(["a document opens where it was left", at > 200, `${Math.round(at)} px down on reopening from the Inbox`]);
 
-    // 1.25: Home under events that change nothing. Twenty asides, each an
-    // event Home listens for and none of them on Home, spaced past the
-    // read's debounce: twenty reads of /api/home, no redraw of the page
-    // (the row under the pointer, the hand in the bar, left alone) and no
-    // read of /api/peers, which only a friends event asks for.
+    // 1.25: Home under a burst of events. Twenty asides, spaced past the
+    // read's debounce: each is Lately's, which Home draws large, so only
+    // that section is drawn again -- no redraw of the page (the row under
+    // the pointer, the hand in the bar, left alone), no read of /api/home
+    // and none of /api/peers, which only a friends event asks for.
     await p.goto(`${base}/#cap=${cap}`);
     await until(`!!document.querySelector(".hm .hm-pick")`);
     await sleep(600);
@@ -2773,8 +2812,11 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     }
     await sleep(800);
     const ev20 = await p.ev(`window.__hm`);
-    rows.push(["Home under 20 events that change nothing: no redraw, no friends read", ev20.draws === 0 && ev20.peers === 0 && ev20.home >= 10,
-      `${ev20.draws} redraw${ev20.draws === 1 ? "" : "s"}, ${ev20.peers} read${ev20.peers === 1 ? "" : "s"} of /api/peers, ${ev20.home} of /api/home`]);
+    const inLately = await p.ev(`/Quiet aside 20\\./.test(document.querySelector(".hm-arrived")?.textContent || "")`);
+    // Home shows the newest five, as Arrived did, and the tray the rest.
+    const capped = await p.ev(`(() => { const l = document.querySelector(".hm-arrived .cn-large"); return { n: l?.querySelectorAll(".cn-row").length ?? -1, more: !!l?.querySelector("[data-a=cn-open]") }; })()`);
+    rows.push(["Home under 20 asides: Lately takes them in, five shown and the rest in the tray, no redraw, no friends read", ev20.draws === 0 && ev20.peers === 0 && inLately && capped.n === 5 && capped.more,
+      `${ev20.draws} redraw${ev20.draws === 1 ? "" : "s"}, ${ev20.peers} read${ev20.peers === 1 ? "" : "s"} of /api/peers, ${ev20.home} of /api/home${inLately ? ", the last in Lately" : ", the last not in Lately"}, ${capped.n} rows shown${capped.more ? " and a way to the rest" : ", no way to the rest"}`]);
   } finally {
     if (other) await post(`/api/desks/${other}/delete`).catch(() => {});
     await post(`/api/panes/${pane}/stop`).catch(() => {});
@@ -4154,18 +4196,18 @@ async function startRows(p, url, arrive, base) {
     !danger ? "no danger row in a document's menu" : danger.fg === danger.bg || /^rgb\(/.test(danger.bg) ? `"${danger.label}" is ${danger.fg} on ${danger.bg}` : `"${danger.label}" in ${danger.fg}, on no fill`]);
 
   // snyvi's own aside: said once, when two are waiting, and never over an
-  // agent's that is still unread.
-  // From the page, as note.js asks it: a reader's action needs our Origin.
-  await p.ev(`fetch("/api/notes/seen", { method: "POST" }).then(r => r.status)`);
-  await p.ev(`Object.keys(localStorage).filter(k => k.startsWith("snyvi.seen.")).forEach(k => localStorage.removeItem(k)); 1`);
+  // agent's that is still unread. It rises in the corner (ui/corner.js).
+  // From the page, as corner.js asks it: a reader's action needs our Origin.
+  await p.ev(`fetch("/api/lately/seen", { method: "POST" }).then(r => r.status)`);
+  await p.ev(`Object.keys(localStorage).filter(k => k.startsWith("snyvi.seen.") || k.startsWith("snyvi.own.")).forEach(k => localStorage.removeItem(k)); 1`);
   await p.goto(url);
   await arrive(); await arrive();
-  const said = await until(`/^Two are waiting/.test(document.querySelector("#note .note-now p")?.textContent || "")`, 40);
-  await p.ev(`document.querySelector("#note [data-note-x]")?.click(); 1`);
+  const said = await until(`/^Two are waiting/.test(document.querySelector("#cn .cn-card .cn-text")?.textContent || "")`, 40);
+  await p.ev(`document.querySelector("#cn [data-a=cn-later]")?.click(); 1`);
   await sleep(4500);
   await arrive();
   await sleep(800);
-  const again = await p.ev(`/^Two are waiting/.test(document.querySelector("#note .note-now p")?.textContent || "")`);
+  const again = await p.ev(`/^Two are waiting/.test(document.querySelector("#cn .cn-card .cn-text")?.textContent || "")`);
   rows.push(["snyvi says its own line once", said && !again, !said ? "no aside when two were waiting" : again ? "it said it again" : "once, pointing at the first ten minutes"]);
   return rows;
 }

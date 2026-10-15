@@ -28,6 +28,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | CLI → daemon | `src/client.rs`, `src/main.rs` | be the only path a test knows |
 | self-update, restart | `src/update.rs`, `src/platform.rs`, `src/desktop.rs` | — |
 | the window | `src/bin/app.rs` | hold daemon logic |
+| every message from outside: the corner's card, pill and tray (On you, Lately) | `ui/corner.js`, `src/lately.rs` (kept, `lately_log` beside each event), `ui/desk/10-onyou.js` (the desk's corner) | put a message anywhere else, or let one go on a timer (`docs/DESIGN.md` §4.5) |
 | first paint | `ui/index.html`, `ui/boot.js`, `ui/app/*.js` (joined into `app.js`), `ui/app.css`, `ui/themes.css` | grow past the budget (`bench/bytes.mjs`) |
 | lazy chunks | `ui/desk/*.js` (joined into `desk.js`), `ui/home.js`, `ui/about.js`, `ui/mmd.js`, `ui/menu.js`, `ui/peer.js`, … | be imported by first paint |
 | the strip, the join, the embed | `build.rs`, `src/strip.rs` (`source` joins `ui/app/*.js` and `ui/desk/*.js` in name order; `SNYVI_UI_DIR` serves the same join) | serve a part on its own |
