@@ -734,6 +734,15 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // where our hook already is and names this binary, and only once this
     // daemon holds the port: one that is about to exit writes nothing. See
     // `hook::top_up`.
+    // Pasted pictures past their week, as Claude Code clears its own paste
+    // cache (`api_desk::sweep_pastes`).
+    let pastes = paths.data_dir.join("pastes");
+    tokio::task::spawn_blocking(move || {
+        let gone = api_desk::sweep_pastes(&pastes, std::time::SystemTime::now());
+        if gone > 0 {
+            eprintln!("snyvi: cleared {gone} pasted picture(s) older than a week");
+        }
+    });
     tokio::task::spawn_blocking(|| {
         if let Ok(true) = crate::hook::top_up() {
             eprintln!("snyvi: added the panel status hooks to ~/.claude/settings.json");

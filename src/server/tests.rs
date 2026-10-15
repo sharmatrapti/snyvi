@@ -2494,3 +2494,4 @@ fn the_account_name_a_friend_sees_starts_with_a_capital() {
 #[cfg(unix)]
 mod accounts;
 mod keys;
+mod pastes;
