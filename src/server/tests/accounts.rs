@@ -276,15 +276,21 @@ async fn agent(router: &Router, l: &Leaves, pane: &str, body: serde_json::Value)
     router.clone().oneshot(req).await.unwrap().status()
 }
 
-/// Two panels on two accounts (plan 7ead8a629d): each status line's windows
-/// are kept under the account its panel runs as, Home names both and its
-/// one `quota` is the account with the least left, and a reading that moves
-/// no whole percent is no news. A turn that ends because the sign-in no
-/// longer works marks the account until it is renewed, or until a turn
-/// ends with its answer; and the desks say how many panels run as each.
-#[tokio::test]
-async fn usage_is_kept_by_account_and_a_sign_in_that_stopped_waits_for_renew() {
-    let (_tmp, app, router, l, (desk, pane), token) = desk_and_token("snyvi-account-usage");
+/// Two panels on one desk, running: the first as a pasted account, the
+/// second as the `/login` one (plan 7ead8a629d).
+struct TwoAccounts {
+    _tmp: crate::store::tempdir::Dir,
+    app: Arc<App>,
+    router: Router,
+    l: Leaves,
+    pane: String,
+    p2: String,
+    id: i64,
+    token: String,
+}
+
+async fn two_accounts(name: &str) -> TwoAccounts {
+    let (tmp, app, router, l, (desk, pane), token) = desk_and_token(name);
     let (id, _) = add(&router, &l, &token).await;
     let crate::desk::Opened::Pane(p2) = app.store.open_pane(desk, "/tmp", "", false).unwrap()
     else {
@@ -324,18 +330,67 @@ async fn usage_is_kept_by_account_and_a_sign_in_that_stopped_waits_for_renew() {
     }
     assert_eq!(app.panes.status(&pane).account, id);
     assert_eq!(app.panes.status(&p2).account, 0);
+    TwoAccounts {
+        _tmp: tmp,
+        app,
+        router,
+        l,
+        pane,
+        p2,
+        id,
+        token,
+    }
+}
 
+impl TwoAccounts {
+    async fn desks(&self) -> serde_json::Value {
+        let (s, t) = page(&self.router, &self.l, "GET", "/api/desks", None).await;
+        assert_eq!(s, StatusCode::OK, "{t}");
+        serde_json::from_str(&t).unwrap()
+    }
+
+    async fn stop(&self) {
+        for p in [&self.pane, &self.p2] {
+            let _ = page(
+                &self.router,
+                &self.l,
+                "POST",
+                &format!("/api/panes/{p}/stop"),
+                None,
+            )
+            .await;
+        }
+    }
+}
+
+/// Each status line's windows are kept under the account its panel runs as,
+/// Home names both and its one `quota` is the account with the least left,
+/// a reading that moves no whole percent is no news, and the desks say how
+/// many panels run as each.
+#[tokio::test]
+async fn usage_is_kept_by_the_account_a_panel_runs_as() {
+    let two = two_accounts("snyvi-account-usage").await;
+    let TwoAccounts {
+        app,
+        router,
+        l,
+        pane,
+        p2,
+        id,
+        ..
+    } = &two;
+    let id = *id;
     let at = crate::store::now() + 3600;
     let line = |used: f64| serde_json::json!({ "model": "Opus", "limits": { "five_hour": { "used": used, "resets_at": at } } });
     assert_eq!(
-        agent(&router, &l, &pane, line(20.0)).await,
+        agent(router, l, pane, line(20.0)).await,
         StatusCode::NO_CONTENT
     );
     assert_eq!(
-        agent(&router, &l, &p2, line(70.0)).await,
+        agent(router, l, p2, line(70.0)).await,
         StatusCode::NO_CONTENT
     );
-    let (s, t) = page(&router, &l, "GET", "/api/home", None).await;
+    let (s, t) = page(router, l, "GET", "/api/home", None).await;
     assert_eq!(s, StatusCode::OK, "{t}");
     let j: serde_json::Value = serde_json::from_str(&t).unwrap();
     let qs = j["quotas"].as_array().unwrap();
@@ -370,26 +425,40 @@ async fn usage_is_kept_by_account_and_a_sign_in_that_stopped_waits_for_renew() {
         "a percent more"
     );
 
-    let desks = async || -> serde_json::Value {
-        let (s, t) = page(&router, &l, "GET", "/api/desks", None).await;
-        assert_eq!(s, StatusCode::OK, "{t}");
-        serde_json::from_str(&t).unwrap()
-    };
-    let j = desks().await;
+    let j = two.desks().await;
     assert_eq!(j["accounts"][0]["running"], 1, "one panel runs as Work");
     assert_eq!(j["quotas"][id.to_string()]["five_hour"]["used"], 21.0);
     assert!(j["broken"].as_object().unwrap().is_empty());
+    two.stop().await;
+}
 
+/// A turn that ends because the sign-in no longer works marks the account
+/// until it is renewed, or until a turn ends with its answer; a limit is not
+/// a broken sign-in.
+#[tokio::test]
+async fn a_sign_in_that_stopped_waits_for_renew() {
+    let two = two_accounts("snyvi-account-broken").await;
+    let TwoAccounts {
+        router,
+        l,
+        pane,
+        p2,
+        id,
+        token,
+        ..
+    } = &two;
+    let id = *id;
+    assert!(two.desks().await["broken"].as_object().unwrap().is_empty());
     let stopped = |why: &str| serde_json::json!({ "state": "done", "stopped": why });
     assert_eq!(
-        agent(&router, &l, &pane, stopped("authentication_failed")).await,
+        agent(router, l, pane, stopped("authentication_failed")).await,
         StatusCode::NO_CONTENT
     );
     assert_eq!(
-        agent(&router, &l, &p2, stopped("rate_limit")).await,
+        agent(router, l, p2, stopped("rate_limit")).await,
         StatusCode::NO_CONTENT
     );
-    let j = desks().await;
+    let j = two.desks().await;
     assert_eq!(j["broken"][id.to_string()], "authentication_failed");
     assert!(
         j["broken"].get("0").is_none(),
@@ -397,8 +466,8 @@ async fn usage_is_kept_by_account_and_a_sign_in_that_stopped_waits_for_renew() {
     );
     let renew = Some(serde_json::json!({ "token": token }));
     let (s, _) = page(
-        &router,
-        &l,
+        router,
+        l,
         "POST",
         &format!("/api/accounts/{id}/renew"),
         renew,
@@ -406,18 +475,16 @@ async fn usage_is_kept_by_account_and_a_sign_in_that_stopped_waits_for_renew() {
     .await;
     assert_eq!(s, StatusCode::OK);
     assert!(
-        desks().await["broken"].as_object().unwrap().is_empty(),
+        two.desks().await["broken"].as_object().unwrap().is_empty(),
         "renewed"
     );
 
-    agent(&router, &l, &p2, stopped("billing_error")).await;
-    assert_eq!(desks().await["broken"]["0"], "billing_error");
-    agent(&router, &l, &p2, serde_json::json!({ "state": "done" })).await;
+    agent(router, l, p2, stopped("billing_error")).await;
+    assert_eq!(two.desks().await["broken"]["0"], "billing_error");
+    agent(router, l, p2, serde_json::json!({ "state": "done" })).await;
     assert!(
-        desks().await["broken"].as_object().unwrap().is_empty(),
+        two.desks().await["broken"].as_object().unwrap().is_empty(),
         "a turn that ends with its answer says it works"
     );
-    for p in [&pane, &p2] {
-        let _ = page(&router, &l, "POST", &format!("/api/panes/{p}/stop"), None).await;
-    }
+    two.stop().await;
 }
