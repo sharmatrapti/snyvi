@@ -19,11 +19,140 @@ pub(crate) fn shown(a: &Account) -> serde_json::Value {
     })
 }
 
+/// The accounts as the desks are sent them: each with how many running
+/// panels run as it, for the remove row's "still run as" line.
+pub(crate) fn listed(app: &App) -> Vec<serde_json::Value> {
+    app.store
+        .claude_accounts()
+        .unwrap_or_default()
+        .iter()
+        .map(|a| {
+            let mut v = shown(a);
+            v["running"] = json!(app.panes.running_as(a.id));
+            v
+        })
+        .collect()
+}
+
+/// What the daemon last heard about each Claude account, by id (0 for your
+/// login): the rate-limit windows a panel's status line said, which are the
+/// account's and not the panel's, and a turn that ended because its sign-in
+/// no longer works (`accounts::AUTH_REASONS`). Not kept on disk: the next
+/// status line says it again.
+#[derive(Default)]
+pub(crate) struct Usage {
+    quotas: std::sync::Mutex<std::collections::BTreeMap<i64, Quota>>,
+    broken: std::sync::Mutex<std::collections::BTreeMap<i64, &'static str>>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Quota {
+    five_hour: Option<crate::statusline::Limit>,
+    seven_day: Option<crate::statusline::Limit>,
+    at: i64,
+}
+
+/// A window as a reader sees it: its whole percent and when it resets.
+fn seen(l: Option<crate::statusline::Limit>) -> Option<(i64, i64)> {
+    l.map(|l| (l.used.round() as i64, l.resets_at))
+}
+
+/// What is left of a window now: all of it once it has reset.
+fn left(l: Option<crate::statusline::Limit>, now: i64) -> f64 {
+    match l {
+        Some(l) if l.resets_at > now => (100.0 - l.used).clamp(0.0, 100.0),
+        _ => 100.0,
+    }
+}
+
+impl Usage {
+    /// An account's windows, from a status line; whether what a reader sees
+    /// of them moved.
+    pub(crate) fn heard(
+        &self,
+        account: i64,
+        five_hour: Option<crate::statusline::Limit>,
+        seven_day: Option<crate::statusline::Limit>,
+        now: i64,
+    ) -> bool {
+        let q = Quota {
+            five_hour,
+            seven_day,
+            at: now,
+        };
+        let mut all = self.quotas.lock().unwrap_or_else(|e| e.into_inner());
+        let was = all.insert(account, q);
+        was.is_none_or(|w| {
+            (seen(w.five_hour), seen(w.seven_day)) != (seen(five_hour), seen(seven_day))
+        })
+    }
+
+    /// Every account heard from, as Home and the desks are sent them.
+    pub(crate) fn quotas(&self) -> serde_json::Value {
+        let all = self.quotas.lock().unwrap_or_else(|e| e.into_inner());
+        all.iter()
+            .map(|(id, q)| (id.to_string(), quota_json(q)))
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    }
+
+    /// The account with the least left in either window: the one figure a
+    /// page that knows one account shows (Home's older `quota`).
+    pub(crate) fn least(&self, now: i64) -> Option<(i64, serde_json::Value)> {
+        let all = self.quotas.lock().unwrap_or_else(|e| e.into_inner());
+        all.iter()
+            .map(|(id, q)| (*id, q, left(q.five_hour, now).min(left(q.seven_day, now))))
+            .min_by(|a, b| a.2.total_cmp(&b.2))
+            .map(|(id, q, _)| (id, quota_json(q)))
+    }
+
+    /// A turn ended for one of `accounts::AUTH_REASONS`; whether that is new.
+    pub(crate) fn broke(&self, account: i64, why: &'static str) -> bool {
+        let mut all = self.broken.lock().unwrap_or_else(|e| e.into_inner());
+        all.insert(account, why) != Some(why)
+    }
+
+    /// The account works again: renewed, or a status line came from it.
+    pub(crate) fn mended(&self, account: i64) -> bool {
+        let mut all = self.broken.lock().unwrap_or_else(|e| e.into_inner());
+        all.remove(&account).is_some()
+    }
+
+    pub(crate) fn broken(&self) -> serde_json::Value {
+        let all = self.broken.lock().unwrap_or_else(|e| e.into_inner());
+        all.iter()
+            .map(|(id, why)| (id.to_string(), json!(why)))
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    }
+
+    /// An account taken away: nothing heard about it is anyone's now.
+    pub(crate) fn forget(&self, account: i64) {
+        self.quotas
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&account);
+        self.broken
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&account);
+    }
+}
+
+fn quota_json(q: &Quota) -> serde_json::Value {
+    json!({ "five_hour": q.five_hour, "seven_day": q.seven_day, "at": q.at })
+}
+
 /// The keys sheet hears "accounts"; the desks carry the names too, for a
 /// panel's menu and tip, so they hear it as well.
 pub(crate) fn accounts_moved(app: &App) {
     emit(app, "accounts", json!({}));
     desks_moved(app);
+}
+
+/// "Account N" for an account added without a name (`accounts::next_label`).
+fn free_label(app: &App) -> String {
+    accounts::next_label(&app.store.claude_accounts().unwrap_or_default())
 }
 
 fn unprocessable(why: &str) -> Response {
@@ -82,8 +211,7 @@ pub(crate) async fn add_account(
     if let Err(why) = accounts::valid_token(&token) {
         return unprocessable(why);
     }
-    let n = app.store.claude_accounts().map(|a| a.len()).unwrap_or(0);
-    let label = accounts::clean_label(&b.label).unwrap_or_else(|| format!("Account {}", n + 1));
+    let label = accounts::clean_label(&b.label).unwrap_or_else(|| free_label(&app));
     let account = match app.store.add_claude_account(&label) {
         Ok(a) => a,
         Err(e) => return err(e),
@@ -126,10 +254,7 @@ pub(crate) async fn signin_start(
             Ok(None) => return StatusCode::NOT_FOUND.into_response(),
             Err(e) => return err(e),
         },
-        None => {
-            let n = app.store.claude_accounts().map(|a| a.len()).unwrap_or(0);
-            accounts::clean_label(&b.label).unwrap_or_else(|| format!("Account {}", n + 1))
-        }
+        None => accounts::clean_label(&b.label).unwrap_or_else(|| free_label(&app)),
     };
     let app2 = app.clone();
     let (renew, name) = (b.renew, label.clone());
@@ -138,6 +263,7 @@ pub(crate) async fn signin_start(
             Some(id) => {
                 app2.secrets.keep_claude(id, &token)?;
                 let _ = app2.store.renewed_claude_account(id);
+                app2.usage.mended(id);
                 id
             }
             None => {
@@ -259,6 +385,7 @@ pub(crate) async fn renew_account(
         Err(e) => return err(e),
     };
     let _ = app.store.renewed_claude_account(id);
+    app.usage.mended(id);
     accounts_moved(&app);
     Json(json!({ "ok": true, "kept": kept })).into_response()
 }
@@ -280,6 +407,7 @@ pub(crate) async fn remove_account(
         Ok(true) => {
             let secrets = app.secrets.clone();
             let _ = tokio::task::spawn_blocking(move || secrets.forget_claude(id)).await;
+            app.usage.forget(id);
             accounts_moved(&app);
             Json(json!({ "ok": true })).into_response()
         }
@@ -341,6 +469,11 @@ pub(crate) struct PaneAccount {
     /// says whether it should, and refuses while Claude is mid-answer.
     #[serde(default)]
     pub(crate) switch: bool,
+    /// The account's token was just renewed: a switch restarts the panel
+    /// even as the account it already runs as, since its environment still
+    /// holds the token that stopped working.
+    #[serde(default)]
+    pub(crate) renewed: bool,
 }
 
 pub(crate) async fn set_pane_account(
@@ -385,7 +518,7 @@ pub(crate) async fn set_pane_account(
         placed.account()
     };
     let now = accounts::effective(placed.desk_account, b.account);
-    let restart = b.switch && status.running && was != now;
+    let restart = b.switch && status.running && (was != now || b.renewed);
     desks_moved(&app);
     Json(json!({
         "ok": true,

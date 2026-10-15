@@ -448,13 +448,18 @@ const ctxUsed = s => s.ctx_used ?? (s.ctx_pct != null && s.ctx_size ? Math.round
  *  when there is no count yet rather than an old one. */
 const ctxFig = s => { const u = ctxUsed(s); return s.ctx_size ? `${u == null ? "—" : kTok(u)} / ${kTok(s.ctx_size)}` : `${s.ctx_pct}%`; };
 const ctxTip = s => `${s.model ? s.model + " · " : ""}${ctxFig(s)} in its context window · ${s.ctx_pct}%`;
-/** The account's window `k` (five_hour, seven_day) as the freshest panel
- *  here said it (#107). It is one account in every panel, and within a
- *  window the share used only grows: the latest window's highest share is
- *  the newest reading, with no clock to compare. */
-const freshest = k => {
-  let b = null;
-  for (const v of views.values()) { const l = v.status && v.status[k]; if (l && (!b || l.resets_at > b.resets_at || (l.resets_at === b.resets_at && l.used > b.used))) b = l; }
+/** Account `account`'s window `k` (five_hour, seven_day): the freshest of
+ *  what the daemon last heard from it anywhere and what this desk's panels
+ *  running as it say (#107). The windows are the account's, so a panel on
+ *  another account says nothing about them; and within a window the share
+ *  used only grows, so the latest window's highest share is the newest
+ *  reading, with no clock to compare. */
+const windowOf = (account, k) => {
+  let b = (ctx.desks.quotas || {})[account]?.[k] || null;
+  for (const v of views.values()) {
+    const l = v.status && (v.status.account || 0) === account && v.status[k];
+    if (l && (!b || l.resets_at > b.resets_at || (l.resets_at === b.resets_at && l.used > b.used))) b = l;
+  }
   return b;
 };
 /** What is left of a window, as Home's bars say it: one past its reset is
@@ -472,18 +477,22 @@ function resetsIn(l) {
   return ` · resets ${at.toLocaleDateString(undefined, { weekday: "short" })} ${at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 }
 /** "Usage left: 5 h 62% · resets in 2 h · 7 d 80% · resets Mon 9:30", the
- *  context hover's second line; nothing for an account Claude Code gives no
- *  windows to. */
-function usageSub() {
-  const f = freshest("five_hour"), w = freshest("seven_day");
+ *  context hover's second line, for the panel's own account; nothing for an
+ *  account Claude Code gives no windows to. */
+function usageSub(account) {
+  const f = windowOf(account, "five_hour"), w = windowOf(account, "seven_day");
   if (!f && !w) return "";
   return "Usage left: " + [f ? `5 h ${leftOf(f)}%${resetsIn(f)}` : "", w ? `7 d ${leftOf(w)}%${resetsIn(w)}` : ""].filter(Boolean).join(" · ");
 }
 /** The second line on every panel head's context figure: a reading from
- *  one panel is news for all of them. Written only where it differs. */
+ *  one panel is news for every panel on the same account. Written only
+ *  where it differs. */
 function paintUsage() {
-  const sub = usageSub();
+  const subs = new Map();
   for (const v of views.values()) {
+    const id = accountOf(v).id;
+    if (!subs.has(id)) subs.set(id, usageSub(id));
+    const sub = subs.get(id);
     const cx = v.el && v.el.querySelector(".pn-ctx"), on = sub && ctxPct(v.status) != null ? sub : "";
     if (!cx || (cx.dataset.tipSub || "") === on) continue;
     if (on) cx.dataset.tipSub = on; else delete cx.dataset.tipSub;
@@ -516,10 +525,12 @@ function announce(text) {
   if (el) { el.textContent = ""; el.textContent = text; }
 }
 
-/** The account a panel is on (`crate::accounts`), as `{ id, label }`. */
+/** The account a panel is on (`crate::accounts`), as `{ id, label }`. A
+ *  running panel whose account was taken away still holds its token, and
+ *  is that, not your login. */
 function accountOf(v) {
   const id = v.status.running ? v.status.account || 0 : v.pane.account ?? current()?.account ?? 0;
-  return accounts().find(a => a.id === id) || accounts()[0];
+  return accounts().find(a => a.id === id) || { id, label: "a removed account", removed: true };
 }
 
 function header(v) {
@@ -528,7 +539,7 @@ function header(v) {
   if (sl.textContent !== `[${v.pane.slot}]`) { sl.textContent = `[${v.pane.slot}]`; sl.dataset.key = `ctrl+alt+${v.pane.slot}`; }
   // Which Claude account, once there is more than one: what a running panel
   // started as, or what a stopped one will start as.
-  const acc = (ctx.desks.accounts || []).length ? accountOf(v) : null;
+  const acc = (ctx.desks.accounts || []).length || accountOf(v).removed ? accountOf(v) : null;
   const st = `Panel ${v.pane.slot}${acc ? ` · Claude as ${acc.label}` : ""}`;
   if (sl.dataset.tip !== st) sl.dataset.tip = st;
   // And in the head itself, beside the command, once the panel is not on
@@ -592,54 +603,117 @@ function header(v) {
   cursor(v);
 }
 
-/** A switch of account that waits, or the way out of a limit, said on the
- *  panel it is about rather than in a toast that went before it was done
- *  (notes #124, #126, #127). Over the top of the screen like the offer, so
- *  it moves nothing. A switch asked for mid-answer says it goes when the
- *  answer ends, until it does or is cancelled. A panel whose turn ended at
- *  its usage limit (`stopped`, from Claude Code's StopFailure) offers the
- *  other accounts, until the next prompt or a ✕. */
+/** Why a turn ends that says the account's sign-in no longer works
+ *  (`accounts::AUTH_REASONS`). */
+const AUTH_STOPS = ["authentication_failed", "oauth_org_not_allowed", "account_on_hold", "billing_error"];
+/** What account `id` has left, the lower of its two windows; null when
+ *  nothing was heard from it. */
+function leftNow(id) {
+  const ws = ["five_hour", "seven_day"].map(k => windowOf(id, k)).filter(Boolean);
+  if (!ws.length) return null;
+  const w = ws.reduce((a, b) => (leftOf(b) < leftOf(a) ? b : a));
+  return { left: leftOf(w), w };
+}
+
+/** A switch of account that waits, or the way out of a limit or a sign-in
+ *  that stopped working, said on the panel it is about rather than in a
+ *  toast that went before it was done (notes #124, #126, #127). Over the
+ *  top of the screen like the offer, so it moves nothing.
+ *  - A switch asked for mid-answer says it goes when the answer ends,
+ *    until it does or is cancelled.
+ *  - A turn that ended at the usage limit (`stopped`, from Claude Code's
+ *    StopFailure) offers the other accounts, each with what it has left,
+ *    the ones that are out too after the rest; and, when none has any left,
+ *    Add another account: one click, the browser's approval, and the panel
+ *    goes on as it.
+ *  - A turn that ended because the sign-in no longer works offers Renew,
+ *    which comes back into the conversation as the same account.
+ *  - A sign-in the strip started shows its progress here (`signRow`).
+ *  Each until the next prompt or a ✕. */
 function switchStrip(v) {
   const el = v.el.querySelector(".pn-switch");
   if (!el) return;
   const s = v.status, on = accountOf(v);
-  const others = v.pending || !s.running || s.stopped !== "rate_limit" || v.limitShut === s.agent_since || !continuable(v)
-    ? [] : accounts().filter(a => a.id !== on.id);
+  const open = !v.pending && !v.signing && s.running && v.limitShut !== s.agent_since;
+  const limit = open && s.stopped === "rate_limit" && continuable(v);
+  const auth = open && AUTH_STOPS.includes(s.stopped);
+  const others = limit || (auth && continuable(v)) ? accounts().filter(a => a.id !== on.id).map(a => ({ a, l: leftNow(a.id) })) : [];
+  // Something left first, most first; not heard from next; out last.
+  const rank = o => (o.l == null ? 50 : o.l.left === 0 ? -1 : 100 + o.l.left);
+  others.sort((x, y) => rank(y) - rank(x));
+  const add = limit && !others.some(o => !o.l || o.l.left > 0);
+  const renew = !!(auth && on.id && !on.removed);
   const say = v.pending ? `Switches to ${labelOf(v.pending.account)} when this answer ends`
-    : others.length ? `Usage limit reached as ${on.label}` : "";
-  const key = `${say}|${others.map(a => a.id)}`;
+    : v.signing ? " "
+    : limit ? `Limit reached as ${on.label}`
+    : auth ? (on.id ? `${on.removed ? "Its" : `${on.label}'s`} sign-in no longer works` : "Your login no longer works · run /login here")
+    : "";
+  const key = `${say}|${others.map(o => `${o.a.id}:${o.l ? o.l.left : ""}`)}|${add}|${renew}`;
   if (el.dataset.k === key) return;
   el.dataset.k = key;
   el.hidden = !say;
   el.replaceChildren();
   if (!say) return;
-  const t = document.createElement("span");
-  t.textContent = say;
-  if (v.pending) { t.dataset.tip = "Switching now would lose the answer Claude is writing"; t.dataset.tipSub = "it restarts into this conversation as soon as the answer is done"; }
-  el.append(t);
-  for (const a of others) {
+  const btn = (sw, text, tip, sub) => {
     const b = document.createElement("button");
-    b.type = "button"; b.dataset.sw = "as"; b.dataset.n = a.id; b.textContent = `Continue as ${a.label}`;
-    b.dataset.tip = "Restarts this panel into its conversation"; b.dataset.tipSub = `as ${a.label}`;
+    b.type = "button"; b.dataset.sw = sw; b.textContent = text;
+    if (tip) b.dataset.tip = tip;
+    if (sub) b.dataset.tipSub = sub;
     el.append(b);
+    return b;
+  };
+  if (v.signing) {
+    const row = document.createElement("div");
+    row.className = "sg-row";
+    el.append(row);
+    signRow(row, { label: "Try again", run: () => stripSign(v, v.signing?.renew ?? null) });
+  } else {
+    const t = document.createElement("span");
+    t.textContent = say;
+    if (v.pending) { t.dataset.tip = "Switching now would lose the answer Claude is writing"; t.dataset.tipSub = "it restarts into this conversation as soon as the answer is done"; }
+    else if (limit) { t.dataset.tip = `Usage limit reached as ${on.label}`; t.dataset.tipSub = "go on as another account, back into this conversation"; }
+    el.append(t);
   }
-  const x = document.createElement("button");
-  x.type = "button"; x.dataset.sw = "x"; x.textContent = "✕";
-  x.dataset.tip = v.pending ? "Cancel the switch" : "Not now";
+  if (renew) btn("renew", "Renew", `Sign ${on.label} in again`, continuable(v) ? "approve in your browser; the panel goes on as it" : "approve in your browser");
+  for (const { a, l } of others) {
+    const b = btn("as", `Continue as ${a.label}${!l ? "" : l.left ? ` · ${l.left}% left` : ` · out${resetsIn(l.w)}`}`, "Restarts this panel into its conversation", `as ${a.label}`);
+    b.dataset.n = a.id;
+    if (l && !l.left) b.classList.add("out");
+  }
+  if (add) btn("add", "Add another account", "Sign in another Claude account", "approve in your browser; the panel goes on as it");
+  const x = btn("x", "✕", v.pending ? "Cancel the switch" : v.signing ? "Cancel the sign-in" : "Not now");
   x.setAttribute("aria-label", x.dataset.tip);
-  el.append(x);
+}
+
+/** Add another account, or Renew, from a panel's strip: the sign-in, then
+ *  the panel back into its conversation as that account. A failure stays
+ *  on the strip with Try again; a cancel puts the strip back. */
+async function stripSign(v, renew) {
+  v.signing = { renew }; header(v);
+  let id;
+  try { id = await signIn(renew ? { renew } : {}); }
+  catch (e) { if (e.cancelled) { v.signing = null; header(v); } return; }
+  v.signing = null;
+  const d = current();
+  if (continuable(v)) switchSoon(v, id === d?.account ? null : id, labelOf(id), !!renew).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e));
+  else v.limitShut = v.status.agent_since;
+  header(v);
 }
 
 function switchClick(v, e) {
   const b = e.target.closest("[data-sw]");
   if (!b) return;
-  if (b.dataset.sw === "x") {
-    if (v.pending) { v.whenDone = null; v.pending = null; } else v.limitShut = v.status.agent_since;
+  const k = b.dataset.sw;
+  if (k === "x") {
+    if (v.signing) { if (signOpen(signing)) signCancel(); v.signing = null; }
+    else if (v.pending) { v.whenDone = null; v.pending = null; } else v.limitShut = v.status.agent_since;
     header(v); v.body.focus();
     return;
   }
+  if (k === "add") return void stripSign(v, null);
+  if (k === "renew") return void stripSign(v, accountOf(v).id);
   const d = current(), a = accounts().find(x => x.id === +b.dataset.n);
-  if (d && a) runAs(v, d, a, true).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e));
+  if (d && a) switchSoon(v, a.id === d.account ? null : a.id, a.label).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e));
 }
 
 /** Where Claude Code stands here, for the panels and the rail to say what is

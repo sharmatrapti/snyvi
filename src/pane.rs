@@ -239,7 +239,7 @@ pub struct Status {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ctx_at: Option<i64>,
     /// The account's rate-limit windows, as the same status line said them:
-    /// one account in every panel, so the desk shows the freshest. Absent
+    /// the panel's own account's (`account`). Absent
     /// for an account Claude Code gives none to, and before the first reply.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub five_hour: Option<crate::statusline::Limit>,
@@ -1119,6 +1119,20 @@ impl Panes {
             .unwrap()
             .values()
             .filter(|l| l.inner.lock().unwrap().status.running)
+            .count()
+    }
+
+    /// How many running panes run as each Claude account: a removed account
+    /// is still the one in their environment until they restart.
+    pub fn running_as(&self, account: i64) -> usize {
+        self.live
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|l| {
+                let i = l.inner.lock().unwrap();
+                i.status.running && i.status.account == account
+            })
             .count()
     }
 
@@ -2044,10 +2058,15 @@ const AGENT_ENV: &[&str] = &[
 const AGENT_TOOL_ENV: &[&str] = &["NO_COLOR", "FORCE_COLOR", "GIT_TERMINAL_PROMPT"];
 
 /// A panel starts as a fresh terminal would, not as a command an agent ran.
+/// Nor as an account it was not given: a daemon started from a panel that
+/// runs as a token account carries that token, and a `/login` panel of that
+/// daemon would quietly run as it. `start_pane` sets it back for a panel
+/// whose account is a token.
 fn fresh_env(cmd: &mut CommandBuilder, inside: bool) {
     for k in AGENT_ENV {
         cmd.env_remove(k);
     }
+    cmd.env_remove(crate::accounts::TOKEN_VAR);
     if inside {
         for k in AGENT_TOOL_ENV {
             cmd.env_remove(k);

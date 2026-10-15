@@ -61,10 +61,35 @@ pub(crate) async fn home(
         "waiting": waiting(&app),
         "update": update_json(&app),
         "agents": app.online(),
-        "quota": *app.quota.lock().unwrap_or_else(|e| e.into_inner()),
+        // Every account's windows, labelled; and, for a page that shows
+        // one figure, the account with the least left.
+        "quotas": home_quotas(&app),
+        "quota": app.usage.least(crate::store::now()).map(|(_, q)| q),
         "version": VERSION,
     }))
     .into_response()
+}
+
+/// Home's bars: one per account heard from, by the name the sheet gives it,
+/// your login first.
+fn home_quotas(app: &App) -> Vec<serde_json::Value> {
+    let names = app.store.claude_accounts().unwrap_or_default();
+    let all = app.usage.quotas();
+    all.as_object()
+        .into_iter()
+        .flatten()
+        .map(|(id, q)| {
+            let id: i64 = id.parse().unwrap_or_default();
+            let label = names
+                .iter()
+                .find(|a| a.id == id)
+                .map_or_else(|| "your login".to_string(), |a| a.label.clone());
+            let mut q = q.clone();
+            q["account"] = json!(id);
+            q["label"] = json!(label);
+            q
+        })
+        .collect()
 }
 
 /// How long a shipped thread stays on Home's Threads: a week.
@@ -379,11 +404,13 @@ pub(crate) async fn desks(
             "home": dirs::home_dir(),
             "panes": panes,
             "per_desk": crate::desk::PER_DESK,
-            // The Claude accounts, for the keys sheet, a panel's "Run as"
-            // and its tip: names and dates, no token, which no answer carries.
-            "accounts": app.store.claude_accounts().unwrap_or_default().iter()
-                .map(super::api_accounts::shown)
-                .collect::<Vec<_>>(),
+            // The Claude accounts, for the keys sheet, a panel's head and
+            // its limit strip: names and dates, no token, which no answer
+            // carries. What each has left and whether its sign-in still
+            // works are by id, `0` being your login.
+            "accounts": super::api_accounts::listed(&app),
+            "quotas": app.usage.quotas(),
+            "broken": app.usage.broken(),
         }))
         .into_response(),
         (Err(e), _) | (_, Err(e)) => err(e),

@@ -143,8 +143,9 @@ const provider = name => (PROVIDERS.find(([, n]) => n === name) || [""])[0];
 const usedSay = t => t ? `used ${ctx.rel(t)}` : "not used yet";
 
 /* The sheet is two short lists, what this desk's panels start with: the
- * Claude account and the keys. Each ends in an "Add …" row that unfolds its
- * form in place, the same way and the same verb for both; it opens on the
+ * Claude account and the keys. The accounts end in "+ Claude account", one
+ * click to a browser's approval and no form (plan 7ead8a629d); the keys in
+ * an "Add a key" row that unfolds its form in place. It opens on the
  * account picked, not in a form, since most opens are to look or switch.
  * Managing an account -- rename, renew, remove from every desk -- is behind
  * its row's ⋯, because it reaches past this desk (audit 67d008cb6f). */
@@ -159,12 +160,10 @@ function keysSheet(d) {
   sheet.setAttribute("role", "dialog"); sheet.setAttribute("aria-label", "What this desk's panels start with");
   sheet.innerHTML = `<div class="dk-ks-t">This desk's panels start with</div>
     <div class="dk-keys-h">Claude as</div><div class="dk-acc-rows" role="radiogroup" aria-label="Claude as"></div>
-    <details class="dk-add dk-acc-more"><summary>${plus}<span>Add a Claude account</span></summary><form class="dk-keys-add dk-acc-add" autocomplete="off">
-      <label><span>Name</span><input name="label" maxlength="40" spellcheck="false" placeholder="Work"><button type="button" data-a="acc-in">Sign in…</button></label>
-      <div class="dk-acc-live" role="status" hidden></div>
-      <label><span>Token</span><input name="token" type="password" autocomplete="new-password" required spellcheck="false" placeholder="or paste one from claude setup-token"><button type="submit">Add</button></label>
-      <p class="dk-keys-say" role="status">Sign in opens Claude's sign-in in your browser. It lasts a year; your settings and history stay shared.</p>
-    </form></details>
+    <div class="dk-acc-add"><button type="button" class="dk-acc-new" data-a="acc-in" data-tip="Add a Claude account" data-tip-sub="approve in your browser · your settings and history stay shared">${plus}<span>Claude account</span></button>
+      <div class="sg-row dk-acc-live" role="status" hidden></div>
+      <form class="dk-keys-add dk-acc-paste" autocomplete="off" hidden><label><span>Token</span><input name="token" type="password" autocomplete="new-password" required spellcheck="false" placeholder="paste one from claude setup-token"><button type="submit">Add</button></label></form>
+      <p class="dk-keys-say dk-acc-said" role="status"></p></div>
     <div class="dk-keys-h">Keys</div><div class="dk-keys-rows"></div>
     <details class="dk-add dk-key-more"><summary>${plus}<span>Add a key</span></summary><form class="dk-keys-add dk-key-add" autocomplete="off">
       <label><span>Name</span><input name="name" list="dk-key-names" required spellcheck="false" placeholder="e.g. OPENROUTER_API_KEY" pattern="[A-Z][A-Z0-9_]*" maxlength="64" title="capitals, digits and underscores"></label>
@@ -174,8 +173,7 @@ function keysSheet(d) {
       <p class="dk-keys-say" role="status">Only you can read it, and it is never shown again. Use it as $(snyvi key NAME).</p>
     </form></details>`;
   sheet.querySelector(".dk-key-add").addEventListener("submit", e => keyAdd(d, e));
-  sheet.querySelector(".dk-acc-add").addEventListener("submit", e => accAdd(d, e));
-  sheet.querySelector(".dk-acc-live").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); accSignCode(); } });
+  sheet.querySelector(".dk-acc-paste").addEventListener("submit", e => accAdd(d, e));
   sheet.querySelector(".dk-acc-rows").addEventListener("change", e => { if (e.target.name === "acc") accPick(d, +e.target.value); });
   sheet.querySelector(".dk-acc-rows").addEventListener("keydown", e => { if (e.target.matches(".dk-acc-name") && e.key === "Enter") { e.preventDefault(); accNamed(d, e.target); } });
   // An "Add …" row, opened, puts the hand in its first field; the other one
@@ -190,7 +188,8 @@ function keysSheet(d) {
   slot.append(sheet);
   keysRows(d);
   keysSlot(d);
-  ctx.api("/api/accounts/signin").then(j => { signing = j.signin; signDraw(); signPoll(); }, () => {});
+  signRow(sheet.querySelector(".dk-acc-live"), { label: "Paste a token instead", run: () => accPaste(true) });
+  signFollow();
   document.addEventListener("pointerdown", keysOutside, true);
   document.addEventListener("keydown", keysKey, true);
   (sheet.querySelector(".dk-acc-rows input:checked") || sheet.querySelector(".dk-acc-rows input") || sheet.querySelector("summary")).focus();
@@ -280,14 +279,20 @@ function accRows(d) {
   const { esc } = ctx, now = Date.now() / 1000;
   const all = accounts();
   const row = a => {
-    if (accGone && accGone.id === a.id) return `<div class="dk-key" role="status"><span class="dk-key-n">${esc(a.label)}</span><span class="dk-key-m">Removed from every desk · its token is gone in a moment</span><button type="button" class="dk-undo" data-a="acc-back">Undo</button></div>`;
+    // Running panels keep the token they started with: said, so a head
+    // that reads "a removed account" later is no surprise.
+    if (accGone && accGone.id === a.id) return `<div class="dk-key" role="status"><span class="dk-key-n">${esc(a.label)}</span><span class="dk-key-m">Removed from every desk · ${a.running ? `${a.running === 1 ? "1 panel still runs" : `${a.running} panels still run`} as it until restarted` : "its token is gone in a moment"}</span><button type="button" class="dk-undo" data-a="acc-back">Undo</button></div>`;
     const on = a.id === (d.account || 0), radio = `<input type="radio" name="acc" value="${a.id}"${on ? " checked" : ""}>`;
     if (accNaming === a.id) return `<div class="dk-key dk-acc">${radio}<input class="dk-acc-name" value="${esc(a.label)}" maxlength="40" spellcheck="false" aria-label="New name for ${esc(a.label)}"><span class="dk-key-m">Enter keeps it · Esc leaves it</span></div>`;
     const end = (a.created_at || 0) + YEAR, soon = a.id && end - now < RENEW_SOON;
-    // One fact: the token's end when it is near -- and then it is the
-    // row's button -- otherwise when a panel last started as it.
-    const meta = !a.id ? `<span class="dk-key-m">Claude's own <code>/login</code></span>`
-      : soon ? `<button type="button" class="dk-acc-due" data-a="acc-renew" data-n="${a.id}" data-tip="Renew ${esc(a.label)}" data-tip-sub="its token ends ${accDate(end)}; sign in again or paste a new one">Renew by ${accDate(end)}</button>`
+    const broke = (ctx.desks.broken || {})[a.id];
+    // One fact: a sign-in that stopped working, or the token's end when it
+    // is near -- and then it is the row's button -- otherwise when a panel
+    // last started as it.
+    const meta = broke && !a.id ? `<span class="dk-key-m"><b>Sign-in stopped</b> · run <code>/login</code> in a panel</span>`
+      : broke ? `<button type="button" class="dk-acc-due" data-a="acc-renew" data-n="${a.id}" data-tip="Renew ${esc(a.label)}" data-tip-sub="its sign-in no longer works; approve it again in your browser">Sign-in stopped · Renew</button>`
+      : !a.id ? `<span class="dk-key-m">Claude's own <code>/login</code></span>`
+      : soon ? `<button type="button" class="dk-acc-due" data-a="acc-renew" data-n="${a.id}" data-tip="Renew ${esc(a.label)}" data-tip-sub="its token ends ${accDate(end)}; approve it again in your browser">Renew by ${accDate(end)}</button>`
       : `<span class="dk-key-m">${usedSay(a.used_at)}</span>`;
     const more = accMore === a.id;
     // Its ⋯ puts what reaches past this desk in the row's own place: the
@@ -303,10 +308,6 @@ function accRows(d) {
     rows.innerHTML = html; rows.$html = html;
     const nm = rows.querySelector(".dk-acc-name"); if (nm) { nm.focus(); nm.select(); }
   }
-  const more = ctx.docEl.querySelector(".dk-acc-more"), f = more && more.querySelector("form");
-  const r = accRenew && all.find(a => a.id === accRenew);
-  if (f) { f.label.hidden = f.label.previousElementSibling.hidden = !!r; more.querySelector("summary > span").textContent = r ? `Renew ${r.label}` : "Add a Claude account"; f.querySelector("button[type=submit]").textContent = r ? "Renew" : "Add"; }
-  signDraw();
 }
 /** A name changed in its row: Enter keeps it. */
 async function accNamed(d, input) {
@@ -318,72 +319,45 @@ async function accNamed(d, input) {
   ctx.docEl.querySelector(`.dk-acc-rows input[value="${id}"]`)?.focus();
 }
 
-/* Sign in: snyvi runs `claude setup-token` out of sight and keeps the token
- * it prints (`accounts::signin`); the sheet asks how it is going each second
- * while one is open, and is told the sign-in page's address and the ending,
- * never the token. */
-let signing = null, signTimer = 0;
-async function accSignIn(d) {
-  const f = ctx.docEl.querySelector(".dk-acc-add");
+/* "+ Claude account", a Renew: one click to the browser's approval
+ * (`signIn`, 12-signin.js), its progress in the sheet's own row, and what
+ * came of it said under it. A sign-in that cannot work offers the paste. */
+async function accSignIn(d, renew = null) {
+  accRenew = renew; accMore = null; accPaste(false); accSaid("");
+  if (renew) keysRows(d);
+  try {
+    const id = await signIn(renew ? { renew } : {});
+    const a = (ctx.desks.accounts || []).find(x => x.id === id);
+    const name = a ? a.label : "The account";
+    accSaid(renew ? `${name} is renewed. Panels start with the new token from their next start.` : `${name} is added · pick it above. Rename it from its ⋯.`);
+    accRenew = null;
+  } catch {}
+  const now = current(); if (now && keysOpen === now.id) keysRows(now);
+}
+/** The line under the account rows: what the last add or renew came to. */
+function accSaid(text) { const p = ctx.docEl.querySelector(".dk-acc-said"); if (p) p.textContent = text; }
+/** The paste field, for a sign-in that could not work. */
+function accPaste(show) {
+  const f = ctx.docEl.querySelector(".dk-acc-paste");
   if (!f) return;
-  const renew = accRenew;
-  try { signing = (await ctx.api("/api/accounts/signin", renew ? { renew } : { label: f.label.value.trim() })).signin; }
-  catch (e) { signing = { phase: "failed", error: ctx.sayErr(e).why }; }
-  signDraw(); signPoll();
-}
-function signPoll() {
-  clearTimeout(signTimer);
-  if (!signing || !/^(starting|waiting)$/.test(signing.phase)) return;
-  signTimer = setTimeout(async () => {
-    try { signing = (await ctx.api("/api/accounts/signin")).signin; } catch {}
-    if (signing && signing.phase === "done") {
-      const f = ctx.docEl.querySelector(".dk-acc-add");
-      if (f) { f.label.value = ""; f.querySelector(".dk-keys-say").textContent = `${signing.label} is signed in. ${signing.renew ? "Panels start with the new token from their next start." : "Pick it above, or right-click a panel to run it as this account."}`; }
-      accRenew = null;
-      await ctx.refresh();
-    }
-    signDraw(); signPoll();
-  }, 1000);
-}
-function signDraw() {
-  const live = ctx.docEl.querySelector(".dk-keys-sheet .dk-acc-live");
-  if (!live) return;
-  const s = signing, { esc } = ctx;
-  const html = !s || s.phase === "done" || s.phase === "cancelled" ? ""
-    : s.phase === "failed" ? `<span>Could not sign in · ${esc(s.error || "it ended")}. Paste a token instead, or try again.</span>`
-    : s.phase === "starting" ? `<span>Opening Claude's sign-in…</span><button type="button" data-a="acc-in-x">Cancel</button>`
-    : `<span>Approve in your browser as the account to add. <button type="button" class="dk-acc-link" data-a="acc-in-open">Open the sign-in page</button> if it did not open.</span>
-      <label><span>Code</span><input name="code" spellcheck="false" autocomplete="off" placeholder="only if the page shows one"><button type="button" data-a="acc-in-code">Send</button><button type="button" data-a="acc-in-x">Cancel</button></label>`;
-  if (live.$html === html) return;
-  live.innerHTML = html; live.$html = html; live.hidden = !html;
-  const btn = ctx.docEl.querySelector(".dk-acc-add [data-a=acc-in]");
-  if (btn) btn.disabled = !!s && /^(starting|waiting)$/.test(s.phase);
-}
-async function accSignCode() {
-  const inp = ctx.docEl.querySelector(".dk-acc-live input[name=code]");
-  if (!inp || !inp.value.trim()) return;
-  try { await ctx.api("/api/accounts/signin/code", { code: inp.value.trim() }); inp.value = ""; inp.placeholder = "sent · waiting for Claude"; }
-  catch (e) { ctx.toast("Could not send the code", e); }
-}
-async function accSignCancel() {
-  try { await ctx.api("/api/accounts/signin/cancel", {}); } catch {}
-  signing = null; clearTimeout(signTimer); signDraw();
+  f.hidden = !show;
+  if (show) { f.token.placeholder = accRenew ? `a new token for ${labelOf(accRenew)}` : "paste one from claude setup-token"; f.token.focus(); }
 }
 
 async function accAdd(d, e) {
   e.preventDefault();
-  const f = e.target, token = f.token.value.trim(), label = f.label.value.trim();
-  const say = f.querySelector(".dk-keys-say"), btn = f.querySelector("button[type=submit]");
+  const f = e.target, token = f.token.value.trim();
+  const btn = f.querySelector("button[type=submit]");
   if (!token) return;
   btn.disabled = true;
   try {
     const renew = accRenew;
-    const j = renew ? await ctx.api(`/api/accounts/${renew}/renew`, { token }) : await ctx.api("/api/accounts", { label, token });
-    f.token.value = ""; f.label.value = ""; accRenew = null;
-    const name = renew ? (ctx.desks.accounts || []).find(a => a.id === renew)?.label : j.account.label;
-    say.textContent = `${name} is kept in ${j.kept === "file" ? "a file only you can read" : "your keychain"}. ${renew ? "Panels start with the new token from their next start." : "Pick it above, or right-click a panel to run it as this account."}`;
+    const j = renew ? await ctx.api(`/api/accounts/${renew}/renew`, { token }) : await ctx.api("/api/accounts", { token });
+    f.token.value = ""; accRenew = null; accPaste(false);
+    const name = renew ? labelOf(renew) : j.account.label;
+    accSaid(`${name} is kept in ${j.kept === "file" ? "a file only you can read" : "your keychain"}. ${renew ? "Panels start with the new token from their next start." : "Pick it above."}`);
     await ctx.refresh();
-  } catch (err) { say.textContent = `Could not keep it · ${ctx.sayErr(err).why}`; }
+  } catch (err) { accSaid(`Could not keep it · ${ctx.sayErr(err).why}`); }
   btn.disabled = false;
 }
 
@@ -398,13 +372,10 @@ function keysAct(a, b, d) {
   else if (a === "key-back") keyBack(d);
   else if (a === "acc-x") accRemove(d, +b.dataset.n);
   else if (a === "acc-back") accBack(d);
-  else if (a === "acc-renew") accRenewing(d, +b.dataset.n);
+  else if (a === "acc-renew") accSignIn(d, +b.dataset.n);
   else if (a === "acc-more") { accMore = accMore === +b.dataset.n ? null : +b.dataset.n; keysRows(d); ctx.docEl.querySelector(`.dk-acc-dots[data-n="${b.dataset.n}"]`)?.focus(); }
   else if (a === "acc-name") { accNaming = +b.dataset.n; accMore = null; keysRows(d); }
   else if (a === "acc-in") accSignIn(d);
-  else if (a === "acc-in-x") accSignCancel();
-  else if (a === "acc-in-code") accSignCode();
-  else if (a === "acc-in-open") { if (signing && /^https:\/\//.test(signing.url || "")) openLink(signing.url); }
   else return false;
   return true;
 }
@@ -439,12 +410,6 @@ async function accGo(g) {
   const d = current(); if (d && keysOpen === d.id) keysRows(d);
 }
 function accBack(d) { if (!accGone) return; clearTimeout(accGone.timer); accGone = null; keysRows(d); }
-function accRenewing(d, id) {
-  accRenew = id; accMore = null;
-  keysRows(d);
-  const more = ctx.docEl.querySelector(".dk-acc-more");
-  if (more) { more.open = true; more.querySelector("input[name=token]").focus(); }
-}
 
 /** The line, as a field in its own place. Enter or leaving it keeps what was
  *  typed; Escape leaves it as it was. */

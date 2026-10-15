@@ -94,6 +94,19 @@ fn the_panels_that_follow_a_desk_are_the_ones_without_their_own() {
 }
 
 #[test]
+fn a_new_account_is_named_by_the_first_free_number() {
+    let conn = db();
+    assert_eq!(next_label(&list(&conn).unwrap()), "Account 2");
+    add(&conn, "Account 2", 1).unwrap();
+    let three = add(&conn, "Account 3", 2).unwrap();
+    add(&conn, "Work", 3).unwrap();
+    assert_eq!(next_label(&list(&conn).unwrap()), "Account 4");
+    let mut conn = conn;
+    remove(&mut conn, three.id).unwrap();
+    assert_eq!(next_label(&list(&conn).unwrap()), "Account 3");
+}
+
+#[test]
 fn a_label_is_one_short_line() {
     assert_eq!(
         clean_label("  Work \n laptop ").as_deref(),

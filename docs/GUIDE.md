@@ -577,27 +577,40 @@ The same sheet holds your Claude accounts, so one desk can run on your work
 plan and another on your own without a `/logout` between them. The sheet
 is two short lists, *Claude as* and *Keys*, and opens on the account the
 desk runs as; the desk's head names that account beside the key whenever
-it is not your login. Under *Add a Claude account*, *Sign in…* opens Claude's sign-in page in your browser:
-approve as the other account, paste the code if the page shows one, and the
-account is added. snyvi runs `claude setup-token` out of sight for this and
-keeps the token it prints the way a key's value is; the page never sees it.
-A token from running `claude setup-token` yourself can be pasted in the same
-place instead. Your `/login` account is always there as
-*Your login*, and the one picked is what the desk's panels start as. A
-panel can have its own: right-click it for *Run as…*, or *Continue as…* to
-restart it as the other account, back into the same conversation. Panels
-already running keep the account they started as, and changing the desk's
-offers to switch the ones with Claude open. Everything else under
-`~/.claude` -- settings, hooks, MCP servers, memory, the conversations
-`--resume` finds -- is shared by every account. A token lasts a year: in
-its last month the row says *Renew by* the day it ends, and a click signs
-in again for a new one. An account's **⋯** holds *Rename*, *Renew* and
-*Remove from every desk*. A desk key named `ANTHROPIC_API_KEY` or
-`ANTHROPIC_AUTH_TOKEN` wins over any account,
-so the sheet says so when a desk has one. A token can't use claude.ai's
-connectors or Remote Control, which want the `/login` account. snyvi never
-switches an account on its own, and *Remove from every desk* puts its desks
-and panels back on your login and forgets the token, with Undo first.
+it is not your login. **+ Claude account** opens Claude's sign-in page in
+your browser: approve as the other account and it is added, as *Account
+2* -- rename it from its **⋯**. If the page shows a code, *Page shows a
+code?* gives you a field for it. snyvi runs `claude setup-token` out of
+sight for this and keeps the token it prints the way a key's value is; the
+page never sees it. Only a sign-in that cannot work offers *Paste a token
+instead*, for one from running `claude setup-token` yourself. Accounts are
+your Claude subscriptions only: an API key goes in Keys. Your `/login`
+account is always there as *Your login*, and the one picked is what the
+desk's panels start as. Panels already running keep the account they
+started as, and changing the desk's offers to switch the ones with Claude
+open, back into the same conversation. Everything else under `~/.claude`
+-- settings, hooks, MCP servers, memory, the conversations `--resume`
+finds -- is shared by every account.
+
+When a panel's Claude hits its usage limit, the panel offers the other
+accounts, each with what it has left -- *Continue as Work · 80% left* --
+and the ones that are out too, dimmed, with when they reset. With no other
+account left to go to, *Add another account* signs one in and the panel
+goes on as it. Home shows each account's windows, and a panel's hover the
+ones of the account it runs as. When an account's sign-in stops working --
+revoked, expired, an organisation that no longer allows it -- the panel
+says so with *Renew*, which signs it in again and goes on, and its row in
+the sheet says *Sign-in stopped*. A token lasts a year: in its last month
+the row says *Renew by* the day it ends. An account's **⋯** holds
+*Rename*, *Renew* and *Remove from every desk*. A desk key named
+`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN` wins over any account, so
+the sheet says so when a desk has one; so does an `apiKeyHelper` or an
+`export` of one in your shell's profile, which snyvi does not look for. A
+token can't use claude.ai's connectors or Remote Control, which want the
+`/login` account. snyvi never switches an account on its own, and *Remove
+from every desk* puts its desks and panels back on your login and forgets
+the token, with Undo first; panels still running as it say *a removed
+account* until they restart.
 
 The server also offers five prompts, the loop's own commands, listed in the
 `/` menu as `/snyvi:wrap-up (MCP)` and so on: `wrap-up` ticks what is
