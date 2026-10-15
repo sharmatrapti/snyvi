@@ -45,7 +45,7 @@ fn picture_size_of(file: &Path) -> Option<(u32, u32)> {
 /// Width and height from a picture's header: PNG, JPEG, GIF, WebP. Bounds
 /// are checked on every read, so a short or odd file gives `None`, never a
 /// panic; a size of zero, which no picture has, gives `None` too.
-pub(super) fn picture_size(b: &[u8]) -> Option<(u32, u32)> {
+pub(crate) fn picture_size(b: &[u8]) -> Option<(u32, u32)> {
     let be32 = |at: usize| -> Option<u32> {
         Some(u32::from_be_bytes(b.get(at..at + 4)?.try_into().ok()?))
     };

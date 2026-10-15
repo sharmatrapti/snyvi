@@ -182,6 +182,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: WidgetCmd,
     },
+    /// A desk's gallery, for a script calling an image or video model: `snyvi gallery add out.png --caption "warm" --model flux --cost 0.04 --desk 3`.
+    Gallery {
+        #[command(subcommand)]
+        cmd: GalleryCmd,
+    },
     /// Show daemon status.
     Status,
     /// Say hello: the face, the version and the address. Not in the help; for whoever thought to ask.
@@ -195,6 +200,42 @@ enum Cmd {
         /// Exit non-zero if any case exceeds its budget (SNYVI_BENCH_FACTOR scales budgets for slow CI runners).
         #[arg(long)]
         check: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum GalleryCmd {
+    /// Add an output: a picture (png, jpg, gif, webp, avif) or a clip (mp4, webm, mov, m4v), copied in. Inside a snyvi panel it is that desk's, and its first add asks you with a card; otherwise give --desk.
+    Add {
+        /// The file. Leave it out, with --job, for a tile that says it is being made.
+        file: Option<PathBuf>,
+        /// Your id for this output: the same job again with the file fills its tile.
+        #[arg(long)]
+        job: Option<String>,
+        #[arg(long)]
+        caption: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        prompt: Option<String>,
+        /// In dollars.
+        #[arg(long)]
+        cost: Option<f64>,
+        /// A clip's first frame, as a picture.
+        #[arg(long)]
+        poster: Option<PathBuf>,
+        /// Why the job made nothing.
+        #[arg(long)]
+        failed: Option<String>,
+        /// The gallery's name (gallery).
+        #[arg(long)]
+        name: Option<String>,
+        /// On this desk, by its id, from anywhere.
+        #[arg(long)]
+        desk: Option<i64>,
+        /// The box's height, in lines of 20 px: 2 to 6 (4).
+        #[arg(long)]
+        lines: Option<u8>,
     },
 }
 
@@ -375,6 +416,7 @@ pub(crate) fn run() -> Result<()> {
         },
         Cmd::Key { name } => print_key(&paths, &name),
         Cmd::Widget { cmd } => widget_cmd(&paths, cmd),
+        Cmd::Gallery { cmd } => gallery_cmd(&paths, cmd),
         Cmd::Status => status(&paths),
         Cmd::Bench { check } => bench::run(check),
         Cmd::Hi => hi(),
@@ -808,6 +850,44 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
         );
     } else if v.get("cleared").and_then(serde_json::Value::as_bool) == Some(false) {
         eprintln!("snyvi: there was no widget called {name} there");
+    }
+    Ok(())
+}
+
+/// `snyvi gallery add`: the paths made absolute here, since the daemon
+/// reads them from wherever it runs.
+fn gallery_cmd(paths: &config::Paths, cmd: GalleryCmd) -> Result<()> {
+    let GalleryCmd::Add {
+        file,
+        job,
+        caption,
+        model,
+        prompt,
+        cost,
+        poster,
+        failed,
+        name,
+        desk,
+        lines,
+    } = cmd;
+    let abs = |p: Option<PathBuf>| -> Result<String> {
+        Ok(match p {
+            None => String::new(),
+            Some(p) => std::path::absolute(&p)?.to_string_lossy().to_string(),
+        })
+    };
+    let body = serde_json::json!({
+        "file": abs(file)?, "job": job, "caption": caption, "model": model, "prompt": prompt,
+        "cost": cost, "poster": abs(poster)?, "failed": failed, "name": name, "lines": lines,
+    });
+    let v = client::gallery(paths, body, desk)?;
+    if v.get("waiting").and_then(serde_json::Value::as_bool) == Some(true) {
+        eprintln!(
+            "snyvi: kept as output #{}; the gallery waits for your yes on this desk's On you list",
+            v["id"]
+        );
+    } else {
+        println!("{}", v["id"]);
     }
     Ok(())
 }

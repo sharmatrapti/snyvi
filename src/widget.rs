@@ -41,6 +41,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 pub mod files;
+pub mod gallery;
 #[cfg(test)]
 mod tests;
 
@@ -96,6 +97,29 @@ CREATE TABLE IF NOT EXISTS widget_asks (
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (desk_id, name)
 );
+-- A gallery's outputs (`gallery`): every one kept, its file in data/gallery.
+CREATE TABLE IF NOT EXISTS gallery_items (
+  id INTEGER PRIMARY KEY,
+  desk_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  job TEXT NOT NULL DEFAULT '',
+  file TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '',
+  caption TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  prompt TEXT NOT NULL DEFAULT '',
+  cost_micros INTEGER NOT NULL DEFAULT 0,
+  poster TEXT NOT NULL DEFAULT '',
+  failed TEXT NOT NULL DEFAULT '',
+  width INTEGER NOT NULL DEFAULT 0,
+  height INTEGER NOT NULL DEFAULT 0,
+  pane TEXT NOT NULL DEFAULT '',
+  writer TEXT NOT NULL DEFAULT '',
+  made_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS gallery_items_box ON gallery_items(desk_id, name, id);
 "#;
 
 /// 1.30: the desks a widget file is on (ids, comma-separated; none is every

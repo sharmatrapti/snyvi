@@ -194,6 +194,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("read_widgets", Session::read_widgets),
     ("set_widget", Session::set_widget),
     ("propose_widget", Session::propose_widget),
+    ("add_to_gallery", Session::add_to_gallery),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {

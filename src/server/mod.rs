@@ -14,6 +14,7 @@ mod api_agent;
 mod api_browse;
 mod api_desk;
 mod api_docs;
+mod api_gallery;
 mod api_peer;
 mod api_pipeline;
 mod api_thread;
@@ -34,6 +35,7 @@ use api_agent::*;
 use api_browse::*;
 use api_desk::*;
 use api_docs::*;
+use api_gallery::*;
 use api_peer::*;
 use api_pipeline::*;
 use api_thread::*;
@@ -434,6 +436,9 @@ fn widget_routes() -> Router<Arc<App>> {
         .route("/api/widgets/{name}/remove", post(remove_widget))
         .route("/api/widgets/{name}/restore", post(restore_widget))
         .route("/api/panes/{id}/propose-widget", post(pane_propose_widget))
+        .route("/api/panes/{id}/gallery", post(pane_add_gallery))
+        .route("/api/gallery", get(list_gallery).post(add_gallery))
+        .route("/api/gallery/pick", post(pick_gallery))
 }
 
 /// Pipelines (`api_pipeline`): the window's alone, on the desk gate.
@@ -519,6 +524,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/b/{id}", get(shell_browse))
         .route("/b/{id}/{*path}", get(shell_browse_file))
         .route("/files/{id}/{*path}", get(doc_file))
+        .route("/gallery/{file}", get(gallery_file))
         .route("/assets/mermaid.js", get(asset_mermaid))
         .route("/assets/{name}", get(asset_named))
         .route("/assets/fonts/{name}", get(asset_font))
