@@ -220,6 +220,8 @@ const runsHere = v => !!(v && v.status.running && v.status.agent_in && /^[0-9a-f
  *  mode, so its output lands in that conversation and the agent carries on.
  *  New panel runs it in a shell of its own; Copy is for anywhere else. */
 function runRow(d, w, n, from, esc) {
+  // A walk-through of several (#164) is a card of its own (16-steps.js).
+  if (w.options && w.options.length) return stepsRow(d, w, n, from, esc);
   const here = runsHere(views.get(w.pane));
   const run = here
     ? `<button type="button" class="tn-opt" data-a="tn-run" data-w="${w.id}" data-tip="Run it in panel ${n}" data-tip-sub="Typed into its prompt as a ! command, after anything typed there. Its output goes to the agent">Run in panel ${n}</button>`
@@ -554,11 +556,14 @@ async function filedAct(a, b, d) {
   else if (a === "tn-gsend") await sendGroup(d, +b.dataset.g);
   else if (a === "tn-gunsend") { for (const x of filed.turns) if (x.ask_group === +b.dataset.g) sendable.delete(x.id); rail(); }
   else if (a === "tn-run" && w) runHere(d, w);
+  else if (a === "tn-step-run" && w) await stepRun(d, w, +b.dataset.i, b.dataset.to);
+  else if (a === "tn-step-done" && w) await stepDone(d, w, +b.dataset.i);
   else if (a === "tn-newpanel" && w) await runNewPanel(d, w);
   else if (a === "tn-copy" && w) copySha(b, "Copied");
   else if (a === "tn-unsend" && w) { sendable.delete(w.id); rail(); }
   else if (a === "tn-x" && w) {
     filed.turns = filed.turns.filter(x => x !== w);
+    stepsForget(w.id);
     putAway("w", w.id, w.text); rail();
     await told({ ...b.dataset }, `w${w.id}`, "Could not put it away", () => { filed.turns.push(w); filedGone = null; },
       () => ctx.api(`/api/desks/${d.id}/turns/${w.id}/remove`, {}));

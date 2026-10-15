@@ -1063,3 +1063,62 @@ fn a_key_added_or_a_merge_seen_settles_its_turn() {
     assert_eq!(t.answer, "Merged (0123456, seen by snyvi)");
     assert_eq!(t.told_at, 0, "the agent hears it at its next prompt");
 }
+
+/// A `run` can be a walk-through (#164): commands the reader runs one click
+/// at a time, the lines over them, and steps done by hand, which they tick.
+/// Every step is checked as one command is, all of them or the turn is
+/// refused, and the first command is the turn's own for a page that knows
+/// no steps.
+#[test]
+fn a_run_turn_carries_steps_each_checked_like_one_command() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let run = |steps: &[&str]| Ask {
+        kind: "run".into(),
+        text: "Pull the Starlink app off the phone".into(),
+        options: steps.iter().map(|s| s.to_string()).collect(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let walk = [
+        "$ sudo apt install -y android-tools-adb",
+        "On the phone: Settings → About phone → tap Build number seven times",
+        "# Is the phone seen?",
+        "$ adb devices",
+        "$ adb shell pm list packages | grep -i -E 'starlink|spacex'",
+    ];
+    let Asked::Turn(t) = ask(&mut conn, d, &run(&walk), 1).unwrap() else {
+        panic!()
+    };
+    assert_eq!(t.cmd, "sudo apt install -y android-tools-adb");
+    assert_eq!(turn(&conn, d, t.id).unwrap().unwrap().options, walk);
+    for bad in [
+        vec!["$ echo one\necho two"],
+        vec!["$ echo \u{1b}[201~ typed as keys"],
+        vec!["$ "],
+        vec!["Only by hand, nothing to run"],
+        vec!["$ ls", "# "],
+        vec!["$ ls", "# Is it seen?"],
+        vec!["# Plug it in", "Plug the phone in", "$ adb devices"],
+        vec!["# One", "# Two", "$ ls"],
+        vec!["$ ls"; STEPS_MAX + 1],
+    ] {
+        assert_eq!(
+            ask(&mut conn, d, &run(&bad), 2).unwrap(),
+            Asked::BadCmd,
+            "{bad:?}"
+        );
+    }
+    assert!(matches!(
+        ask(&mut conn, d, &run(&["$ ls"; STEPS_MAX]), 3).unwrap(),
+        Asked::Turn(_)
+    ));
+    // Steps are a run's alone: the other hand-overs still take none.
+    let Ask { options, .. } = run(&walk);
+    let try_it = Ask {
+        kind: "try".into(),
+        options,
+        ..run(&[])
+    };
+    assert_eq!(ask(&mut conn, d, &try_it, 4).unwrap(), Asked::BadOptions);
+}

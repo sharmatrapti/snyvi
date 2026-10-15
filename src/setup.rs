@@ -1089,6 +1089,8 @@ mod skill_tests {
             "read_widgets",
             "set_widget",
             "propose_widget",
+            "show_card",
+            "clear_card",
             "hand_over",
             "leave_off",
         ] {

@@ -141,7 +141,8 @@ function oyPlace(el) {
   oy.inRail = !!rr && rr.width >= 180 && getComputedStyle(r).position !== "fixed";
   el.classList.toggle("in-rail", oy.inRail);
   if (!oy.inRail) return;
-  const m = ctx.metaEl?.getBoundingClientRect(), foot = m && m.height ? m.top : rr.bottom;
+  // It stands on the cards when there are any (15-cards.js), on the foot when not.
+  const m = ctx.metaEl?.getBoundingClientRect(), foot = (m && m.height ? m.top : rr.bottom) - cardsLift();
   el.style.setProperty("--oy-l", `${Math.round(rr.left + 8)}px`);
   el.style.setProperty("--oy-w", `${Math.round(rr.width - 16)}px`);
   el.style.setProperty("--oy-b", `${Math.round(innerHeight - foot + 6)}px`);

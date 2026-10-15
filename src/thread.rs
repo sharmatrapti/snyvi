@@ -155,6 +155,12 @@ pub const KINDS: [&str; 6] = ["decide", "try", "merge", "key", "run", "do"];
 /// The longest command a `run` turn carries, in bytes: one line, typed into
 /// a terminal on the reader's click.
 pub const CMD_BYTES: usize = 2048;
+/// The most steps one `run` carries (#164): a walk through a setup, not a
+/// script -- past a dozen, it is a script, and that goes in a file.
+pub const STEPS_MAX: usize = 12;
+/// A step done by hand, in characters: "Settings → About phone → tap Build
+/// number seven times" fits.
+const STEP_CHARS: usize = 160;
 
 /// Threads a desk holds that no panel has moved on from: not shipped, put
 /// away, parked, or left by a panel that closed or took up another. A desk is
@@ -1117,6 +1123,50 @@ fn command(cmd: &str) -> Option<&str> {
     (!c.is_empty() && c.len() <= CMD_BYTES && !c.chars().any(char::is_control)).then_some(c)
 }
 
+/// A `run` turn's steps (#164), checked, as its `options` keep them: `$ cmd`
+/// a command the reader runs with a click -- the same one line `command`
+/// takes, never cut short -- `# words` the line over the command after it,
+/// and anything else a step done by hand, which the reader ticks. Steps are
+/// all good or the turn is refused: a walk-through missing its fourth step
+/// is worse than none.
+fn steps(raw: &[String]) -> std::result::Result<Vec<String>, Asked> {
+    // The lines over commands are not steps of their own.
+    let counted = raw
+        .iter()
+        .filter(|s| !s.trim_start().starts_with("# "))
+        .count();
+    if counted > STEPS_MAX || raw.len() > 2 * STEPS_MAX {
+        return Err(Asked::BadCmd);
+    }
+    // A caption is the line over the command after it: one with no command
+    // under it would say nothing on the card, so it is refused, not dropped.
+    let caption = |s: &String| s.trim_start().starts_with("# ");
+    let under = |i: usize| {
+        raw.get(i + 1)
+            .is_some_and(|n| n.trim_start().starts_with("$ "))
+    };
+    if (0..raw.len()).any(|i| caption(&raw[i]) && !under(i)) {
+        return Err(Asked::BadCmd);
+    }
+    raw.iter()
+        .map(|s| {
+            let s = s.trim_start();
+            if let Some(c) = s.strip_prefix("$ ") {
+                return command(c).map(|c| format!("$ {c}")).ok_or(Asked::BadCmd);
+            }
+            let (head, t) = match s.strip_prefix("# ") {
+                Some(t) => ("# ", line(t, OPTION_CHARS)),
+                None => ("", line(s, STEP_CHARS)),
+            };
+            if t.is_empty() {
+                Err(Asked::BadCmd)
+            } else {
+                Ok(format!("{head}{t}"))
+            }
+        })
+        .collect()
+}
+
 /// `ask` and `hand_over`, and the mod's mirror of Claude's own question. The
 /// pane's thread, when it has one, is the thread the turn belongs to.
 pub fn ask(conn: &mut Connection, desk_id: i64, a: &Ask, now: i64) -> Result<Asked> {
@@ -1143,14 +1193,18 @@ fn check(a: &Ask) -> std::result::Result<Checked<'_>, Asked> {
     if text.is_empty() {
         return Err(Asked::Empty);
     }
-    let options: Vec<String> = a
-        .options
-        .iter()
-        .map(|o| line(o, OPTION_CHARS).replace('\n', " "))
-        .filter(|o| !o.is_empty())
-        .collect();
+    let options: Vec<String> = if a.kind == "run" {
+        steps(&a.options)?
+    } else {
+        a.options
+            .iter()
+            .map(|o| line(o, OPTION_CHARS).replace('\n', " "))
+            .filter(|o| !o.is_empty())
+            .collect()
+    };
     let ok = match a.kind.as_str() {
         "decide" => (2..=4).contains(&options.len()),
+        "run" => true,
         _ => options.is_empty(),
     };
     if !ok {
@@ -1161,8 +1215,16 @@ fn check(a: &Ask) -> std::result::Result<Checked<'_>, Asked> {
     } else {
         -1
     };
+    // A run with steps runs its first command as the one it would have had
+    // alone, so a page from before steps still has a Run to offer.
     let cmd = if a.kind == "run" {
-        command(&a.cmd).ok_or(Asked::BadCmd)?
+        command(&a.cmd)
+            .or_else(|| {
+                a.options
+                    .iter()
+                    .find_map(|o| command(o.trim().strip_prefix("$ ")?))
+            })
+            .ok_or(Asked::BadCmd)?
     } else {
         ""
     };

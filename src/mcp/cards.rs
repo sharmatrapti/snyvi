@@ -1,0 +1,87 @@
+//! show_card and clear_card: the small things above the rail's foot while
+//! this panel has focus (`crate::card`, #162) -- a link to where the work
+//! can be seen, or a word on where it is -- each for as long as it says.
+//! A widget is the desk's lasting figure; a card is the panel's passing word.
+
+use super::{arg, said, Session};
+use crate::client;
+use serde_json::{json, Value};
+
+const SHOW: &str = "Show a small card above the rail's foot in snyvi while this panel has focus: a link to \
+where the work can be seen, or a one-line word on where it is. For a place the user will want while you work \
+(a preview or dev server, a deploy, a PR, a CI run, a doc): kind link with a short label and the url. For \
+progress worth a glance (\"Building 3/7 shards\", \"Tests passed 412/412\"): kind text, with tone (run while \
+it goes, ok, warn, bad) and for, the seconds it stays (10-3600; leave it out to keep it while this session \
+runs). Give an id and send the same id again to update it in place (a count going 3/7, 4/7) rather than \
+stacking a new one. The newest three show; a panel keeps six. Never a paragraph, an instruction, or something \
+the user must do (that is hand_over); a figure for the whole desk to keep is set_widget. Cards go when this \
+session ends.";
+
+const CLEAR: &str =
+    "Take a card you showed with show_card off the rail's foot, by its id: when the link is \
+no longer useful or the word no longer true.";
+
+pub(super) fn specs() -> Vec<Value> {
+    vec![
+        json!({
+            "name": "show_card", "title": "Show a card", "description": SHOW,
+            "inputSchema": { "type": "object", "properties": {
+                "kind": { "type": "string", "enum": ["link", "text"] },
+                "label": { "type": "string", "description": "One line: at most 32 characters for a link, 80 for text." },
+                "url": { "type": "string", "description": "For a link: http or https, this machine included (http://127.0.0.1:7801)." },
+                "id": { "type": "string", "description": "Letters, digits, - and _, at most 32. The same id updates the card." },
+                "tone": { "type": "string", "enum": ["run", "ok", "warn", "bad", "none"] },
+                "for": { "type": "integer", "minimum": 10, "maximum": 3600, "description": "Seconds it stays. Leave it out to keep it while this session runs." }
+            }, "required": ["kind", "label"], "additionalProperties": false },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+        }),
+        json!({
+            "name": "clear_card", "title": "Clear a card", "description": CLEAR,
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "string" }
+            }, "required": ["id"], "additionalProperties": false },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+        }),
+    ]
+}
+
+impl Session {
+    pub(super) fn show_card(&self, args: &Value) -> Value {
+        let Some(p) = self.pane.as_deref() else {
+            return said(
+                "This session is not running in a snyvi desk, so there is no rail to show a card in.",
+                true,
+            );
+        };
+        let mut body = json!({ "kind": arg(args, "kind"), "label": arg(args, "label") });
+        for k in ["url", "id", "tone", "for"] {
+            if let Some(v) = args.get(k).filter(|v| !v.is_null()) {
+                body[k] = v.clone();
+            }
+        }
+        match client::pane_thread(&self.paths, p, "card", body) {
+            Ok(_) => said(
+                match args.get("id").and_then(Value::as_str) {
+                    Some(id) => format!("The card {id} is above the rail's foot while this panel has focus. Send the same id to update it; clear_card takes it off."),
+                    None => "The card is above the rail's foot while this panel has focus.".to_string(),
+                },
+                false,
+            ),
+            Err(e) => said(format!("snyvi did not take it: {e}"), true),
+        }
+    }
+
+    pub(super) fn clear_card(&self, args: &Value) -> Value {
+        let Some(p) = self.pane.as_deref() else {
+            return said(
+                "This session is not running in a snyvi desk, so it has no cards.",
+                true,
+            );
+        };
+        let id = arg(args, "id");
+        match client::pane_thread(&self.paths, p, "card", json!({ "id": id, "clear": true })) {
+            Ok(_) => said(format!("The card {id} is off the rail."), false),
+            Err(e) => said(format!("snyvi did not take it: {e}"), true),
+        }
+    }
+}

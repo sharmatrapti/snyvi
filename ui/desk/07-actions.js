@@ -486,6 +486,7 @@ function detach() {
   ctx.metaEl.removeEventListener("click", click);
   closeLightbox();
   document.removeEventListener("keydown", keys, true);
+  hoverDetach();
   document.removeEventListener("mouseup", pickUp);
   document.removeEventListener("keyup", pickKey);
   removeEventListener("scroll", hidePick, true);
@@ -531,6 +532,7 @@ export function open(c) {
   window.addEventListener("snyvi-paste-image", windowPaste);
   ctx.metaEl.addEventListener("click", click);
   document.addEventListener("keydown", keys, true);
+  hoverAttach();
   // A passage selected in a document read over the desk can be kept as a
   // point for the panel that sent it (`picked`).
   document.addEventListener("mouseup", pickUp);
@@ -699,7 +701,7 @@ export function actions(el) {
       { label: "Close panel", key: ctx.keyHint("ctrl+alt+w"), danger: true, run: does("close") },
     ] };
   }
-  const repo = el.closest(".dk-repo");
+  const repo = el.closest("a.dk-repo");
   if (repo) {
     const url = repo.getAttribute("href"), rn = repoName(url);
     return { head: rn ? rn.path : url, items: [
@@ -803,5 +805,6 @@ export function close() {
   docList = []; docsAt = null; docsAll = false;
   forgetDocs(); forgetNotes(); hidePoints();
   detach();
+  cardsDrop();
   ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
 }

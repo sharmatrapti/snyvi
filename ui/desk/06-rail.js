@@ -428,36 +428,40 @@ function repoName(url) {
   catch { return null; }
 }
 
-/** The desk and its focused panel, in the pane under the rail: what the
- *  clock and the focused panel's own frames redraw, and nothing else. Under
- *  them, the desk's repository on the web, when its folder has one. */
+/** The desk's focused panel, in one line at the rail's foot: as tall as the
+ *  sidebar's foot and on its rule, so the two feet read as one band across
+ *  the window, and never a line more (#163). A line that wrapped when its
+ *  clock ticked wider ("done 52s" / "done 1m") moved the list above it every
+ *  minute. What had rows of its own goes where it costs no height: the
+ *  folder the panel's shell moved to is in the tip on its number, and the
+ *  desk's repository on the web is an icon in a slot kept for it at the end,
+ *  there or not, so its late answer fills the slot and moves nothing. */
 function meta() {
   const d = current();
   if (!d) return;
   const { esc } = ctx, v = views.get(focused), s = v ? v.status : null;
   const since = !s ? "" : s.agent && s.agent_since ? `${s.agent.replace("_", " ")} ${ago(s.agent_since)}` : s.blocked && s.blocked_since ? `blocked ${ago(s.blocked_since)}` : s.running && s.since ? `up ${ago(s.since)}` : s.exit != null ? `exited ${s.exit}` : "not running";
-  // The desk's name and folder are in its head, and renaming and closing it
-  // are on its ⋯: this pane is the focused panel's line, and nothing twice.
-  const top = "";
   const cp = ctxPct(s), us = cp == null ? "" : usageSub();
-  // A held panel, never started, has no line yet: its card says it all.
-  const low = v && !(v.pane.held && !s.running) ? `<div class="row dk-pl"><span><span class="dk-slot" data-tip="Panel ${v.pane.slot}" data-key="ctrl+alt+${v.pane.slot}">[${v.pane.slot}]</span>${s.model ? ` ${esc(s.model)}` : s.pid ? ` pid ${s.pid}` : ""}` +
-    `${cp == null ? "" : ` · <span class="${ctxCls(cp)}${ctxUsed(s) == null ? " none" : ""}" data-tip="${esc(ctxTip(s))}"${us ? ` data-tip-sub="${esc(us)}"` : ""}>${ctxFig(s)}</span>`}${since ? ` · ${since}` : ""}</span></div>` +
-    // The folder the panel's shell is in now, when it is not the desk's own.
-    ((s.cwd || v.pane.cwd) && (s.cwd || v.pane.cwd) !== d.root ? `<div class="row dk-pl"><b>In</b><span class="dk-in" data-tip="${esc(s.cwd || v.pane.cwd)}" data-tip-mono>${esc(tilde(s.cwd || v.pane.cwd))}</span></div>` : "") : "";
-  const url = repoOf(d), rn = url && repoName(url);
-  const foot = rn && rn.path ? `<div class="row dk-repo-row"><a class="dk-repo" href="${esc(url)}" target="_blank" rel="noopener" data-tip="Open on ${esc(rn.host)}" data-tip-sub="${esc(url)}">${REPO}<span>${esc(rn.path)}</span><span class="dk-out">↗</span></a></div>` : "";
-  // The panel's line ticks ("up 12s") on every frame that brings a status,
-  // and the desk's ✎ and ✕ above it are what the pointer is on: the line is
-  // written alone while the rows above it are still the ones drawn here.
+  const here = v && (s.cwd || v.pane.cwd), away = here && here !== d.root ? ` data-tip-sub="In ${esc(tilde(here))}"` : "";
+  // When the rail is narrow the model's name gives way first; the figures,
+  // and the clock most of all, are what the line is read for.
+  const what = !v ? "" : v.pane.held && !s.running ? `<span class="dk-m">not started</span>`
+    : `<span class="dk-m">${s.model ? esc(s.model) : s.pid ? `pid ${s.pid}` : ""}</span>` +
+      (cp == null ? "" : `<span class="dk-sep">·</span><span class="${ctxCls(cp)}${ctxUsed(s) == null ? " none" : ""}" data-tip="${esc(ctxTip(s))}"${us ? ` data-tip-sub="${esc(us)}"` : ""}>${ctxFig(s)}</span>`) +
+      (since ? `<span class="dk-sep">·</span><span class="dk-since">${since}</span>` : "");
+  const low = `<span class="dk-pl">${v ? `<span class="dk-slot" data-tip="Panel ${v.pane.slot}"${away} data-key="ctrl+alt+${v.pane.slot}">[${v.pane.slot}]</span>` : ""}${what}</span>`;
+  const url = repoOf(d), rn = url && repoName(url), on = rn && rn.path ? `${esc(rn.path)} on ${esc(rn.host)}` : "";
+  const foot = on ? `<a class="dk-repo" href="${esc(url)}" target="_blank" rel="noopener" data-tip="${on}" data-tip-sub="${esc(url)}" aria-label="${on}">${REPO}</a>` : `<span class="dk-repo"></span>`;
+  // The line ticks ("up 12s") on every frame that brings a status, and the
+  // icon beside it may be under the pointer: the line is written alone while
+  // the icon is still the one drawn here.
   const el = ctx.metaEl, pl = el.querySelector(".dk-pl");
-  if (el.$top === top && el.$foot === foot && el.firstElementChild === el.$first && (pl || !low)) {
-    // The panel's lines -- its state and, when it moved, its folder -- are
-    // written together: all of the old ones out, the new ones in their place.
-    if (low !== el.$low) { el.querySelectorAll(".dk-pl").forEach((r, i) => { if (i) r.remove(); }); if (low) pl.outerHTML = low; else if (pl) pl.remove(); }
-  } else drawIn(el, top + low + foot);
-  el.$top = top; el.$low = low; el.$foot = foot;
+  if (pl && el.$foot === foot && el.firstElementChild === el.$first) {
+    if (low !== el.$low) { pl.outerHTML = low; el.$first = el.firstElementChild; el.$html = low + foot; }
+  } else drawIn(el, low + foot);
+  el.$low = low; el.$foot = foot;
   ctx.rail.classList.remove("empty");
+  cards();
 }
 
 /** Write `html` into `el`, unless `el` already holds exactly that as this

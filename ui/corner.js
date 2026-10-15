@@ -454,7 +454,7 @@ function turnRow(w) {
   const where = `${esc(w.desk_name || "a desk")}${w.slot ? ` · panel ${w.slot}` : ""}`;
   return `<li class="cn-row cn-ask"><span class="cn-ico">${c.glyph("aside", 12)}</span><span class="cn-b">` +
     `<span class="cn-by"><b>${esc(w.by || whoOf(w))}</b> · ${where} · ${c.relShort(w.created_at)}</span>` +
-    `<span class="cn-t">${esc(w.text)}</span>${w.kind === "run" && w.cmd ? `<code class="cn-cmd">${esc(w.cmd)}</code>` : ""}` +
+    `<span class="cn-t">${esc(w.text)}</span>${w.kind === "run" && w.options && w.options.length ? `<span class="cn-by">${w.options.filter(o => !o.startsWith("# ")).length} steps, run one at a time on the desk</span>` : w.kind === "run" && w.cmd ? `<code class="cn-cmd">${esc(w.cmd)}</code>` : ""}` +
     `<span class="cn-acts">${opts.map((o, i) => `<button type="button" class="cn-opt${i === w.recommended ? " rec" : ""}" data-a="cn-answer" data-k="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
     `<button type="button" class="cn-link" data-a="cn-desk" data-k="${w.desk_id}" data-v="${w.slot || 0}">${w.kind === "run" ? "Run on the desk" : "Go to desk"}</button></span></span>` +
     `<button type="button" class="cn-rx" data-a="cn-notnow" data-k="${w.id}" aria-label="Not now: ${esc(w.text)}" data-tip="Not now" data-tip-sub="nothing is deleted">${c.glyph("x", 10)}</button></li>`;
