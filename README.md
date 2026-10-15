@@ -160,11 +160,14 @@ snyvi init codex           # also cursor, claude-desktop, gemini, windsurf, vsco
 Arrange both sidebars on `/sidebars`: drag, switch off, reset. Give a desk
 a small status box an agent keeps up to date, or one a script fills, or one
 snyvi runs for you on a timer, like the branch you're on and how far ahead
-it is. [Write a widget](docs/WIDGETS.md).
+it is. [Write a widget](docs/WIDGETS.md). A desk's gallery holds what an
+image or video model made for you, as it lands: click one to see it big,
+and pick one to tell the agent ([A gallery](docs/WIDGETS.md#a-gallery)).
 
 ```
 snyvi widget set backups --tone ok "Nightly backup **done**"
 snyvi widget new git && snyvi widget check git
+snyvi gallery add out/hero.png --caption "warm" --model flux --cost 0.04 --desk 3
 ```
 
 ## How it works

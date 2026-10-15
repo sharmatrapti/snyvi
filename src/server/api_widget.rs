@@ -138,13 +138,13 @@ pub(crate) async fn set_layout(State(app): S, headers: HeaderMap, body: Bytes) -
 #[derive(Deserialize, Default)]
 #[serde(default)]
 pub(crate) struct PushBody {
-    name: String,
-    body: serde_json::Value,
-    desk: Option<i64>,
-    writer: String,
+    pub(crate) name: String,
+    pub(crate) body: serde_json::Value,
+    pub(crate) desk: Option<i64>,
+    pub(crate) writer: String,
     /// A panel's box: how long it suggests the box lasts, on the card.
     #[serde(rename = "for")]
-    lasts: String,
+    pub(crate) lasts: String,
 }
 
 impl PushBody {
@@ -220,7 +220,7 @@ pub(crate) async fn pane_set_widget(
 /// A panel's box the reader has not said yes to: its body waits, and the
 /// card that asks is on On you -- one per desk and name, however often
 /// the panel sends meanwhile. A clear while it waits takes the body back.
-fn ask_for_box(
+pub(crate) fn ask_for_box(
     app: &Arc<App>,
     desk: i64,
     pane: &str,
@@ -232,10 +232,17 @@ fn ask_for_box(
     if let Err(why) = widget::Body::parse(raw) {
         return refused(StatusCode::BAD_REQUEST, why);
     }
+    let preview_md = match widget::Body::parse(raw) {
+        Ok(widget::Sent::Body(b)) => b.md,
+        _ => String::new(),
+    };
     let preview: String = widget::Body::parse(raw)
         .ok()
         .and_then(|s| match s {
-            widget::Sent::Body(b) => Some(b.md),
+            // A gallery's card says what it is, not its mark.
+            widget::Sent::Body(b) => {
+                Some(b.md.replace(widget::gallery::MARK, "").trim().to_string())
+            }
             widget::Sent::Clear => None,
         })
         .unwrap_or_default();
@@ -256,7 +263,11 @@ fn ask_for_box(
             kind: "box".into(),
             name: b.name.clone(),
             cmd: preview.clone(),
-            why: format!("{writer} wants a box on this desk"),
+            why: if widget::gallery::is_gallery(&preview_md) {
+                format!("{writer} wants a gallery on this desk, for what its models make")
+            } else {
+                format!("{writer} wants a box on this desk")
+            },
             by: writer.to_string(),
             pane: pane.to_string(),
             lasts: b.lasts.clone(),
@@ -343,7 +354,13 @@ pub(crate) async fn set_widget(State(app): S, headers: HeaderMap, body: Bytes) -
 }
 
 /// Read, draw, keep and say a pushed body, or clear the widget.
-fn push(app: &Arc<App>, desk: i64, name: &str, raw: &str, w: &widget::Writer) -> Response {
+pub(crate) fn push(
+    app: &Arc<App>,
+    desk: i64,
+    name: &str,
+    raw: &str,
+    w: &widget::Writer,
+) -> Response {
     if !widget::name_ok(name) {
         return refused(
             StatusCode::BAD_REQUEST,
@@ -371,11 +388,21 @@ fn push(app: &Arc<App>, desk: i64, name: &str, raw: &str, w: &widget::Writer) ->
         }
         widget::Sent::Body(b) => b,
     };
-    let html = crate::render::widget_md(&b.md);
-    match app
-        .store
-        .clocked(|c, now| widget::put(c, desk, name, &b, &html, w, now))
-    {
+    // A gallery's body is its outputs, drawn again from what is kept
+    // whenever it is pushed, allowed or brought back (`widget::gallery`).
+    let gallery = widget::gallery::is_gallery(&b.md) && desk != 0;
+    let html = if gallery {
+        String::new()
+    } else {
+        crate::render::widget_md(&b.md)
+    };
+    match app.store.clocked(|c, now| {
+        if gallery {
+            let (b, html) = widget::gallery::body_now(c, desk, name, &b)?;
+            return widget::put(c, desk, name, &b, &html, w, now);
+        }
+        widget::put(c, desk, name, &b, &html, w, now)
+    }) {
         Ok(widget::Put::Done) => {
             announce(app, desk, name);
             Json(json!({ "ok": true, "desk": desk, "name": name })).into_response()

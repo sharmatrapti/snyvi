@@ -22,6 +22,7 @@ not a file. Pick the form by what the reader will do with it:
 | look at pictures or clips you made | Markdown **by path**, with `![alt](shot.png)` / `![take](clip.mp4)` beside it |
 | click through a mockup or chart | one self-contained HTML file: CSS, JS and images inline; a CDN `<script src>` loads, nothing else does |
 | see a screenshot, a PDF | the file itself, by path |
+| look at, and pick from, what an image or video model made | `add_to_gallery`, one call per output (widgets.md, "A gallery") |
 | read a diff or source | the file or the diff; both are highlighted |
 
 Tell the user where it went the way the result says: in the window when it is

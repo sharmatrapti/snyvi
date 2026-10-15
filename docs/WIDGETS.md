@@ -52,7 +52,7 @@ All three send the same thing: **Markdown**, or **one JSON object**:
 
 | Field | | |
 |---|---|---|
-| `body` | Markdown, 1,500 characters at most | text, bold, code, links, lists. No HTML, pictures (their alt text instead), tables or diagrams. Empty clears the widget |
+| `body` | Markdown, 1,500 characters at most | text, bold, code, links, lists. No HTML, pictures (their alt text instead; a gallery's tiles are below), tables or diagrams. Empty clears the widget |
 | `tone` | `ok`, `warn`, `bad`, `none` | colours the count |
 | `count` | 8 characters at most | beside the name, kept while folded: `3`, `!2`, `3/5` |
 | `lines` | 1–6 (3) | the body's room, 20 px a line. A longer body is cut and opens on a click; a new one never moves what's below |
@@ -66,6 +66,61 @@ a push to it is refused.
 snyvi widget set backups --tone ok --count "03:00" "Nightly backup **done**"
 snyvi widget set ci --desk 3 < ci-summary.json
 snyvi widget clear backups
+```
+
+## A gallery
+
+A box an agent fills with what an image or a video model made for you:
+its newest outputs as square tiles in one row, in the room the box keeps
+(4 lines, 76 px tiles, by default). A tile still being made says so and
+becomes the picture where it stands; one that failed is marked, and says
+why in its tip. The count is what they cost together (`$0.84`), or how many
+there are.
+
+- **Click a tile** to see it big, over the desk: ‹ › and ← → step through
+  the outputs, newest first, with each one's caption, model, cost and
+  prompt. A clip plays there.
+- **All desks**, beside the arrows, shows every desk's galleries instead of
+  this one's, each marked with its desk. The switch is remembered in this
+  browser.
+- **Pick**, with a line ("warmer, closer"): the panel that made it hears
+  *You answered "Which one in the gallery?": #3 "warm": warmer,
+  closer (/…/r2-b.png)* on its next prompt, as an answer on On you reaches
+  it. If that panel has closed, the next panel on the desk to prompt hears it.
+
+| Who | How |
+|---|---|
+| an agent in a panel | MCP `add_to_gallery`: `file`, `job`, `caption`, `model`, `prompt`, `cost` (dollars), `poster`, `failed`, `name` (`gallery`), `lines` |
+| a script | `snyvi gallery add out.png --caption warm --model flux --cost 0.04 --desk 3` |
+
+- **A file, never a URL.** The agent downloads what the model gave it (a
+  provider's link expires within the hour) and names the file. snyvi copies
+  it into `gallery/` in its data folder, named by the hash of its bytes, so
+  the gallery shows what was made after the agent's folder is cleaned, and
+  nothing in the sidebar is ever fetched from another host.
+- **What it takes**: a picture (png, jpg, gif, webp, avif), up to 32 MB, or
+  a clip (mp4, webm, mov, m4v), up to 1 GB, with a picture as its `poster`.
+- **A job** is a tile before its file: `job` alone shows "making", the same
+  `job` with `file` fills it, with `failed` marks it.
+- **It asks first.** A panel's first add on a desk is the card a box's is.
+  The outputs added while it waits are kept, and show on Allow. Not now and
+  Remove hold as for a box. A script's add asks nothing, as `snyvi widget
+  set` does.
+- **Nothing is deleted.** Every output stays, a row and a file. Remove takes
+  the box out of view, and its Undo brings back its tiles.
+
+```mermaid
+sequenceDiagram
+  participant A as Agent in panel 2
+  participant D as snyvi
+  participant U as You
+  A->>D: add_to_gallery job r2-b, model kling
+  D-->>U: the card, the first time, then a tile "making"
+  A->>D: add_to_gallery job r2-b, file, cost 0.42
+  D->>D: copies it in by its hash
+  D-->>U: the tile becomes the clip, count $0.42
+  U->>D: opens it, Pick, "keep this camera move"
+  D-->>A: with its next prompt, the pick and the line
 ```
 
 ## A widget file

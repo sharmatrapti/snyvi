@@ -88,6 +88,7 @@ pub(crate) const DIFF_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/diff.js
 
 /// /sidebars: arranging the sidebars and the widgets, fetched when it opens.
 pub(crate) const SIDEBARS_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/sidebars.js"));
+pub(crate) const GALLERY_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/gallery.js"));
 
 /// A folder's page and a file read from disk, fetched when one is opened.
 pub(crate) const BROWSE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/browse.js"));
@@ -792,6 +793,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("browse.js", BROWSE_JS, JS),
     ("paths.js", PATHS_JS, JS),
     ("sidebars.js", SIDEBARS_JS, JS),
+    ("gallery.js", GALLERY_JS, JS),
 ];
 
 /// `/assets/{name}`: one of `ASSETS`, or nothing.

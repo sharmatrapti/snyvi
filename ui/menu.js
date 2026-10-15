@@ -517,6 +517,9 @@ export async function allowWidget(ctx, b) {
  *  Tell the agent on one that failed (#112), Undo on one just removed.
  *  Said in the seat, where the click was. */
 export async function seatAct(ctx, b) {
+  // A gallery's tile: its viewer, fetched on the first one.
+  // Its ?v= is this chunk's own, so the two are of one build.
+  if (b.dataset.gal) return (await import(`/assets/gallery.js${new URL(import.meta.url).search}`)).show(ctx, b);
   const name = b.dataset.wretry || b.dataset.wnot || b.dataset.wtell || b.dataset.wundo, desk = +b.dataset.wd, owner = ownerOf(b.closest("section.wg"));
   b.disabled = true;
   if (b.dataset.wundo) {

@@ -34,6 +34,30 @@ Markdown, or one JSON object:
 
 Names are lowercase letters, digits and dashes, 32 at most.
 
+## A gallery
+
+`add_to_gallery` is for what an image or video model made **for the user**:
+OpenRouter, fal, Replicate, a local model, a render. Each output is a tile in
+the desk's gallery box; the user opens it big, steps through, and picks one.
+Their pick and a line reach you on your next prompt.
+
+- `file` is on this machine: download the model's output first, never a URL
+  (a provider's link expires). snyvi copies it in.
+- A slow model: call it first with `job` and no file (the tile says it is
+  being made), then the same `job` with the `file`, or with `failed`.
+- Give `caption` (what differs from the others), `model`, `prompt`, `cost`
+  in dollars. A clip can have a `poster` (`ffmpeg -ss 0 -i clip.mp4 -frames:v 1 poster.jpg`).
+- The first add on a desk is a card, as a box's is; outputs added meanwhile
+  wait and show on Allow.
+- Not for screenshots of your work or documents: those are `send_document`.
+
+```text
+add_to_gallery { file: "/abs/out/r2-b.png", caption: "warm, closer", model: "flux-1.1-pro",
+                 prompt: "…", cost: 0.04, job: "r2-b" }
+```
+
+A script does the same: `snyvi gallery add out.png --caption "warm" --model flux --cost 0.04 --desk 3`.
+
 ## A widget file
 
 `propose_widget` takes what goes in its folder:

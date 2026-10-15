@@ -380,7 +380,7 @@ function click(e) {
   if (fd) { ctx.fold(fd.dataset.fold); return; }
   const wa = e.target.closest("[data-wallow]");
   if (wa) { ctx.allowWidget(wa); return; }
-  const ws = e.target.closest("[data-wretry], [data-wnot], [data-wtell], [data-wundo]");
+  const ws = e.target.closest("[data-wretry], [data-wnot], [data-wtell], [data-wundo], [data-gal]");
   if (ws) { ctx.seatAct(ws); return; }
   // A widget's body or failed line past its room opens where it is, and
   // closes again.

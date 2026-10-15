@@ -5,6 +5,8 @@
 //! should outlive the session: snyvi runs its command on a timer, on the
 //! agent's desk alone (1.32). read_widgets: what is on the desk and where
 //! each stands, so the agent does not push what was refused.
+//! add_to_gallery: what an image or a video model made, as a tile in the
+//! desk's gallery box (`crate::widget::gallery`).
 
 use super::{arg, said, Session};
 use crate::client;
@@ -42,6 +44,18 @@ set_widget or propose_widget, to update your own box rather than make a second, 
 to leave alone what the user said not now to or removed: boxes, proposals and widget files alike. A desk has room \
 for six.";
 
+const GALLERY: &str = "Show what an image or video model made for the user (OpenRouter, fal, Replicate, a local \
+model, a render) as a tile in this snyvi desk's gallery: a box in the desk's rail with the newest outputs, which \
+the user opens big, steps through, and picks from; their pick, with a line, comes back to you on your next prompt. \
+file is a picture (png, jpg, gif, webp, avif) or a clip (mp4, webm, mov, m4v) on this machine: download a model's \
+output first, never pass a URL. snyvi copies it in, so it stays after your folder is cleaned. For a slow model, \
+call it first with a job and no file -- the tile says it is being made -- then again with the same job and the \
+file, or with failed and why. Give caption (a few words: what differs from the others), model, the prompt, and \
+cost in dollars when you know them; a clip can have a poster, its first frame as a picture. The first add on a \
+desk asks the user with a card on their On you list; outputs added meanwhile are kept and show when they allow \
+it. If they said not now, or removed it, stop adding. Not for screenshots of your work or documents: those go \
+with send_document.";
+
 pub(super) fn specs() -> Vec<Value> {
     vec![
         json!({
@@ -65,6 +79,23 @@ pub(super) fn specs() -> Vec<Value> {
                 "why": { "type": "string", "description": "One sentence." },
                 "for": { "type": "string", "enum": ["today", "week", "panel", "always"], "description": "How long you suggest it lasts; the user picks on the card." }
             }, "required": ["name", "command", "why"], "additionalProperties": false },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
+        }),
+        json!({
+            "name": "add_to_gallery", "title": "Add to the gallery", "description": GALLERY,
+            "inputSchema": { "type": "object", "properties": {
+                "file": { "type": "string", "description": "The output: an absolute path (a relative one is read from this session's folder)." },
+                "job": { "type": "string", "description": "Your id for one output, to show it being made before the file is there, and to fill it." },
+                "caption": { "type": "string", "description": "A few words." },
+                "model": { "type": "string" },
+                "prompt": { "type": "string" },
+                "cost": { "type": "number", "minimum": 0, "description": "In dollars." },
+                "poster": { "type": "string", "description": "A clip's first frame, a picture's path." },
+                "failed": { "type": "string", "description": "Why the job made nothing." },
+                "name": { "type": "string", "description": "The gallery's name, default gallery. Lowercase letters, digits and dashes." },
+                "lines": { "type": "integer", "minimum": 2, "maximum": 6, "description": "The box's height, 20 px a line (4)." },
+                "for": { "type": "string", "enum": ["today", "week", "panel", "always"], "description": "How long you suggest it lasts; the user picks on the card." }
+            }, "additionalProperties": false },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
         }),
         json!({
@@ -101,6 +132,44 @@ impl Session {
                 format!("snyvi could not read the desk's widgets: {e}"),
                 true,
             ),
+        }
+    }
+
+    pub(super) fn add_to_gallery(&self, args: &Value) -> Value {
+        let Some(p) = self.pane.as_deref() else {
+            return said(
+                "This session is not running in a snyvi desk, so there is no gallery to add to.",
+                true,
+            );
+        };
+        let mut body = args.clone();
+        // The daemon reads the file; a path relative to this session means
+        // nothing to it.
+        for k in ["file", "poster"] {
+            if let Some(f) = args
+                .get(k)
+                .and_then(Value::as_str)
+                .filter(|f| !f.trim().is_empty())
+            {
+                let path = std::path::Path::new(f.trim());
+                if path.is_relative() && !f.contains("://") {
+                    if let Some(cwd) = self.cwd.as_deref() {
+                        body[k] = json!(std::path::Path::new(cwd).join(path).to_string_lossy());
+                    }
+                }
+            }
+        }
+        match client::pane_thread(&self.paths, p, "gallery", body) {
+            Ok(v) if v["waiting"].as_bool() == Some(true) => said(
+                format!("Kept as output #{}. The user has a card on their On you list to allow the gallery; it shows when they do. Carry on.", v["id"]),
+                false,
+            ),
+            Ok(v) => said(
+                format!("In the gallery as output #{}{}.", v["id"],
+                    if args.get("file").is_none() { ", shown as being made: add the same job with its file when it is done" } else { "" }),
+                false,
+            ),
+            Err(e) => said(format!("snyvi did not take it: {e}"), true),
         }
     }
 

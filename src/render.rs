@@ -16,8 +16,7 @@ mod media;
 mod pictures;
 use media::players;
 pub use media::{lazy_players, media_body, media_kind};
-#[cfg(test)]
-use pictures::picture_size;
+pub(crate) use pictures::picture_size;
 use pictures::sized;
 
 /// Source scanned for an outline, and the most entries returned.

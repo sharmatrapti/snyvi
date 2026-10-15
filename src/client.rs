@@ -1511,6 +1511,44 @@ pub fn widget(
     }
 }
 
+/// Add an output to a desk's gallery (`snyvi gallery add`): inside a snyvi
+/// panel its own desk's, as the agent's tool does, asking first with a
+/// card; with `desk` that desk's, from anywhere, as a script.
+pub fn gallery(paths: &Paths, mut body: Value, desk: Option<i64>) -> Result<Value> {
+    ensure_daemon()?;
+    let pane = std::env::var("SNYVI_SESSION")
+        .ok()
+        .filter(|p| crate::pane::valid_id(p));
+    let mut resp = match pane {
+        Some(p) if desk.is_none() => pane_post(paths, &format!("{p}/gallery"), body)?,
+        _ => {
+            let token = config::read_token(paths).ok_or_else(|| {
+                anyhow!(
+                    "no token at {}; is the daemon running as this user?",
+                    paths.token_path.display()
+                )
+            })?;
+            body["desk"] = serde_json::json!(desk);
+            body["writer"] = serde_json::json!("snyvi gallery add");
+            agent()
+                .post(&format!("{}/api/gallery", config::base_url()))
+                .header("Authorization", &format!("Bearer {token}"))
+                .config()
+                // A clip is copied in before the answer: up to a gigabyte.
+                .timeout_global(Some(Duration::from_secs(300)))
+                .http_status_as_error(false)
+                .build()
+                .send_json(body)
+                .context("asking snyvi")?
+        }
+    };
+    match resp.status().as_u16() {
+        200 | 202 => Ok(resp.body_mut().read_json()?),
+        400 | 404 | 409 => bail!("{}", said(&mut resp)),
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
