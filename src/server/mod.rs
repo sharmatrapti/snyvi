@@ -662,7 +662,7 @@ async fn asked_to_stop(mut stop_rx: broadcast::Receiver<()>, told: broadcast::Se
 pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let token = config::load_or_create_token(&paths)?;
     let window = config::load_or_create_window_secret(&paths)?;
-    let store = Store::open(&paths)?;
+    let store = crate::receive::refiled(Store::open(&paths)?);
     // A planned restart left a marker and marks; a crash left neither. Both
     // are read now, before anything can ask, and cleared once the port is
     // held: a successor that dies before then is started again, and must
