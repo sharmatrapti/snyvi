@@ -151,19 +151,16 @@ pub(crate) async fn pane_agent(
     };
     // A turn that ended because the account's sign-in no longer works: the
     // panel offers Renew (`Usage::broke`), until a status line comes from it.
-    let auth = b.stopped.as_deref().and_then(|w| {
-        crate::accounts::AUTH_REASONS
-            .into_iter()
-            .find(|r| *r == w)
-    });
+    let auth = b
+        .stopped
+        .as_deref()
+        .and_then(|w| crate::accounts::AUTH_REASONS.into_iter().find(|r| *r == w));
     // A turn that ended with its answer says the sign-in works again.
     if live && b.state.as_deref() == Some("done") {
         let account = app.panes.status(&id).account;
         let moved = match auth {
             Some(why) => app.usage.broke(account, why),
-            None if b.stopped.as_deref().unwrap_or("").is_empty() => {
-                app.usage.mended(account)
-            }
+            None if b.stopped.as_deref().unwrap_or("").is_empty() => app.usage.mended(account),
             None => false,
         };
         if moved {
@@ -203,7 +200,11 @@ pub(crate) async fn pane_agent(
     // The windows are the account's the panel runs as, not the panel's.
     // Claude Code has them from an answer, so they also say the account's
     // sign-in works; a model's name alone does not, being the panel's own.
-    if let Some(l) = b.limits.as_ref().filter(|l| l.five_hour.is_some() || l.seven_day.is_some()) {
+    if let Some(l) = b
+        .limits
+        .as_ref()
+        .filter(|l| l.five_hour.is_some() || l.seven_day.is_some())
+    {
         let account = app.panes.status(&id).account;
         if app
             .usage

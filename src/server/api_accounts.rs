@@ -75,7 +75,11 @@ impl Usage {
         seven_day: Option<crate::statusline::Limit>,
         now: i64,
     ) -> bool {
-        let q = Quota { five_hour, seven_day, at: now };
+        let q = Quota {
+            five_hour,
+            seven_day,
+            at: now,
+        };
         let mut all = self.quotas.lock().unwrap_or_else(|e| e.into_inner());
         let was = all.insert(account, q);
         was.is_none_or(|w| {
@@ -124,8 +128,14 @@ impl Usage {
 
     /// An account taken away: nothing heard about it is anyone's now.
     pub(crate) fn forget(&self, account: i64) {
-        self.quotas.lock().unwrap_or_else(|e| e.into_inner()).remove(&account);
-        self.broken.lock().unwrap_or_else(|e| e.into_inner()).remove(&account);
+        self.quotas
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&account);
+        self.broken
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&account);
     }
 }
 

@@ -292,38 +292,83 @@ async fn usage_is_kept_by_account_and_a_sign_in_that_stopped_waits_for_renew() {
     };
     let p2 = p2.id;
     let pick = |account: i64| Some(serde_json::json!({ "account": account }));
-    let (s, _) = page(&router, &l, "POST", &format!("/api/desks/{desk}/account"), pick(id)).await;
+    let (s, _) = page(
+        &router,
+        &l,
+        "POST",
+        &format!("/api/desks/{desk}/account"),
+        pick(id),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
-    let (s, _) = page(&router, &l, "POST", &format!("/api/panes/{p2}/account"), pick(0)).await;
+    let (s, _) = page(
+        &router,
+        &l,
+        "POST",
+        &format!("/api/panes/{p2}/account"),
+        pick(0),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     for p in [&pane, &p2] {
         let at = format!("/api/panes/{p}/start");
-        let (s, t) = page(&router, &l, "POST", &at, Some(serde_json::json!({ "cmd": "sleep 20" }))).await;
+        let (s, t) = page(
+            &router,
+            &l,
+            "POST",
+            &at,
+            Some(serde_json::json!({ "cmd": "sleep 20" })),
+        )
+        .await;
         assert_eq!(s, StatusCode::OK, "{t}");
     }
     assert_eq!(app.panes.status(&pane).account, id);
     assert_eq!(app.panes.status(&p2).account, 0);
 
     let at = crate::store::now() + 3600;
-    let line = |used: f64| {
-        serde_json::json!({ "model": "Opus", "limits": { "five_hour": { "used": used, "resets_at": at } } })
-    };
-    assert_eq!(agent(&router, &l, &pane, line(20.0)).await, StatusCode::NO_CONTENT);
-    assert_eq!(agent(&router, &l, &p2, line(70.0)).await, StatusCode::NO_CONTENT);
+    let line = |used: f64| serde_json::json!({ "model": "Opus", "limits": { "five_hour": { "used": used, "resets_at": at } } });
+    assert_eq!(
+        agent(&router, &l, &pane, line(20.0)).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        agent(&router, &l, &p2, line(70.0)).await,
+        StatusCode::NO_CONTENT
+    );
     let (s, t) = page(&router, &l, "GET", "/api/home", None).await;
     assert_eq!(s, StatusCode::OK, "{t}");
     let j: serde_json::Value = serde_json::from_str(&t).unwrap();
     let qs = j["quotas"].as_array().unwrap();
     assert_eq!(qs.len(), 2, "{t}");
-    assert_eq!((qs[0]["account"].as_i64(), qs[0]["label"].as_str()), (Some(0), Some("your login")));
+    assert_eq!(
+        (qs[0]["account"].as_i64(), qs[0]["label"].as_str()),
+        (Some(0), Some("your login"))
+    );
     assert_eq!(qs[0]["five_hour"]["used"], 70.0);
-    assert_eq!((qs[1]["account"].as_i64(), qs[1]["label"].as_str()), (Some(id), Some("Work")));
+    assert_eq!(
+        (qs[1]["account"].as_i64(), qs[1]["label"].as_str()),
+        (Some(id), Some("Work"))
+    );
     assert_eq!(qs[1]["five_hour"]["used"], 20.0);
-    assert_eq!(j["quota"]["five_hour"]["used"], 70.0, "the one with the least left");
-    let limit = |used: f64| Some(crate::statusline::Limit { used, resets_at: at });
+    assert_eq!(
+        j["quota"]["five_hour"]["used"], 70.0,
+        "the one with the least left"
+    );
+    let limit = |used: f64| {
+        Some(crate::statusline::Limit {
+            used,
+            resets_at: at,
+        })
+    };
     let now = crate::store::now();
-    assert!(!app.usage.heard(id, limit(20.3), None, now), "the same whole percent");
-    assert!(app.usage.heard(id, limit(21.0), None, now), "a percent more");
+    assert!(
+        !app.usage.heard(id, limit(20.3), None, now),
+        "the same whole percent"
+    );
+    assert!(
+        app.usage.heard(id, limit(21.0), None, now),
+        "a percent more"
+    );
 
     let desks = async || -> serde_json::Value {
         let (s, t) = page(&router, &l, "GET", "/api/desks", None).await;
@@ -340,14 +385,30 @@ async fn usage_is_kept_by_account_and_a_sign_in_that_stopped_waits_for_renew() {
         agent(&router, &l, &pane, stopped("authentication_failed")).await,
         StatusCode::NO_CONTENT
     );
-    assert_eq!(agent(&router, &l, &p2, stopped("rate_limit")).await, StatusCode::NO_CONTENT);
+    assert_eq!(
+        agent(&router, &l, &p2, stopped("rate_limit")).await,
+        StatusCode::NO_CONTENT
+    );
     let j = desks().await;
     assert_eq!(j["broken"][id.to_string()], "authentication_failed");
-    assert!(j["broken"].get("0").is_none(), "a limit is not a broken sign-in");
+    assert!(
+        j["broken"].get("0").is_none(),
+        "a limit is not a broken sign-in"
+    );
     let renew = Some(serde_json::json!({ "token": token }));
-    let (s, _) = page(&router, &l, "POST", &format!("/api/accounts/{id}/renew"), renew).await;
+    let (s, _) = page(
+        &router,
+        &l,
+        "POST",
+        &format!("/api/accounts/{id}/renew"),
+        renew,
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
-    assert!(desks().await["broken"].as_object().unwrap().is_empty(), "renewed");
+    assert!(
+        desks().await["broken"].as_object().unwrap().is_empty(),
+        "renewed"
+    );
 
     agent(&router, &l, &p2, stopped("billing_error")).await;
     assert_eq!(desks().await["broken"]["0"], "billing_error");
