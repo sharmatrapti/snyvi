@@ -205,15 +205,25 @@ mod tests {
     #[test]
     fn only_a_sessions_own_transcript_is_read() {
         let s = "9743f452-1df5-43f1-9661-fcbfcf1a7638";
-        assert!(ours(&format!("/home/u/.claude/projects/-w/{s}.jsonl"), s));
-        assert!(!ours(&format!("/home/u/.claude/projects/-w/{s}.json"), s));
-        assert!(!ours("/home/u/.claude/projects/-w/other.jsonl", s));
-        assert!(!ours("/etc/passwd", s));
-        assert!(!ours(&format!("relative/projects/-w/{s}.jsonl"), s));
+        // Absolute the way this platform writes it: `/home/u` has no drive
+        // on Windows, and is not absolute there.
+        let home = std::env::temp_dir();
+        let at = |rest: &[&str]| {
+            rest.iter()
+                .fold(home.clone(), |p, part| p.join(part))
+                .to_string_lossy()
+                .into_owned()
+        };
+        let mine = format!("{s}.jsonl");
+        assert!(ours(&at(&[".claude", "projects", "-w", &mine]), s));
         assert!(!ours(
-            &format!("/home/u/.claude/projects/../x/{s}.jsonl"),
+            &at(&[".claude", "projects", "-w", &format!("{s}.json")]),
             s
         ));
-        assert!(!ours(&format!("/home/u/.ssh/x/{s}.jsonl"), s));
+        assert!(!ours(&at(&[".claude", "projects", "-w", "other.jsonl"]), s));
+        assert!(!ours("/etc/passwd", s));
+        assert!(!ours(&format!("relative/projects/-w/{mine}"), s));
+        assert!(!ours(&at(&[".claude", "projects", "..", "x", &mine]), s));
+        assert!(!ours(&at(&[".ssh", "x", &mine]), s));
     }
 }
