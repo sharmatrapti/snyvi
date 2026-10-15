@@ -136,8 +136,15 @@ which types `claude --resume <id>` at the prompt without Enter. A crash or a
 3. **snyvi never makes input from content it received.** There is no fan-out
    and no run-this-block, and nothing derived from a document is ever typed.
    Bytes reach a PTY from exactly one place: `input()` in `ui/desk.js`, which
-   is called only from a key event or a paste event. The daemon accepts `in`
-   only for a pane that socket is watching (`desk_session`). A pipeline's
+   is called from a key event, a paste event, or the reader's click on a
+   control that shows them, whole, exactly what it will type: Send now and
+   Send answers (the reader's own answer), and Run (an agent's `run` command,
+   or the one step of a `run` in steps whose turn it is, #164, into the
+   agent's prompt or into the walk's own shell panel at its prompt). What a click
+   types is one line with no control character, refused at the door
+   otherwise (`thread::command`, `thread::steps`); one click types one line,
+   and nothing that finishes starts the next. The daemon accepts `in` only for
+   a pane that socket is watching (`desk_session`). A pipeline's
    stage (1.40) is not input: it is a new process with the step as one argv
    entry, started by the runner (`server/pipeline_run.rs`) for a pipeline the
    window made and started. `docs/TERMINAL.md` §9a has the rule as rewritten.

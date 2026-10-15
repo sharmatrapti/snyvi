@@ -436,7 +436,9 @@ function entries(ctx, el, byKey = false) {
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
-      dk && { label: "Keys…", run: () => dk.keysHere() }, RULE,
+      dk && { label: "Keys…", run: () => dk.keysHere() },
+      // Off unless asked for: the panel the pointer settles on takes the keys (#161).
+      dk && { label: "Focus follows the pointer", hint: dk.hoverFocus() ? "on" : "off", run: () => dk.hoverFocus(!dk.hoverFocus()) }, RULE,
       // Where it is in the list; what cannot move it is not offered.
       ...(here ? [] : moves(ctx, id, byKey)),
       files({ desk: id }), copyIt(d.root, "Copy path"), RULE,

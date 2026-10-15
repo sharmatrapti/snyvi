@@ -67,3 +67,13 @@ how to do something (your reply), or news (a document).
    `propose_widget` it. Test it first with `snyvi widget check NAME --dir
    DIR`. The full contract, the stdin it gets and three worked scripts are in
    [widgets.md](widgets.md); read it before writing one.
+
+## Cards
+
+A card is the panel's passing word, above the rail's foot while the panel
+has focus: a **link** to where the work can be seen (a preview, a deploy, a
+PR, a CI run) or one line of **text** on where it is ("Building 3/7"). Use
+`show_card` with an `id` and send it again to update in place; `for` is the
+seconds it stays, left out to keep it while the session runs; `clear_card`
+takes it off. Never a paragraph or a to-do of theirs. A figure for the whole
+desk to keep is a widget.

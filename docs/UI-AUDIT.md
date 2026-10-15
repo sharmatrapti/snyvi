@@ -35,6 +35,7 @@ After that the work falls into four groups: one icon system, one meaning per col
 
 - **Feedback where the click was.** Use the lowest rung of DESIGN §4.1's ladder: the thing itself changes, then the row, then the point. The corner is only for news that nobody clicked.
 - **No layout shift, ever.** Nothing that appears, changes or goes away may move anything else. It lays over the page, or takes a place that was set aside for it.
+- **The two feet are one height.** The sidebar's foot and a desk's rail foot are `--foot-h` tall, their rules level across the window, and each says one line. What used to take a row of its own goes into a tip or a fixed slot (#163).
 - **Hover never moves anything.** Hover changes opacity and colour only. Every icon has a fixed slot.
 - **One glyph, one meaning.** DESIGN §8.3: one SVG set, no text glyphs as icons.
 - **One colour, one meaning.** DESIGN §5.2:

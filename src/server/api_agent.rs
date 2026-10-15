@@ -484,6 +484,37 @@ pub(crate) async fn pane_name(
     renamed(&app, &id, &b.name)
 }
 
+/// A card above the rail's foot, put or taken off by the agent in pane `id`
+/// (`crate::card`, MCP `show_card`): the same gate as its name, and the one
+/// thing it touches is that pane's own cards. Nothing is asked of the
+/// reader first: a card only shows, and goes with the session.
+pub(crate) async fn pane_card(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    if let Err(no) = agent_pane(&app, &headers, &id) {
+        return *no;
+    }
+    let op = match crate::card::parse(&b, crate::store::now()) {
+        Ok(op) => op,
+        Err(why) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": why })),
+            )
+                .into_response()
+        }
+    };
+    match app.panes.put_card(&id, op) {
+        Some(changed) => {
+            Json(serde_json::json!({ "ok": true, "changed": changed })).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 /// The running pane `id`, placed on its desk, for the routes an agent reaches
 /// from inside it: the token, a pane id of the right shape, a pane that is
 /// running -- which a pane only is while its program is -- and then its row.

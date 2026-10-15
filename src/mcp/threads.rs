@@ -28,6 +28,13 @@ const HAND_OVER: &str = "Put what blocks you and only the user can do on their O
 line; their Run types it here, you get its output), or do (all else: pay, sign in, approve). Never ask \
 them to paste a command. One sentence, a link if any.";
 
+/// `hand_over`'s description is at its 350 (the test below), so a run in
+/// steps (#164) is explained on its own field, which the agent reads as well.
+const STEPS: &str = "run only, in place of cmd, when it takes several commands or things done by hand between \
+them (a setup, a device to plug in): one run with steps, never commands written in your reply. Each step a cmd \
+(one line) or a say (a thing done by hand), at most 12. They run each with a click, in order, here or in a \
+shell of its own when it asks for a password (sudo), and tick each done.";
+
 const SETTLE_ASKS: &str = "Take your open questions off the user's On you list when their message in this \
 conversation answered them. Your hand-overs stay. snyvi says, at their next message, which questions of \
 yours are still open.";
@@ -86,6 +93,10 @@ pub(super) fn specs() -> Vec<Value> {
                 "kind": { "type": "string", "enum": ["try", "merge", "key", "run", "do"] },
                 "link": { "type": "string", "description": "A URL or a port, if there is one." },
                 "cmd": { "type": "string", "description": "run only: one command line, exactly as it should run." },
+                "steps": { "type": "array", "maxItems": 12, "description": STEPS, "items": { "type": "object", "properties": {
+                    "cmd": { "type": "string", "description": "One command line, exactly as it should run." },
+                    "say": { "type": "string", "description": "A thing done by hand, or the line over cmd when both are given." }
+                }, "additionalProperties": false } },
                 "key": { "type": "string", "description": "key only: its name, e.g. CLOUDFLARE_API_TOKEN. Adding it settles this." }
             }, "required": ["text", "kind"], "additionalProperties": false },
             "annotations": ann(false)
@@ -228,12 +239,14 @@ impl Session {
     }
 
     pub(super) fn hand_over(&self, args: &Value) -> Value {
+        let steps = run_steps(args);
         let body = json!({
             "kind": arg(args, "kind"), "text": arg(args, "text"), "link": arg(args, "link"),
-            "cmd": arg(args, "cmd"), "key": arg(args, "key"), "by": self.by(),
+            "cmd": arg(args, "cmd"), "key": arg(args, "key"), "by": self.by(), "options": steps,
         });
         let run = arg(args, "kind") == "run";
         match self.thread_call("handover", body) {
+            Ok(_) if run && !steps.is_empty() => said("Handed over as steps. The user runs each command with a click, in order -- typed into this panel as a ! command, its output arriving here as their message, or into a shell panel of its own where you do not see it -- and ticks each step done. When all are, their answer says which ran where. Say so in your reply; do not repeat the commands for them to paste.", false),
             Ok(_) if run => said("Handed over. When the user clicks Run, it is typed into this panel as a ! command, and its output arrives here as their message. Say so in your reply; do not ask them to paste it.", false),
             Ok(_) => said("Handed over. It is on the user's On you list in snyvi; their answer comes with their next message. Say so in your reply.", false),
             Err(e) => e,
@@ -285,6 +298,36 @@ impl Session {
             Err(e) => e,
         }
     }
+}
+
+/// `hand_over`'s steps as the turn keeps them (`thread::steps`): `$ cmd` a
+/// command, `# words` the line over the command after it, the rest a step
+/// done by hand. What the agent wrote is never read as one of the marks.
+fn run_steps(args: &Value) -> Vec<String> {
+    let mut out = vec![];
+    for s in args
+        .get("steps")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let get = |k| {
+            s.get(k)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+        };
+        let say = get("say")
+            .map(|t| t.trim_start_matches(['$', '#', ' ']).to_string())
+            .filter(|t| !t.is_empty());
+        match (get("cmd"), say) {
+            (Some(c), Some(t)) => out.extend([format!("# {t}"), format!("$ {c}")]),
+            (Some(c), None) => out.push(format!("$ {c}")),
+            (None, Some(t)) => out.push(t),
+            (None, None) => {}
+        }
+    }
+    out
 }
 
 #[cfg(test)]

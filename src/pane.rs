@@ -245,6 +245,11 @@ pub struct Status {
     pub five_hour: Option<crate::statusline::Limit>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seven_day: Option<crate::statusline::Limit>,
+    /// The agent's cards above the rail's foot while this panel has focus
+    /// (`crate::card`, #162): a link or a word, each for its own time. They
+    /// go with the session that put them there, like the model above.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cards: Vec<crate::card::Card>,
     /// The Claude account this process started as (`crate::accounts`): 0
     /// for the `/login` one, which is every panel until a reader adds
     /// another. Kept after the process ends, for "Continue as…": the panel
@@ -277,6 +282,7 @@ fn clear_context(s: &mut Status) {
     s.ctx_at = None;
     s.five_hour = None;
     s.seven_day = None;
+    s.cards.clear();
 }
 
 /// A rate-limit window as the page writes it: the whole percent left and
@@ -1110,6 +1116,25 @@ impl Panes {
         drop(i);
         let _ = l.tx.send(status_frame(&l.id, &s).into());
         self.changed(&l.id, &s);
+        Some(true)
+    }
+
+    /// A card put on, or taken off, the running pane `id` by the agent in it
+    /// (`crate::card`). The page hears it on the pane's own socket, the way
+    /// it hears the model. None for a pane that is not running; whether
+    /// anything changed otherwise.
+    pub fn put_card(&self, id: &str, op: crate::card::Op) -> Option<bool> {
+        let l = self.live.lock().unwrap().get(id).cloned()?;
+        let mut i = l.inner.lock().unwrap();
+        if !i.status.running {
+            return None;
+        }
+        if !crate::card::apply(&mut i.status.cards, op, crate::store::now()) {
+            return Some(false);
+        }
+        let s = i.status.clone();
+        drop(i);
+        let _ = l.tx.send(status_frame(&l.id, &s).into());
         Some(true)
     }
 

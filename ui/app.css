@@ -102,6 +102,7 @@
   --side-w: 264px;
   --rail-w: 232px;
   --head-h: 52px;   /* the document's head: the brand row's height, so the panes' tops agree */
+  --foot-h: 47px;   /* the sidebar's foot, and a desk's rail foot beside it: one band, rules level (#163) */
   --measure: 70ch;
 
   /* The scales (docs/DESIGN.md §6.2, §7.1). Components read these, never a
@@ -124,7 +125,8 @@
      is at the toast's level, was drawn under the card it explains (#114). */
   --z-sticky: 10; --z-rail: 20; --z-dialog: 30; --z-pop: 40; --z-toast: 60; --z-tip: 65; --z-over: 70;
   /* Motion: instant for what happens a hundred times a day, quick by
-     default, move for what travels; the spring is the mascot's alone.
+     default, move for what travels; the spring is the mascot's, and the
+     desk's cards' (ui/desk/15-cards.js), which land like things with weight.
      Exits take the in-curve and about a fifth less time. */
   --dur-instant: 80ms; --dur-quick: 140ms; --dur-move: 220ms; --dur-moment: 700ms;
   --ease-out: cubic-bezier(.2,.7,.2,1); --ease-in: cubic-bezier(.4,0,1,1); --ease-spring: cubic-bezier(.3,1.6,.5,1);
@@ -497,7 +499,7 @@ html[data-link="off"] :is(.live, #rail-live .badge) { visibility: hidden; }
 .icon .aa { font-size: var(--fs-ui); font-weight: 600; letter-spacing: -.02em; font-family: var(--body); }
 :root[data-font="mono"] .icon .aa { font-size: var(--fs-micro); letter-spacing: -.06em; }
 
-.side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; border-top: 1px solid var(--rule); }
+.side-foot { display: flex; align-items: center; gap: 4px; height: var(--foot-h); flex: none; padding: 8px 12px 10px; margin-top: auto; border-top: 1px solid var(--rule); }
 .side-foot { position: relative; }
 /* The version, quiet at the foot's end: a click is About, and an update
    waiting puts its dot on it. Gone when the sidebar is folded; the rule stays. */

@@ -292,6 +292,7 @@ async function main() {
     await section("a widget's box, failing and long", () => widgetBoxRows(cdp, base, tmp));
     await section("the keys sheet: Claude as, then keys", () => keysSheetRows(cdp, base));
     await section("panels: full view, moved, linked, and their menus", () => panelRows(cdp, base, token));
+    await section("#161-#164: the feet, the cards, focus that follows, a run in steps", () => footRows(cdp, base, token));
     await section("Home, and what a Claude in a panel is told", () => homeRows(cdp, base, token, arrive, tmp));
     await section("1.14: desks in your order, a repo link, one paste, a ; that draws", () => orderRepoRows(cdp, base, token, env, tmp));
     await section("answers beside their buttons", () => answerRows(url, tmp));
@@ -2546,12 +2547,13 @@ async function orderRepoRows(cdp, base, token, env, tmp) {
 
     // The repository's link, and none for a plain folder.
     await p.goto(`${base}/desk/${dRepo}#cap=${cap}`);
-    const linked = await until(`!!document.querySelector("#meta .dk-repo")`);
-    const link = linked ? await p.ev(`({ href: document.querySelector("#meta .dk-repo").getAttribute("href"), text: document.querySelector("#meta .dk-repo").textContent })`) : {};
+    // #163: an icon in the foot's last slot, the repository named in its tip.
+    const linked = await until(`!!document.querySelector("#meta a.dk-repo")`);
+    const link = linked ? await p.ev(`({ href: document.querySelector("#meta a.dk-repo").getAttribute("href"), text: document.querySelector("#meta a.dk-repo").dataset.tip })`) : {};
     await p.goto(`${base}/desk/${dPlain}#cap=${cap}`);
     await until(`!!document.querySelector(".dk")`);
     await sleep(1200);
-    const none = await p.ev(`!document.querySelector("#meta .dk-repo")`);
+    const none = await p.ev(`!document.querySelector("#meta a.dk-repo")`);
     rows.push(["a desk on a repository links it; a plain folder links nothing", linked && link.href === "https://github.com/someone/thing" && /someone\/thing/.test(link.text) && none,
       !linked ? "no repo line on the repository's desk" : link.href !== "https://github.com/someone/thing" ? `the link is ${link.href}` : !none ? "a folder with no remote has a repo line" : "someone/thing ↗ to https://github.com/someone/thing, and nothing on the plain folder"]);
 
@@ -3712,6 +3714,123 @@ async function panelRows(cdp, base, token) {
     await sleep(8600);
     const spent = await q.ev(`!document.querySelector('[data-a="pane-back"]')`);
     rows.push(["the offer ends after 8 s", spent, spent ? "gone, and the panel stays closed" : "Undo is still offered"]);
+  } finally {
+    for (const pane of [pa, pb]) await post(`/api/panes/${pane}/stop`).catch(() => {});
+    await post(`/api/desks/${desk}/delete`).catch(() => {});
+    await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
+  }
+  return rows;
+}
+
+/** #161-#164: the rail's foot is the sidebar's foot's twin and never moves;
+ *  cards rise above it and move nothing; focus follows a settled pointer
+ *  when asked to, and a sweep takes nothing; a run in steps is one card,
+ *  stepped through in order. */
+async function footRows(cdp, base, token) {
+  const rows = [];
+  const cap = (await (await fetch(`${base}/api/capability`, { method: "POST", headers: { "x-snyvi-window": windowSecret } })).json()).capability;
+  const H = { "x-snyvi-capability": cap, "content-type": "application/json" };
+  const post = async (path, body = {}, h = H) => (await fetch(base + path, { method: "POST", headers: h, body: JSON.stringify(body) })).json().catch(() => ({}));
+  const d = await post("/api/desks", { name: "feet" });
+  const desk = d.desk ? d.desk.id : d.id;
+  const pa = (await post(`/api/desks/${desk}/panes`)).pane.id, pb = (await post(`/api/desks/${desk}/panes`)).pane.id;
+  const sleepBin = execFileSync("sh", ["-c", "command -v sleep"], { encoding: "utf8" }).trim();
+  for (const pane of [pa, pb]) await post(`/api/panes/${pane}/start`, { cmd: `while :; do ${sleepBin} 1; done` });
+  const agent = (pane, path, body) => fetch(`${base}/api/panes/${pane}/${path}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  const { targetId, sessionId } = await tab(cdp);
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: `(${prelude})()` }, sessionId);
+  // A headless page is never the window in front: hover focus waits for that.
+  await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId).catch(() => {});
+  const q = new Driver(cdp, sessionId);
+  const until = async (expr, tries = 60) => { for (let i = 0; i < tries; i++) { if (await q.ev(expr)) return true; await sleep(100); } return false; };
+  const mouse = (type, x, y, extra = {}) => cdp.send("Input.dispatchMouseEvent", { type, x, y, ...extra }, sessionId);
+  const P = id => `.pn[data-id="${id}"]`;
+  const rects = `(() => { const r = q => { const b = document.querySelector(q)?.getBoundingClientRect(); return b ? [b.top, b.height].map(n => Math.round(n * 10) / 10) : null; };
+    return { meta: r("#meta"), side: r(".side-foot"), toc: r("#toc") }; })()`;
+  try {
+    await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`document.querySelectorAll(".dk-grid > .pn").length === 2 && !!document.querySelector("#meta .dk-pl")`);
+    await q.clickOn(`${P(pa)} .pn-body`);
+    await sleep(600);
+
+    // #163: one height, rules level, one line.
+    const feet = await q.ev(rects);
+    rows.push(["the rail's foot is the sidebar's foot's height, its rule level with it", !!feet.meta && !!feet.side && feet.meta[1] === feet.side[1] && Math.abs(feet.meta[0] - feet.side[0]) <= .5,
+      JSON.stringify(feet)]);
+    // A model name too long for the rail is cut short; the line stays one.
+    await agent(pa, "agent", { model: "Fable 5.1 with an unusually long model name for the rail", ctx: { pct: 41, size: 1000000, input: 410000 } });
+    await sleep(800);
+    const long = await q.ev(`(() => { const l = document.querySelector("#meta .dk-pl"); return { h: l?.getBoundingClientRect().height, rects: ${rects} }; })()`);
+    rows.push(["a long model name is cut, the foot holds still", long.h > 0 && long.h < 24 && JSON.stringify(long.rects) === JSON.stringify(feet),
+      JSON.stringify(long)]);
+
+    // #162: cards rise above the foot and move nothing.
+    const refused = await agent(pa, "card", { kind: "link", label: "x", url: "javascript:alert(1)" });
+    rows.push(["a card refuses a link that is not the web", refused.status === 400, `answered ${refused.status}`]);
+    for (const [i, c] of [["one", "text"], ["two", "link"], ["three", "text"], ["four", "text"]].entries())
+      await agent(pa, "card", { id: c[0], kind: c[1], label: `card ${c[0]}`, url: c[1] === "link" ? "http://127.0.0.1:7801/" : undefined, for: i === 3 ? 30 : undefined });
+    const up = await until(`document.querySelectorAll("#dk-cards .dk-card").length === 3 && /\\+1/.test(document.querySelector("#dk-cards .dk-card-more")?.textContent || "")`, 40);
+    await sleep(1200);
+    const stood = await q.ev(`(() => { const m = document.querySelector("#meta").getBoundingClientRect(); const cs = [...document.querySelectorAll("#dk-cards .dk-card")].map(c => c.getBoundingClientRect());
+      return { above: cs.every(c => c.bottom <= m.top + .5), rects: ${rects}, drain: !!document.querySelector("#dk-cards .dk-card-drain") }; })()`);
+    rows.push(["cards rise above the foot, three and a count, and nothing moves", up && stood.above && stood.drain && JSON.stringify(stood.rects) === JSON.stringify(feet),
+      !up ? "three cards and +1 never showed" : !stood.above ? "a card is over the foot" : !stood.drain ? "the card with a lifetime has no drain" : JSON.stringify(stood.rects)]);
+    // The same id again is the same card, rewritten where it stands.
+    await agent(pa, "card", { id: "four", kind: "text", label: "card four, again" });
+    const same = await until(`(() => { const t = [...document.querySelectorAll("#dk-cards .dk-card")].map(c => c.dataset.tip); return t.length === 3 && t.includes("card four, again") && !t.includes("card four"); })()`, 20);
+    rows.push(["the same id updates its card in place", same, same ? "three cards, the fourth rewritten" : await q.ev(`[...document.querySelectorAll("#dk-cards .dk-card")].map(c => c.dataset.tip).join(" · ")`)]);
+    // A panel's cards follow its focus.
+    await q.clickOn(`${P(pb)} .pn-body`);
+    const gone = await until(`!document.querySelector("#dk-cards .dk-card")`, 30);
+    await q.clickOn(`${P(pa)} .pn-body`);
+    const back = await until(`document.querySelectorAll("#dk-cards .dk-card").length === 3`, 30);
+    rows.push(["cards sink when focus leaves their panel, and rise when it comes back", gone && back, !gone ? "they stayed for the other panel" : !back ? "they did not come back" : "gone with the focus, back with it"]);
+
+    // #161: off by default; on, a settled pointer takes the focus, a sweep does not.
+    const off = await q.ev(`localStorage.getItem("snyvi.hover-focus") !== "1"`);
+    await q.ev(`localStorage.setItem("snyvi.hover-focus", "1"); 1`);
+    // The same URL again is a jump to its fragment, which fires no load
+    // event: a page between makes it a new document, read with the setting.
+    await q.goto("about:blank");
+    await q.goto(`${base}/desk/${desk}#cap=${cap}`);
+    await until(`document.querySelectorAll(".dk-grid > .pn").length === 2`);
+    await q.clickOn(`${P(pa)} .pn-body`);
+    await sleep(900);
+    const A = await q.ui("center", `${P(pa)} .pn-body`), B = await q.ui("center", `${P(pb)} .pn-body`), R = await q.ui("center", "#toc");
+    const on = () => q.ev(`document.activeElement?.closest(".pn")?.dataset.id || ""`);
+    // A sweep from panel 1 across panel 2 to the rail, in 120 ms.
+    for (let i = 1; i <= 12; i++) { await mouse("mouseMoved", A.x + (R.x - A.x) * i / 12, A.y + (R.y - A.y) * i / 12); await sleep(10); }
+    await sleep(500);
+    const swept = await on();
+    // A move to panel 2 that rests there.
+    for (let i = 1; i <= 6; i++) { await mouse("mouseMoved", R.x + (B.x - R.x) * i / 6, R.y + (B.y - R.y) * i / 6); await sleep(16); }
+    await sleep(450);
+    const rested = await on();
+    const pinged = await q.ev(`!!document.querySelector("#dk-sonar i")`);
+    rows.push(["focus follows a settled pointer, and a sweep takes nothing", off && swept === pa && rested === pb && pinged,
+      !off ? "it was on before it was asked" : swept !== pa ? "the sweep took the focus" : rested !== pb ? `resting on panel 2 left the focus on ${rested || "nothing"}` : !pinged ? "no sonar" : "panel 2, with a ping"]);
+    // A key just typed holds the focus where it is.
+    await q.clickOn(`${P(pa)} .pn-body`);
+    await sleep(900);
+    await q.press("x");
+    for (let i = 1; i <= 4; i++) { await mouse("mouseMoved", A.x + (B.x - A.x) * i / 4, B.y); await sleep(16); }
+    await sleep(400);
+    const typing = await on();
+    rows.push(["a key just typed holds the focus", typing === pa, typing === pa ? "panel 1 kept it" : "the pointer took it mid-typing"]);
+    await q.ev(`localStorage.removeItem("snyvi.hover-focus"); 1`);
+
+    // #164: a run in steps is one card, run in order.
+    const steps = await agent(pa, "handover", { kind: "run", text: "bench: a walk-through", by: "bench-agent",
+      options: ["$ echo one", "Plug the phone in", "# Is it seen?", "$ echo two"] });
+    const bad = await agent(pa, "handover", { kind: "run", text: "bench: a bad step", options: ["$ echo one\necho two"] });
+    await q.ev(`document.querySelector('[data-a="oy-open"]')?.click(); 1`);
+    const card = await until(`document.querySelectorAll(".tn-walk .tn-step").length === 3`, 40);
+    const first = await q.ev(`(() => { const s = [...document.querySelectorAll(".tn-walk .tn-step")]; return { on: s[0]?.classList.contains("on"), done: !!s[0]?.querySelector('[data-a="tn-step-done"]'), later: !!s[2]?.querySelector('[data-a="tn-step-done"], [data-a="tn-step-run"]') }; })()`);
+    await q.ev(`document.querySelector('.tn-walk .tn-step.on [data-a="tn-step-done"]')?.click(); 1`);
+    const moved = await until(`document.querySelectorAll(".tn-walk .tn-step")[1]?.classList.contains("on") && document.querySelectorAll(".tn-walk .tn-step")[0]?.classList.contains("ok")`, 20);
+    rows.push(["a run in steps is one card, the next step the only one to press", steps.status < 300 && bad.status === 400 && card && first.on && first.done && !first.later && moved,
+      steps.status >= 300 ? `the route answered ${steps.status}` : bad.status !== 400 ? "a step with a newline was taken" : !card ? "no card of three steps" : !first.on || first.later ? JSON.stringify(first) : !moved ? "Done did not move it on" : "step 1 done, step 2 lit"]);
   } finally {
     for (const pane of [pa, pb]) await post(`/api/panes/${pane}/stop`).catch(() => {});
     await post(`/api/desks/${desk}/delete`).catch(() => {});

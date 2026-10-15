@@ -15,6 +15,7 @@ use crate::receive::Payload;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
+mod cards;
 mod threads;
 mod widgets;
 
@@ -195,6 +196,8 @@ const TOOLS: &[(&str, Tool)] = &[
     ("set_widget", Session::set_widget),
     ("propose_widget", Session::propose_widget),
     ("add_to_gallery", Session::add_to_gallery),
+    ("show_card", Session::show_card),
+    ("clear_card", Session::clear_card),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
@@ -266,6 +269,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
         ]);
         tools.extend(threads::specs());
         tools.extend(widgets::specs());
+        tools.extend(cards::specs());
         if friends != Some(false) {
             tools.push(offer_spec());
             tools.push(offer_line_spec());

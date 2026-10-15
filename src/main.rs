@@ -5,6 +5,7 @@ mod bench;
 mod brief;
 mod browse;
 mod capability;
+mod card;
 mod claude_mod;
 mod cli;
 mod client;

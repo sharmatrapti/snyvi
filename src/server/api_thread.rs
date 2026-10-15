@@ -200,8 +200,9 @@ fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
         Ok(Asked::BadCmd) => refused(
             StatusCode::BAD_REQUEST,
             format!(
-                "run needs cmd: one line, at most {} bytes, with no control characters",
-                thread::CMD_BYTES
+                "run needs cmd, or steps with at least one command: each command one line, at most {} bytes, with no control characters; at most {} steps",
+                thread::CMD_BYTES,
+                thread::STEPS_MAX
             ),
         ),
         Ok(Asked::BadOptions) => refused(

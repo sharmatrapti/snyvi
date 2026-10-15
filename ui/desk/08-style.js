@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS;
+  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS;
   document.head.append(s);
 }
 
@@ -427,14 +427,25 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 #meta .dk-row { align-items: center; min-height: 22px; }
 #meta .dk-row .dk-nm { flex: 1; }
 #meta .dk-row .dk-tools { line-height: 1; }
-/* The desk's repository on the web, under the panel's line: quiet until
- * pointed at, and cut short rather than wrapped. */
-#meta .dk-repo-row { min-width: 0; }
-#meta .dk-repo { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--fg-3); text-decoration: none; }
-#meta .dk-repo svg { flex: none; }
-#meta .dk-repo span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#meta .dk-repo .dk-out { flex: none; font-size: var(--fs-micro); }
-#meta .dk-repo:hover, #meta .dk-repo:focus-visible { color: var(--accent); }
+/* On a desk the rail's foot is the sidebar's foot's twin (#163): the same
+ * height, --foot-h, its rule on the same line across the window, and one
+ * line in it that never wraps. Its height is set, not found, so nothing that
+ * comes and goes in it -- a clock ticking wider, a folder, the repository
+ * answering late -- can move the list above. It runs to the rail's edge, as
+ * the sidebar's does, and is opaque and in front: the cards rise from behind
+ * it (15-cards.js). */
+:root[data-view="desk"] #rail { padding-bottom: 0; }
+:root[data-view="desk"] #meta, :root[data-view="desk"] #meta:empty { height: var(--foot-h); max-height: none; overflow: hidden; display: flex; align-items: center; gap: 4px;
+  margin-left: -8px; padding: 0 8px; border-top: 1px solid var(--rule); background: var(--bg-side); line-height: 1; white-space: nowrap; position: relative; z-index: 2; }
+#meta .dk-pl { display: flex; align-items: center; flex: 1; min-width: 0; }
+#meta .dk-pl > * { flex: none; }
+#meta .dk-pl .dk-m { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-left: .4em; }
+#meta .dk-sep { padding: 0 .4em; }
+#meta .dk-since { font-variant-numeric: tabular-nums; }
+/* The desk's repository on the web: an icon in a slot that is there whether
+ * or not the answer has come, quiet until pointed at. */
+#meta .dk-repo { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border-radius: var(--r-sm); color: var(--fg-3); text-decoration: none; }
+#meta a.dk-repo:hover, #meta a.dk-repo:focus-visible { color: var(--accent); background: var(--rule); }
 .dk-make { padding: 6px 12px; border-radius: var(--r-sm); background: var(--accent-bg); color: var(--accent); font-weight: 600; }
 .dk-make:hover { background: var(--accent); color: var(--on-accent); }
 /* ---------- the list ----------
