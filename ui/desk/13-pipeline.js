@@ -14,6 +14,16 @@
  * starting moves nothing beside it either. The sheet lays over the panel's
  * top, like the panel's other strips. */
 
+/** Hidden since 1.43 (2026-10-16): the reader set the feature aside while a
+ *  simpler shape is worked out (the Away brainstorm, docs 5e66a26179 and
+ *  9074c8ca08). The daemon, its routes and the runner stay as they are; the
+ *  window just stops offering it -- no New pipeline…, no New… or Edit… in
+ *  the sheet, and nothing of a pipeline that has ended. One still going,
+ *  made before the hiding, keeps its chip and its sheet: a pipeline that
+ *  runs where it cannot be seen or stopped would be worse than one that
+ *  shows. Flip this to bring it back whole. */
+const PIPES_SHOWN = false;
+
 /** This desk's pipelines, as the daemon last said them, and which desk. */
 let pipes = [], pipesAt = null;
 /** The sheet open over one panel: { pane, edit: pipeline id | 0 for new | null }. */
@@ -33,8 +43,9 @@ async function pipesGet(id) {
   if (pipeOpen) pipeSheet();
 }
 
-/** The pipeline a panel shows: the one it is working through, else its newest. */
-const pipeOf = pane => pipes.find(p => p.pane === pane && ["running", "waiting", "paused"].includes(p.state)) || pipes.find(p => p.pane === pane);
+/** The pipeline a panel shows: the one it is working through, else its
+ *  newest -- while pipelines are hidden, only one still going. */
+const pipeOf = pane => pipes.find(p => p.pane === pane && ["running", "waiting", "paused"].includes(p.state)) || (PIPES_SHOWN ? pipes.find(p => p.pane === pane) : undefined);
 
 const PIPE_SAYS = { draft: "ready", running: "running", waiting: "Go?", paused: "paused", done: "done", stopped: "stopped" };
 
@@ -60,6 +71,7 @@ function pipeChip(v) {
 
 /** The panel menu's "Pipeline…": the sheet, or the editor for a new one. */
 function pipeItems(v) {
+  if (!PIPES_SHOWN && !pipeOf(v.id)) return [];
   return [{ label: pipeOf(v.id) ? "Pipeline…" : "New pipeline…", run: () => pipeToggle(v.id, !pipeOf(v.id)) }];
 }
 
@@ -97,6 +109,9 @@ function pipeSheet() {
     return;
   }
   const p = pipeOpen.edit == null ? pipeOf(v.id) : pipes.find(x => x.id === pipeOpen.edit);
+  // Hidden, the sheet is only ever a pipeline still going: one that has just
+  // ended takes its sheet with it, rather than leaving the editor for a new one.
+  if (!PIPES_SHOWN && (!p || pipeOpen.edit != null)) { pipeClose(); return; }
   el.innerHTML = (pipeOpen.edit != null || !p ? pipeEditor(p) : pipeView(p)) +
     (pipeErr ? `<p class="pp-err" role="alert">${ctx.esc(pipeErr)}</p>` : "");
 }
@@ -112,10 +127,10 @@ function pipeView(p) {
     ["paused", "stopped", "done"].includes(s) && btn("resume", s === "paused" ? "▶ Resume" : "▶ Go on"),
     ["running", "waiting"].includes(s) && btn("pause", "Pause"),
     (["running", "waiting", "paused", "draft"].includes(s)) && btn("stop", "Stop"),
-    s !== "running" && btn("edit", "Edit…"),
+    PIPES_SHOWN && s !== "running" && btn("edit", "Edit…"),
     p.report && btn("report", "Report"),
     !["running", "waiting"].includes(s) && btn("hide", "✕", ` data-tip="Remove from view" aria-label="Remove this pipeline from view"`),
-    btn("new", "New…"),
+    PIPES_SHOWN && btn("new", "New…"),
   ].filter(Boolean).join("");
   const steps = p.steps.map(x => {
     const go = x.state === "proposed" ? `<span class="pp-go">${btn("go", "Go", ` data-step="${x.id}" class="pri"`)}${btn("skip", "Skip", ` data-step="${x.id}"`)}</span>` : "";

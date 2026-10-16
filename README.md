@@ -123,10 +123,6 @@ The agents at that desk read them, say how far they've got, and tick one off
 with the commit it went into. Home shows every desk's list and where each was
 left.
 
-Give a panel a pipeline, your own steps, one step looped, or a goal, and it
-works through it while you watch or while you're away. Each stage is a fresh
-Claude on a branch of its own, and a report waits for you at the end.
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/home-dark.webp">

@@ -411,6 +411,14 @@ a step, and bytes still reach a PTY's input from the reader's keys alone. A
 stage starts as a process (`claude … -- "<step>"`), the way a panel's Start
 already started `claude --resume`.
 
+**Hidden since 1.43** (2026-10-16): the window no longer offers pipelines
+(`PIPES_SHOWN` in `ui/desk/13-pipeline.js`), while a simpler shape for
+working while the reader is away is worked out. The routes, the runner and
+this rule stay as they are, so a pipeline made earlier still runs to its end
+and nothing here is bent by the hiding. One still going keeps its chip and
+its sheet (Pause, Stop, Go) until it ends: the window never hides a process
+it started.
+
 ## 10. Retired: Open terminal here (1.16)
 
 Desk note #81, "remove open terminal feature". Once desks shipped, the
