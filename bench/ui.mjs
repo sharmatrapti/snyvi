@@ -2455,6 +2455,27 @@ async function deskRows(cdp, base, token) {
       !rose3 ? "it never rose" : !dotted ? "a click into the panel left Lately's clock with no dot" : !kept ? "Lately has no row for it" : !read ? `its row opened ${await p.ev("location.pathname")}` : "settled, the clock dotted, kept in Lately, and read from there"]);
     if (read) { await p.ev("history.back(), 1"); await until(`location.pathname === "/desk/${da}"`, 30); }
     await p.pointerAway();
+
+    // #171: a page opened from the desk's own list keeps the desk's rail,
+    // and its corner with it. A newer version of that page rose twice there,
+    // in the desk's corner and the page's, one over the other; Read it then
+    // left the desk for the library.
+    const vf = join(mkdtempSync(join(tmpdir(), "snyvi-over-")), "over.md");
+    writeFileSync(vf, "# Over the desk\n\nThe first version.\n");
+    const v1 = (await post("/api/docs", { path: vf, origin: "mcp", pane: second }, TK)).doc;
+    const inRail = !!v1 && await until(`!!document.querySelector('#rail [data-read="${v1.id}"]')`, 40);
+    if (inRail) await p.clickOn(`#rail [data-read="${v1.id}"]`);
+    const over = inRail && await until(`location.pathname === "/d/${v1.id}" && !!document.querySelector("#toc .dk-rail")`, 40);
+    writeFileSync(vf, "# Over the desk\n\nThe second version.\n");
+    const v2 = over && (await post("/api/docs", { path: vf, origin: "mcp", pane: second }, TK)).doc;
+    const rose4 = !!v2 && await until(`/newer version/i.test(document.querySelector("#onyou .oy-card")?.textContent || "")`, 40);
+    await sleep(300);
+    const cards = await p.ev(`[...document.querySelectorAll(".oy-card")].filter(c => c.getClientRects().length).length`);
+    if (rose4) await p.clickOn('#onyou [data-a="cn-card-go"]');
+    const stayed = rose4 && await until(`location.pathname === "/d/${v2.id}" && !!document.querySelector("#toc .dk-rail")`, 40);
+    rows.push(["a newer version of a page read over its desk rises once, and Read it keeps the desk's rail", rose4 && cards === 1 && stayed,
+      !over ? "the page did not open over the desk" : !rose4 ? "no card in the desk's corner said a newer version arrived" : cards !== 1 ? `${cards} cards rose for one version` :
+      !stayed ? `Read it opened ${await p.ev("location.pathname")}, ${await p.ev(`!!document.querySelector("#toc .dk-rail")`) ? "over the desk" : "with the library's rail"}` : "one card, in the desk's corner, and the new version read with the desk's rail"]);
   } finally {
     if (second) await post(`/api/panes/${second}/stop`).catch(() => {});
     if (third) await post(`/api/panes/${third}/stop`).catch(() => {});

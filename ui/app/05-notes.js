@@ -28,9 +28,14 @@
    * (`says`); first paint carries only their names. */
   const OWN = new Set(["first-doc", "two-waiting", "blocked", "version"]);
   let cornerMod = null, cornerLoading = null;
+  /* The corner is the desk's while its rail is on screen: on the desk, and
+   * on a document opened from the desk's own list, which keeps that rail
+   * (08-desks.js `behindDesk`). Asking only for the desk view drew a card
+   * twice there, in the desk's corner and this page's (#171). */
+  const overDesk = () => (state.view === "desk" || state.deskBehind != null) && !!desk;
   const cornerUse = () => (cornerLoading ||= import(`/assets/corner.js${boot.v ? `?v=${boot.v}` : ""}`)
-    .then(m => (cornerMod ||= m.init({ root, store, esc, relShort, capability, deskApi, sayErr, toast, who: whoIco, glyph, peek: mascotPeek, showDoc: id => showDoc(id, true, false, state.view === "desk"), showDesk, showHome, showStart,
-      view: () => state.view, onDesk: () => state.view === "desk" && !!desk, friends: () => state.friends,
+    .then(m => (cornerMod ||= m.init({ root, store, esc, relShort, capability, deskApi, sayErr, toast, who: whoIco, glyph, peek: mascotPeek, showDoc: id => showDoc(id, true, false, overDesk()), showDesk, showHome, showStart,
+      view: () => state.view, onDesk: overDesk, friends: () => state.friends,
       deskRedraw: () => desk?.arranged?.(), deskTray: () => desk?.openTray?.(), homeRedraw: () => homeMod?.redraw?.(),
       openLately: () => openLately($(root.dataset.side === "0" ? "#rail-lately" : "#btn-lately")), unpop: () => closePop(false),
       hop: () => { const m = $(".brand-mark"); if (m && !quiet()) { m.classList.remove("hop"); void m.offsetWidth; m.classList.add("hop"); } } })))
