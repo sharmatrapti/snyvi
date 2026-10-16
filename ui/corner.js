@@ -78,6 +78,8 @@ const CSS = `
    600, its count after it (.sec-n). Uppercase read as another app's. */
 .oy-h { margin: 2px 2px 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); letter-spacing: .01em; }
 .oy-head .sec-n { padding: 0 2px; }
+.oy-hi { display: grid; place-items: center; width: 14px; margin-right: 4px; color: var(--fg-3); }
+.oy-hi svg { width: 13px; height: 13px; }
 .oy-scroll .oy-h { margin-top: 10px; }
 .oy-scroll > .oy-h:first-child { margin-top: 2px; }
 .oy-none { margin: 4px; font-size: var(--fs-small); color: var(--fg-3); }
@@ -160,17 +162,25 @@ button.cn-t:hover { color: var(--fg); text-decoration: underline; }
 .cn-link:hover { color: var(--fg); }
 .cn-cmd { display: block; font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); overflow-wrap: anywhere; }
 /* Lately in the sidebar's popover: kept out of sight in #trees between
-   openings, as menu.js puts a section back where it lives. Its head is On
-   you's (.oy-head), held at the top while the rows scroll under it; the
-   rows sit level with the head's label, the unseen dot in the margin. */
+   openings, as menu.js puts a section back where it lives. It is On you's
+   tray in all but what it holds: the same head (its mark, its name, its
+   count), held at the top while the rows scroll under it, and the same
+   row, an older ask's (09-thread.js olderLine): one line, the title, then
+   where and when at its right, the whole title in the tip. Seen rows are
+   quiet ink; a new one is the page's ink with its dot in the margin. */
 #trees > #lately-nav { display: none; }
-#lately-nav .oy-head { position: sticky; top: 0; z-index: 1; padding: 6px 6px 4px 10px; background: var(--bg-raise); }
-#lately-nav .oy-h { display: flex; align-items: center; gap: 6px; }
+#lately-nav .oy-head { position: sticky; top: 0; z-index: 1; background: var(--bg-raise); }
 #lately-nav .cn-all { margin-right: 4px; }
-#lately-nav .cn-list { padding: 0 8px 0 12px; }
-#lately-nav .cn-row.new::before { left: -8px; }
-#lately-nav .cn-fold { margin-left: 12px; }
-#lately-nav .oy-none { margin: 4px 12px; }
+#lately-nav .cn-list { padding: 0 18px 0 10px; }
+#lately-nav .cn-b { flex-direction: row; align-items: baseline; gap: 8px; }
+#lately-nav .cn-tl { flex: 1; min-width: 0; }
+#lately-nav .cn-tx { -webkit-line-clamp: 1; }
+#lately-nav .cn-bl { flex: none; max-width: 45%; }
+#lately-nav .cn-t { color: var(--fg-2); }
+#lately-nav .cn-row.new .cn-t { color: var(--fg); }
+#lately-nav .cn-row.mine .cn-t { color: var(--fg-3); }
+#lately-nav .cn-fold { margin-left: 10px; }
+#lately-nav .oy-none { margin: 4px 10px; }
 /* Home draws Lately large, in its own column: the same rows, more room. */
 .cn-large .cn-row { padding: 9px 20px 9px 0; }
 .cn-large .cn-t { font-size: var(--fs-ui); }
@@ -660,11 +670,14 @@ function latelyHtml(large = false, skip = null) {
     return `<section class="cn-lately cn-large" data-part="corner.lately" aria-label="Lately">` + (all.length ? list(all.slice(0, HOME_ROWS)) : body) +
       (rest > 0 || L.more ? `<button type="button" class="cn-fold" data-a="cn-lately" data-tip="All of Lately" data-tip-sub="In the sidebar">${rest > 0 && !L.more ? `${rest} more` : "All of Lately"}</button>` : "") + `</section>`;
   }
-  // On you's head: its mark and its name, then what acts on all of it, and ✕.
+  // On you's head: its mark, its name and its count -- here what is new,
+  // in the accent its rows' dots are -- then what acts on all of it, and ✕.
+  const n = all.filter(r => r.kind !== "offered" && (r.group ? r.group.some(x => !x.seen) : !r.seen)).length;
+  const count = n ? `<span class="sec-n accent" data-tip="${n} new">${n}</span>` : "";
   const all_ = dot() ? `<button type="button" class="cn-all" data-a="cn-seen">Mark all seen</button>` : "";
   const close = `<button type="button" class="oy-x" data-a="cn-close" aria-label="Close" data-tip="Close" data-tip-sub="Esc">${c.glyph("x", 12)}</button>`;
   return `<section class="cn-lately" data-part="corner.lately" aria-label="Lately">` +
-    `<div class="oy-head"><h3 class="oy-h" data-tip="Lately" data-tip-sub="What came: documents, asides, friends. Kept 14 days; asides until you remove them">${c.glyph("clock", 12)}Lately</h3><span class="oy-gap"></span>${all_}${close}</div>` + body + `</section>`;
+    `<div class="oy-head"><span class="oy-hi" aria-hidden="true">${c.glyph("clock", 13)}</span><h3 class="oy-h" data-tip="Lately" data-tip-sub="What came: documents, asides, friends. Kept 14 days; asides until you remove them">Lately</h3>${count}<span class="oy-gap"></span>${all_}${close}</div>` + body + `</section>`;
 }
 
 /** The card that rises, by kind. `desk` is the desk's corner drawing it,

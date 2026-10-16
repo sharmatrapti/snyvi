@@ -800,9 +800,13 @@ export function pop(ctx, sec, btn) {
   if (sec === "tree") ctx.drawTree();
   // Level with the icon, and moved only as far as it takes to stay on the
   // window, the way a toast answers a control in the rail.
-  // Lately opens from the sidebar's head too, with the sidebar open: beside
-  // the sidebar then, not over its own rows.
-  popEl.style.left = root.dataset.side === "0" ? "" : Math.round($("#side").getBoundingClientRect().right + 6) + "px";
+  // A section opens beside the sidebar, not over its own rows. Lately, from
+  // its button in the sidebar's foot, stands over that foot's corner as On
+  // you's tray does over the rail's: 8 px in from the column's edge, growing
+  // away from the window's edge over the panels.
+  const side = root.dataset.side === "0" ? null : $("#side").getBoundingClientRect();
+  const fromFoot = sec === "lately" && side && btn.closest?.(".side-foot");
+  popEl.style.left = side ? Math.round(fromFoot ? side.left + 8 : side.right + 6) + "px" : "";
   // Lately's floor is the foot its button stands in: it ends 6 px above the
   // foot's rule, as On you's tray does above the rail's (audit 98b9d67a7d),
   // not down over the foot to the window's edge.
