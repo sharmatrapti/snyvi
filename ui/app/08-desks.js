@@ -512,9 +512,12 @@
     else if (superseded) {
       // The rail picks it up either way: a reader who misses the card finds
       // the new version at the top of Versions, `]` steps to it, and it is
-      // in the corner's Lately.
+      // in the corner's Lately. Read over a desk, it is read there too, the
+      // desk's rail kept -- over that desk only, if the reader is still on it
+      // (#171).
       renderHistory();
-      corner(m => m.rise({ kind: "version", key: `d${d.id}`, from: "A newer version arrived", title: d.title, label: "Read it", go: () => showDoc(d.id, true) }));
+      const over = overDesk() ? state.deskBehind : null;
+      corner(m => m.rise({ kind: "version", key: `d${d.id}`, from: "A newer version arrived", title: d.title, label: "Read it", go: () => showDoc(d.id, true, false, over != null && overDesk() && (state.deskBehind ?? state.deskId) === over) }));
     }
     else if (state.view === "inbox") showInbox(false);
   
