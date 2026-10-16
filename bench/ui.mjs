@@ -3823,14 +3823,18 @@ async function footRows(cdp, base, token) {
     // #162: cards rise above the foot and move nothing.
     const refused = await agent(pa, "card", { kind: "link", label: "x", url: "javascript:alert(1)" });
     rows.push(["a card refuses a link that is not the web", refused.status === 400, `answered ${refused.status}`]);
+    const posted = [];
     for (const [i, c] of [["one", "text"], ["two", "link"], ["three", "text"], ["four", "text"]].entries())
-      await agent(pa, "card", { id: c[0], kind: c[1], label: `card ${c[0]}`, url: c[1] === "link" ? "http://127.0.0.1:7801/" : undefined, for: i === 3 ? 30 : undefined });
+      posted.push((await agent(pa, "card", { id: c[0], kind: c[1], label: `card ${c[0]}`, url: c[1] === "link" ? "http://127.0.0.1:7801/" : undefined, for: i === 3 ? 30 : undefined })).status);
     const up = await until(`document.querySelectorAll("#dk-cards .dk-card").length === 3 && /\\+1/.test(document.querySelector("#dk-cards .dk-card-more")?.textContent || "")`, 40);
+    // What it saw when they never showed: the answers, how many, the count,
+    // and which panel had the keys (cards are the focused panel's).
+    const saw = up ? "" : await q.ev(`JSON.stringify({ posted: ${JSON.stringify(posted)}, cards: document.querySelectorAll("#dk-cards .dk-card").length, more: document.querySelector("#dk-cards .dk-card-more")?.textContent || "", on: document.querySelector(".pn.on")?.dataset.id || "", pa: "${pa}" })`);
     await sleep(1200);
     const stood = await q.ev(`(() => { const m = document.querySelector("#meta").getBoundingClientRect(); const cs = [...document.querySelectorAll("#dk-cards .dk-card")].map(c => c.getBoundingClientRect());
       return { above: cs.every(c => c.bottom <= m.top + .5), rects: ${rects}, drain: !!document.querySelector("#dk-cards .dk-card-drain") }; })()`);
     rows.push(["cards rise above the foot, three and a count, and nothing moves", up && stood.above && stood.drain && JSON.stringify(stood.rects) === JSON.stringify(feet),
-      !up ? "three cards and +1 never showed" : !stood.above ? "a card is over the foot" : !stood.drain ? "the card with a lifetime has no drain" : JSON.stringify(stood.rects)]);
+      !up ? `three cards and +1 never showed: ${saw}` : !stood.above ? "a card is over the foot" : !stood.drain ? "the card with a lifetime has no drain" : JSON.stringify(stood.rects)]);
     // The same id again is the same card, rewritten where it stands.
     await agent(pa, "card", { id: "four", kind: "text", label: "card four, again" });
     const same = await until(`(() => { const t = [...document.querySelectorAll("#dk-cards .dk-card")].map(c => c.dataset.tip); return t.length === 3 && t.includes("card four, again") && !t.includes("card four"); })()`, 20);
