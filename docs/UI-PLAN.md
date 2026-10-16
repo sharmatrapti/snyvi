@@ -394,7 +394,10 @@ Confirmed fields, Claude Code 2.1.283:
 JSON; in a desk panel (`SNYVI_SESSION`, the test hook.rs:41 makes) posts it to
 the daemon through the client path `agent_state` uses, with the new fields.
 It prints nothing (your call, 2026-09-27): the status line exists only to feed
-snyvi, and Claude Code's bottom line stays empty as it is today. It always
+snyvi, and Claude Code's bottom line stays empty as it is today. *Changed in
+1.43 (plan 720260bb53): in a desk panel, with no line of the reader's own, it
+prints `model · used / size · 5h N% left`, and the rail's foot gave up the
+panel's line it had for the same figures.* It always
 exits 0 and never waits long on the daemon (the same short timeout the hook's
 client call has), since Claude Code runs it after every reply. One exception
 keeps a reader's own line: if `init-claude` finds a `statusLine` already set,

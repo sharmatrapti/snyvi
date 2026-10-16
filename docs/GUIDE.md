@@ -626,10 +626,12 @@ to write a widget, which Claude reads when the work calls for it. An update
 keeps it in step with the binary; a `snyvi` skill of your own is left alone;
 `uninstall-claude` takes it out.
 
-It also sets Claude Code's status line to `snyvi statusline`, which prints
-nothing and tells a desk panel which model it runs and how full its context
-window is. A status line you already had is kept and still shows -- snyvi
-runs it for you -- and `uninstall-claude` puts it back. Restart any Claude
+It also sets Claude Code's status line to `snyvi statusline`, which tells a
+desk panel which model it runs and how full its context window is. In a desk
+panel it also prints one line under Claude's prompt -- `Opus 5.5 · 242k / 1M
+· 5h 62% left`, the figure amber from 85% -- and anywhere else it prints
+nothing. A status line you already had is kept and is the only one that
+shows -- snyvi runs it for you -- and `uninstall-claude` puts it back. Restart any Claude
 Code session that was already open: one started before this does not see
 snyvi.
 
@@ -1108,8 +1110,7 @@ Suggested in the rail's corner, where nothing they do moves the page.
   is told it is still open, and takes it off with `settle_asks` when your
   message answered it.
 
-  A new one rises in the rail's corner, above the panel's line at the
-  rail's foot, as a small card, with a soft chime (none in quiet mode), and
+  A new one rises in the rail's corner, above the rail's foot, as a small card, with a soft chime (none in quiet mode), and
   you can answer it there; several at once ring once, and the card says
   **+N more**. Left alone, it settles after a few seconds into the **On
   you** pill, which opens the tray: newest first, then Suggested.

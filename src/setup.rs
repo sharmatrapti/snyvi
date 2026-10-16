@@ -1091,6 +1091,7 @@ mod skill_tests {
             "propose_widget",
             "show_card",
             "clear_card",
+            "pin_link",
             "hand_over",
             "leave_off",
         ] {

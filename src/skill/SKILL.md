@@ -84,3 +84,9 @@ takes it off. Never a paragraph or a to-do of theirs. A figure for the whole
 desk to keep is a widget. The user can close a card with its ✕; snyvi then
 tells you so, and a closed card stays closed for the session. Don't put a PR
 card: snyvi shows the thread's PR, with its checks, while it is open.
+
+A place the desk keeps is a **link** in the rail's foot: `pin_link` with a
+label and the url, for the live site, a staging deploy that stays, a
+dashboard -- what the user wants one click away on any day. It stays until
+they take it out with its ✕, and a link they took out stays out. Pin the same
+url to relabel it. A dev server or a CI run is a card, not a link.

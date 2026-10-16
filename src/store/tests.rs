@@ -146,8 +146,10 @@ const OLD_1_37: &str = "ALTER TABLE desk_notes DROP COLUMN landed_commit;
      ALTER TABLE desk_notes DROP COLUMN landed_at; ALTER TABLE desk_notes DROP COLUMN reply;
      ALTER TABLE desk_notes DROP COLUMN reply_by; ALTER TABLE desk_notes DROP COLUMN reply_at;";
 
-/// And of 1.42's: where a thread's PR is (step 23, `thread::PR_STATE_1_43`).
-const OLD_1_42: &str = "ALTER TABLE threads DROP COLUMN pr_state;";
+/// And of 1.42's: where a thread's PR is (step 23, `thread::PR_STATE_1_43`),
+/// and a desk's links (step 24, `links::COLUMN_1_43`).
+const OLD_1_42: &str =
+    "ALTER TABLE threads DROP COLUMN pr_state; ALTER TABLE desks DROP COLUMN links;";
 
 #[test]
 fn insert_get_previous_search() {
@@ -1793,5 +1795,5 @@ fn a_1_32_database_gains_the_session_column() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!((version, session.as_str()), (23, ""));
+    assert_eq!((version, session.as_str()), (24, ""));
 }

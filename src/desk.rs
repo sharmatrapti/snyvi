@@ -199,6 +199,9 @@ pub struct Desk {
     /// The Claude account its panels start as, or 0 for `/login`
     /// (`crate::accounts`).
     pub account: i64,
+    /// The places its work lives on the web, pinned by its agents, the
+    /// hidden ones too, for their Undo (`crate::links`).
+    pub links: Vec<crate::links::Link>,
     pub panes: Vec<Pane>,
 }
 
@@ -626,6 +629,7 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         parked: None,
         keys: Vec::new(),
         account: 0,
+        links: Vec::new(),
         panes: Vec::new(),
     })
 }
@@ -2010,7 +2014,7 @@ fn pane_id() -> Result<String> {
 }
 
 const DESK_COLS: &str =
-    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane, account";
+    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane, account, links";
 
 fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
     let text: String = r.get(7)?;
@@ -2043,6 +2047,7 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
         },
         keys: Vec::new(),
         account: r.get(15)?,
+        links: crate::links::from_column(&r.get::<_, String>(16)?),
         panes: Vec::new(),
     })
 }

@@ -22,6 +22,7 @@ the questions the design left open.
 | A pane's last screen, as plain text | `panes/<id>.txt` beside the store | yes, shown greyed |
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
 | The agent's model and context-window use | memory, from `snyvi statusline` | no |
+| A desk's links in the rail's foot, the hidden ones too | `desks.links`, JSON, `src/links.rs` | yes |
 
 **The daemon never respawns a process; the window does.** A daemon that starts
 finds every pane stopped and leaves them so. A daemon that respawned eight
@@ -367,8 +368,7 @@ amber rule under the pane. There is no modal, and focus is not moved.
 hooks run `snyvi hook`, and inside a pane that command knows the pane by
 `SNYVI_SESSION`. So a prompt or a tool call marks the pane *working*, a
 permission prompt marks it *needs you*, and the end of a turn marks it
-*done*. The pane's header says so, the rail marks it with `●`, `!` or `✓`,
-and the rail's footer says how long ago. *Needs you* counts as blocked, so
+*done*. The pane's header says so, and the rail marks it with `●`, `!` or `✓`. *Needs you* counts as blocked, so
 the `!` and the count beside `Desks` show it too. The state is held in
 memory, like the rest of a pane's status, and it goes with the process. The
 hook posts it with the token, never starts a daemon, and waits at most half
@@ -438,7 +438,11 @@ the hook's: `POST /api/panes/{id}/agent` takes `model` and `ctx: {pct, size,
 input}` from `snyvi statusline` for a running pane, and the pane's status
 carries them as `model`, `ctx_pct`, `ctx_size`, `ctx_in`. The `name_panel`
 MCP tool writes the same name through `POST /api/panes/{id}/name`, behind the
-token and a running pane.
+token and a running pane. The `pin_link` MCP tool pins a link in the rail's
+foot through `POST /api/panes/{id}/links` `{label, url}` (the token and a
+running pane; http or https, 32 characters of label, six shown, the same url
+relabels it, one the reader hid stays hidden), and the reader's ✕ and Undo are
+`POST /api/desks/{id}/links/{link}/hide` and `/show`.
 
 ## 7. Gaps, stated
 

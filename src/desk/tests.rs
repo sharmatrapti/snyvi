@@ -9,6 +9,7 @@ fn db() -> Connection {
     conn.execute_batch(SENT_BY_COLUMN).unwrap();
     conn.execute_batch(crate::thread::THREAD_COLUMN).unwrap();
     conn.execute_batch(LOOP_COLUMNS_1_37).unwrap();
+    conn.execute_batch(crate::links::COLUMN_1_43).unwrap();
     conn.execute_batch(crate::accounts::SCHEMA).unwrap();
     for c in crate::accounts::COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();

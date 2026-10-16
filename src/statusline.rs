@@ -4,9 +4,13 @@
 //! desk panel it tells the panel, and the panel's head, its rail row and the
 //! desk's row in the sidebar can say "Fable 5.1 · 43%".
 //!
-//! It prints nothing: the line exists to feed snyvi, and Claude Code's own
-//! bottom line stays as empty as it was. A reader who had a status line of
-//! their own keeps it: `init-claude` saves that entry beside the config
+//! In a desk panel it prints one line of its own under Claude's prompt --
+//! `Opus 5.5 · 242k / 1M · 5h 62% left` -- since that is where the reader's
+//! eyes are while the agent works, and the rail's foot gave the same figures
+//! to a line that clipped (1.43, plan 720260bb53; it printed nothing before,
+//! the call of 2026-09-27). Outside a panel it prints nothing: a Claude in the
+//! reader's own terminal is theirs. A reader who had a status line of their
+//! own keeps it, and only it: `init-claude` saves that entry beside the config
 //! (`statusline-before.json`), this runs it with the same JSON and prints what
 //! it prints, and `uninstall-claude` puts it back. The command in
 //! settings.json stays plain `snyvi statusline`, under the rule the hooks
@@ -130,8 +134,9 @@ pub fn run(paths: &Paths) -> anyhow::Result<()> {
         return Ok(());
     }
     // The reader's own line first, so what they see is never late for snyvi.
-    if let Some(cmd) = saved_command(&before_path(paths)) {
-        chain(&cmd, &input);
+    let theirs = saved_command(&before_path(paths));
+    if let Some(cmd) = &theirs {
+        chain(cmd, &input);
     }
     let Ok(v) = serde_json::from_slice::<Value>(&input) else {
         return Ok(());
@@ -140,6 +145,14 @@ pub fn run(paths: &Paths) -> anyhow::Result<()> {
     let pane = std::env::var("SNYVI_SESSION")
         .ok()
         .filter(|p| crate::pane::valid_id(p));
+    // Ours before the daemon is told, so the line is never late either.
+    if says(pane.as_deref(), theirs.is_some()) {
+        if let Some(l) = line(&seen, now()) {
+            let mut out = std::io::stdout();
+            let _ = writeln!(out, "{l}");
+            let _ = out.flush();
+        }
+    }
     if let (Some(cwd), Some(sid)) = (&seen.cwd, &seen.session) {
         crate::session::record(paths, cwd, sid, pane.as_deref());
     }
@@ -147,6 +160,78 @@ pub fn run(paths: &Paths) -> anyhow::Result<()> {
         client::agent_context(paths, &pane, &seen);
     }
     Ok(())
+}
+
+/// Whether snyvi prints a line of its own: only in a desk panel, and only
+/// when the reader has no line of theirs, so Claude never shows two.
+fn says(pane: Option<&str>, theirs: bool) -> bool {
+    pane.is_some() && !theirs
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// From this share of the window on, the figure is amber: where the page's
+/// `ctx hot` starts, and Claude Code itself begins to warn.
+const HOT: u8 = 85;
+const AMBER: &str = "\x1b[33m";
+const DIM: &str = "\x1b[2m";
+const RESET: &str = "\x1b[0m";
+
+/// The line under Claude's prompt in a desk panel: the model, the tokens in
+/// its window against the window's size, and what is left of the account's
+/// five hours -- `Opus 5.5 · 242k / 1M · 5h 62% left`. The seven days are the
+/// account's, not this panel's, and are not here (Home has them). Nothing
+/// when the payload says nothing to show.
+pub fn line(s: &Seen, now: i64) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    let model = bare_model(&s.model);
+    if !model.is_empty() {
+        parts.push(model.to_string());
+    }
+    let fig = match (s.size, s.used) {
+        (Some(size), Some(used)) => Some(format!("{} / {}", k_tok(used), k_tok(size))),
+        // Before the first reply, and just after /compact: no count yet,
+        // rather than an old one.
+        (Some(size), None) => Some(format!("— / {}", k_tok(size))),
+        (None, _) => s.pct.map(|p| format!("{p}%")),
+    };
+    if let Some(f) = fig {
+        parts.push(match s.pct {
+            Some(p) if p >= HOT => format!("{AMBER}{f}{RESET}"),
+            _ => f,
+        });
+    }
+    // A window past its reset is full again until the next reply says so.
+    if let Some(l) = s.five_hour.filter(|l| l.resets_at > now) {
+        parts.push(format!(
+            "5h {}% left",
+            (100.0 - l.used).round().clamp(0.0, 100.0)
+        ));
+    }
+    (!parts.is_empty()).then(|| parts.join(&format!(" {DIM}·{RESET} ")))
+}
+
+/// The model's name without a window Claude Code may write into it,
+/// "Opus 5.5 (1M context)": the figure beside it already says `/ 1M`.
+fn bare_model(m: &str) -> &str {
+    match m.rfind(" (") {
+        Some(i) if m.ends_with(')') && m[i..].contains("context") => m[..i].trim_end(),
+        _ => m,
+    }
+}
+
+/// "242k", "1M", "1.2M": the page's `kTok`, so the two never disagree.
+fn k_tok(n: u64) -> String {
+    if n >= 1_000_000 {
+        let m = format!("{:.1}", n as f64 / 1e6);
+        format!("{}M", m.strip_suffix(".0").unwrap_or(&m))
+    } else {
+        format!("{}k", (n as f64 / 1000.0).round() as u64)
+    }
 }
 
 /// Where the reader's own status line is kept while snyvi's stands in for it.
@@ -352,6 +437,81 @@ mod tests {
         assert_eq!(s.used, Some(40_000), "the total stands in");
         let s = read(&json!({ "model": { "display_name": "Fable 5.1" } }));
         assert_eq!(s.used, None);
+    }
+
+    /// The line a desk panel shows under Claude's prompt.
+    #[test]
+    fn the_line_says_model_window_and_five_hours_left() {
+        let s = Seen {
+            model: "Opus 5.5 (1M context)".into(),
+            pct: Some(24),
+            size: Some(1_000_000),
+            used: Some(242_400),
+            five_hour: Some(Limit {
+                used: 38.2,
+                resets_at: 2_000,
+            }),
+            seven_day: Some(Limit {
+                used: 90.0,
+                resets_at: 9_000,
+            }),
+            ..Seen::default()
+        };
+        let plain = |l: String| l.replace(DIM, "").replace(AMBER, "").replace(RESET, "");
+        assert_eq!(
+            plain(line(&s, 1_000).unwrap()),
+            "Opus 5.5 · 242k / 1M · 5h 62% left"
+        );
+        // A five hours past their reset are said by the next reply, not guessed.
+        assert_eq!(plain(line(&s, 3_000).unwrap()), "Opus 5.5 · 242k / 1M");
+        // No count yet: a dash, not an old figure.
+        let fresh = Seen {
+            used: None,
+            five_hour: None,
+            ..s
+        };
+        assert_eq!(plain(line(&fresh, 0).unwrap()), "Opus 5.5 · — / 1M");
+        // Filling: the figure in amber, the rest as it was.
+        let hot = Seen {
+            pct: Some(91),
+            used: Some(1_200_000),
+            size: Some(2_000_000),
+            model: "Fable 5.1".into(),
+            ..Seen::default()
+        };
+        assert_eq!(
+            line(&hot, 0).unwrap(),
+            format!("Fable 5.1 {DIM}·{RESET} {AMBER}1.2M / 2M{RESET}")
+        );
+        assert_eq!(line(&Seen::default(), 0), None);
+        assert_eq!(
+            plain(
+                line(
+                    &Seen {
+                        pct: Some(7),
+                        ..Seen::default()
+                    },
+                    0
+                )
+                .unwrap()
+            ),
+            "7%"
+        );
+    }
+
+    #[test]
+    fn the_line_is_a_desk_panels_and_never_beside_the_readers_own() {
+        assert!(says(Some("ab12"), false));
+        assert!(!says(None, false), "a Claude in the reader's own terminal");
+        assert!(!says(Some("ab12"), true), "their line, and only theirs");
+        assert_eq!(bare_model("Opus 5.5"), "Opus 5.5");
+        assert_eq!(
+            bare_model("reviewer · Opus 5.5 (1M context)"),
+            "reviewer · Opus 5.5"
+        );
+        assert_eq!(bare_model("Model (beta)"), "Model (beta)");
+        assert_eq!(k_tok(999), "1k");
+        assert_eq!(k_tok(1_000_000), "1M");
     }
 
     #[test]

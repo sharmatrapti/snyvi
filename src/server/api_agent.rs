@@ -518,6 +518,51 @@ pub(crate) async fn pane_card(
     }
 }
 
+/// A link in the rail's foot, pinned by the agent in pane `id` on that pane's
+/// desk (`crate::links`, MCP `pin_link`). Nothing is asked of the reader
+/// first: a link only shows, opens on their click, and carries the host
+/// snyvi read from it. One they hid stays hidden, and the agent is told.
+pub(crate) async fn pane_pin_link(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    let (label, url, host) = match crate::links::parse(&b) {
+        Ok(l) => l,
+        Err(why) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": why }))).into_response()
+        }
+    };
+    let by = b
+        .get("by")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    use crate::links::Pinned;
+    match app.store.pin_desk_link(placed.desk_id, (&label, &url, &host), by) {
+        Ok(Some(Pinned::Full)) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("this desk shows {} links already; the user can take one out with its ✕", crate::links::SHOWN) })),
+        )
+            .into_response(),
+        Ok(Some(Pinned::New(n) | Pinned::Updated(n))) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true, "id": n, "hidden": false, "desk": placed.desk_name }))
+                .into_response()
+        }
+        Ok(Some(Pinned::Hidden(n))) => {
+            Json(json!({ "ok": true, "id": n, "hidden": true, "desk": placed.desk_name }))
+                .into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// The running pane `id`, placed on its desk, for the routes an agent reaches
 /// from inside it: the token, a pane id of the right shape, a pane that is
 /// running -- which a pane only is while its program is -- and then its row.

@@ -2,6 +2,8 @@
 //! this panel has focus (`crate::card`, #162) -- a link to where the work
 //! can be seen, or a word on where it is -- each for as long as it says.
 //! A widget is the desk's lasting figure; a card is the panel's passing word.
+//! pin_link: the desk's lasting doorways, in the rail's foot itself
+//! (`crate::links`) -- the live site, a preview, a dashboard.
 
 use super::{arg, said, Session};
 use crate::client;
@@ -16,6 +18,14 @@ runs). Give an id and send the same id again to update it in place (a count goin
 stacking a new one. The newest three show; a panel keeps six. Never a paragraph, an instruction, or something \
 the user must do (that is hand_over); a figure for the whole desk to keep is set_widget. The user can close \
 a card with its ✕; a closed card stays closed for the session. Cards go when this session ends.";
+
+const PIN: &str = "Pin a link in the rail's foot of this snyvi desk, beside its repository: a place \
+this desk's work lives that the user will want one click away on any day, whichever panel they are in -- the \
+live site, a staging or preview deploy that stays, a dashboard, the docs. It stays until the user takes it out \
+with its ✕. Pin the same url again to change its label in place. For a place that matters only while you work \
+(a dev server, a CI run, this PR), use show_card instead: it goes with this session. The repository and the \
+thread's PR are shown already. A desk shows six links; never a link the user did not need, never one to \
+something they must do (that is hand_over).";
 
 const CLEAR: &str =
     "Take a card you showed with show_card off the rail's foot, by its id: when the link is \
@@ -33,6 +43,14 @@ pub(super) fn specs() -> Vec<Value> {
                 "tone": { "type": "string", "enum": ["run", "ok", "warn", "bad", "none"] },
                 "for": { "type": "integer", "minimum": 10, "maximum": 3600, "description": "Seconds it stays. Leave it out to keep it while this session runs." }
             }, "required": ["kind", "label"], "additionalProperties": false },
+            "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+        }),
+        json!({
+            "name": "pin_link", "title": "Pin a link", "description": PIN,
+            "inputSchema": { "type": "object", "properties": {
+                "label": { "type": "string", "description": "What it is, at most 32 characters: \"Live site\", \"Staging\"." },
+                "url": { "type": "string", "description": "http or https." }
+            }, "required": ["label", "url"], "additionalProperties": false },
             "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
         }),
         json!({
@@ -69,6 +87,30 @@ impl Session {
                     Some(id) => format!("The card {id} is above the rail's foot while this panel has focus. Send the same id to update it; clear_card takes it off."),
                     None => "The card is above the rail's foot while this panel has focus.".to_string(),
                 },
+                false,
+            ),
+            Err(e) => said(format!("snyvi did not take it: {e}"), true),
+        }
+    }
+
+    pub(super) fn pin_link(&self, args: &Value) -> Value {
+        let Some(p) = self.pane.as_deref() else {
+            return said(
+                "This session is not running in a snyvi desk, so there is no rail to pin a link in.",
+                true,
+            );
+        };
+        let body = json!({ "label": arg(args, "label"), "url": arg(args, "url"), "by": self.by() });
+        match client::pane_thread(&self.paths, p, "links", body) {
+            Ok(r) if r.get("hidden").and_then(Value::as_bool) == Some(true) => said(
+                "The user took this link out of the rail's foot with its ✕, so it stays out. Don't pin it again.",
+                false,
+            ),
+            Ok(r) => said(
+                format!(
+                    "The link is in the rail's foot of the desk {}. Pin the same url to change its label.",
+                    r.get("desk").and_then(Value::as_str).unwrap_or("")
+                ),
                 false,
             ),
             Err(e) => said(format!("snyvi did not take it: {e}"), true),

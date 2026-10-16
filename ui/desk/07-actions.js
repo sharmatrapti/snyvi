@@ -375,6 +375,8 @@ function focusPane(id) {
 }
 
 function click(e) {
+  // The foot's links: a ✕, an Undo, the +N (17-links.js).
+  if (linkClick(e)) return;
   // A section's head, folded or opened where it is: no draw.
   const fd = e.target.closest("[data-fold]");
   if (fd) { ctx.fold(fd.dataset.fold); return; }
@@ -668,6 +670,8 @@ export function actions(el) {
   if (!d) return null;
   const card = el.closest(".dk-pth");
   if (card) return threadMenu(card);
+  const lk = el.closest(".dk-lk-more, .dk-lk");
+  if (lk) return linksMenu(lk);
   const pane = el.closest(".dk-pane, .pn-head, .pn-body");
   if (pane) {
     const id = pane.matches(".dk-pane") ? pane.querySelector("[data-focus]")?.dataset.focus : pane.closest(".pn")?.dataset.id;
@@ -806,5 +810,6 @@ export function close() {
   forgetDocs(); forgetNotes(); hidePoints();
   detach();
   cardsDrop();
+  linksDrop();
   ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
 }

@@ -662,6 +662,7 @@ mod tests {
             parked: None,
             keys: Vec::new(),
             account: 0,
+            links: Vec::new(),
             panes: (1..=panes as i64)
                 .map(|slot| Pane {
                     id: format!("{slot:032}"),

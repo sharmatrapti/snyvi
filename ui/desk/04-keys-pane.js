@@ -540,8 +540,13 @@ function header(v) {
   // Which Claude account, once there is more than one: what a running panel
   // started as, or what a stopped one will start as.
   const acc = (ctx.desks.accounts || []).length || accountOf(v).removed ? accountOf(v) : null;
-  const st = `Panel ${v.pane.slot}${acc ? ` · Claude as ${acc.label}` : ""}`;
+  // What the rail's foot used to say of the focused panel and nowhere else
+  // (1.43): its model, its pid, and the folder its shell moved to.
+  const here = s.cwd || v.pane.cwd, d = current();
+  const st = [`Panel ${v.pane.slot}`, s.model, acc && `Claude as ${acc.label}`, s.running && s.pid && `pid ${s.pid}`].filter(Boolean).join(" · ");
   if (sl.dataset.tip !== st) sl.dataset.tip = st;
+  const away = here && d && here !== d.root ? `In ${tilde(here)}` : "";
+  if ((sl.dataset.tipSub || "") !== away) { if (away) sl.dataset.tipSub = away; else delete sl.dataset.tipSub; }
   // And in the head itself, beside the command, once the panel is not on
   // your login or its desk is not: a tip was the only place it was said.
   const pa = $(".pn-acc"), says = acc && (acc.id || current()?.account) ? acc.label : "";
