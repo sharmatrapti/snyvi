@@ -153,7 +153,8 @@
   /** A section's head (docs/DESIGN.md §8.4), the one both sidebars draw --
    *  desk.js has it as ctx.secHead. A quiet label that folds what is under
    *  it, its chevron shown on hover and while folded; then at the right, in
-   *  this order, the count and the actions. The count stays while folded,
+   *  this order, the actions and the count -- the count last, so it lines
+   *  up under the rows' times and counts. The count stays while folded,
    *  so nothing waiting goes unseen; `tone` colours it (accent: something
    *  waits, warn: something is blocked). The actions show on hover and on
    *  focus, and always on an `empty` section, whose + is the way in.
@@ -167,7 +168,7 @@
     const lead = o.fixed ? `<span class="sec-fold"${tip(o.tip, o.sub)}>${label}</span>`
       : `<button type="button" class="sec-fold" data-fold="${key}" aria-expanded="${open}"${tip(o.tip, o.sub)}>${label}${chev}</button>`;
     const n = o.count == null || o.count === "" ? "" : `<span class="sec-n${o.tone ? ` ${o.tone}` : ""}${o.foldOnly ? " fold-only" : ""}"${tip(o.countTip)}>${o.count}</span>`;
-    return `<div class="sec-head${o.empty ? " empty" : ""}" data-sec="${key}"${o.part ? ` data-part="${o.part}"` : ""}>${lead}${n}${o.acts ? `<span class="sec-acts">${o.acts}</span>` : ""}${o.end || ""}</div>`;
+    return `<div class="sec-head${o.empty ? " empty" : ""}" data-sec="${key}"${o.part ? ` data-part="${o.part}"` : ""}>${lead}${o.acts ? `<span class="sec-acts">${o.acts}</span>` : ""}${n}${o.end || ""}</div>`;
   }
   /** Whether a section is drawn folded: the reader's fold, unless `open`. */
   const secFolded = (key, open) => !open && isFolded(key);

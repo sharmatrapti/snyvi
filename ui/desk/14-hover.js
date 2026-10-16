@@ -2,7 +2,8 @@
  * order (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
 // ---------- focus that follows the pointer (#161) ----------
 /*
- * Off unless the reader turns it on (the desk's ⋯): every terminal that
+ * Off unless the reader turns it on (the sidebar's foot strip, with the
+ * look, since it is the whole app's and not one desk's): every terminal that
  * has it ships it off, and a focus that moves on its own is a change of
  * context the reader must be able to refuse (WCAG 3.2.5). Turned on, the
  * panel the pointer *settles* on takes the keys -- not one it passes over.
@@ -19,8 +20,8 @@
  *    new crossing starts again, so a sweep across a panel takes nothing;
  *  - never while the reader is busy (libinput, Emacs, KDE): within 800ms of
  *    a key that is not a modifier, with a button down (a selection, a head
- *    dragged), with a field, a menu or the tray open, or the window not in
- *    front;
+ *    dragged), with a field that has something typed in it, a menu or the
+ *    tray open, or the window not in front;
  *  - never back: a keyboard switch or a click leaves the panel under a
  *    still pointer where it is until the pointer has left it, and the
  *    pointer is never moved (sway users turn warping off).
@@ -37,15 +38,20 @@ let hvX = -1, hvY = -1, hvPane = null, hvAt = 0, hvTimer = 0, hvKeyAt = 0, hvBlo
 const hvSamples = [];
 
 /** Whether focus follows the pointer; with an argument, turns it on or off
- *  and keeps that for the next window. */
+ *  and keeps that for the next window. The foot strip's button (app.js) is
+ *  where the reader sets it; both say so with `snyvi:hover-focus`, so the
+ *  button and an open desk agree whichever moved it. */
 export function hoverFocus(on) {
   if (on === undefined) return hoverOn;
   hoverOn = !!on;
   try { localStorage.setItem(HOVER_KEY, hoverOn ? "1" : "0"); } catch { /* the setting lasts this window */ }
-  hoverStop();
+  dispatchEvent(new CustomEvent("snyvi:hover-focus", { detail: hoverOn }));
   ctx.toast(hoverOn ? "Focus follows the pointer" : "Focus on click", hoverOn ? "rest the pointer on a panel to type in it" : "click a panel to type in it");
   return hoverOn;
 }
+// The button in the foot strip, here or in another window of this browser.
+addEventListener("snyvi:hover-focus", e => { hoverOn = !!e.detail; hoverStop(); });
+addEventListener("storage", e => { if (e.key === HOVER_KEY) { hoverOn = e.newValue === "1"; hoverStop(); } });
 
 function hoverStop() {
   clearInterval(hvTimer);
@@ -58,10 +64,23 @@ function hoverBusy(e) {
   if ((e && e.buttons) || performance.now() - hvKeyAt < 800) return true;
   if ([...views.values()].some(v => v.holding)) return true;
   const a = document.activeElement;
-  if (a && !a.closest(".pn-body") && a.matches("input, textarea, select, [contenteditable]")) return true;
+  if (a && !a.closest(".pn-body") && a.matches("input, textarea, select, [contenteditable]") && fieldHolds(a)) return true;
   // A menu or a dialog drawn: one hidden by its own or a parent's `hidden`
   // draws no box.
   return oy.open || [...document.querySelectorAll("#ctx, [role=dialog]")].some(x => !x.classList.contains("oy-tray") && x.getClientRects().length > 0);
+}
+
+/** Whether a field outside the panels keeps the focus from the pointer:
+ *  only one with something typed in it (#170). A note's field saves what it
+ *  has when it loses the focus, and a rename commits, so a half-written line
+ *  is never taken from under the reader; but the empty field Enter leaves
+ *  after a note is added holds nothing, and it kept hover focus off until a
+ *  click. A list holds while it is focused; a box to tick or a button never. */
+function fieldHolds(a) {
+  if (a.tagName === "SELECT") return true;
+  if (a.isContentEditable) return !!a.textContent.trim();
+  if (a.tagName === "INPUT" && /^(checkbox|radio|button|submit|reset|range|color|file)$/.test(a.type)) return false;
+  return !!a.value.trim();
 }
 
 function hoverMove(e) {

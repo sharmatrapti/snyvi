@@ -13,9 +13,12 @@
  * bottom-right, where it was first, is the rightmost panel's, and the card
  * sat on Claude Code's prompt there (audit e0a854b732, U1). A turn new to
  * this page rises as a small card, with a soft chime; untouched for a few
- * seconds, or once the reader clicks elsewhere, it settles into the pill,
- * "On you 2", and the pill opens the tray: every fresh turn, newest first,
- * the older ones folded, and Suggested. Claude's own dialog never rises
+ * seconds, or once the reader clicks elsewhere, it settles into the notch,
+ * an icon and "2" on the right of the rail foot's rule, and the notch opens
+ * the tray: every fresh turn, newest first, the older ones under them,
+ * dimmed, with their age, and Suggested (1.43: an unanswered ask is on the
+ * reader whatever its age, so "N older" was a fold and a pill too many).
+ * Claude's own dialog never rises
  * (09-thread.js `shown`), and a turn that has gone quiet -- its panel
  * closed, half an hour old, or its panel prompted since -- never rises or
  * rings. With no rail in view (folded, or a narrow window) nothing rises
@@ -24,18 +27,19 @@
  * It is the one corner every page has (ui/corner.js, plan b0bca0a11f): the
  * look is corner.js's, and so are the cards that rise from outside -- a page
  * from another desk, an aside, a friend's word -- an agent's offer, which
- * is On you here too, and Lately under it in the tray. This file draws them
- * where the desk's corner is, and hands their clicks back.
+ * is On you here too. Lately is not in the tray any more: it is every
+ * desk's, so it is the sidebar's, which is every page's (1.43). This file
+ * draws the rest where the desk's corner is, and hands their clicks back.
  */
 
 /** How long a risen card stays before it settles into the pill. */
 const RISE_MS = 8000;
-/** The corner's state: the tray open; its older turns unfolded; the turn
+/** The corner's state: the tray open; the turn
  *  risen as a card (its id, or its group's first id) and the one whose rise
  *  has been drawn; the hover that holds a card; the turns this page has
  *  seen, for this desk, so only a new one rises; the tray pinned open
  *  (#115); and where the focus was when the tray opened, to give it back. */
-const oy = { open: false, older: false, rise: 0, drawnRise: 0, timer: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, inRail: false, more: 0, rang: 0 };
+const oy = { open: false, rise: 0, drawnRise: 0, timer: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, inRail: false, more: 0, rang: 0 };
 /** Arrivals this close together are one: one chime, and the card says the
  *  rest as "+N more" (U7). Four hand-overs in a second rang twice and
  *  showed only the last. */
@@ -71,13 +75,17 @@ function oyNode() {
   oyEl.setAttribute("role", "region");
   oyEl.setAttribute("aria-label", "On you");
   oyEl.addEventListener("click", click);
+  // A question cut to its lines opens with Enter or Space, as a button would.
+  oyEl.addEventListener("keydown", e => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches?.('.tn-q[data-a="tn-more"]')) { e.preventDefault(); e.target.click(); }
+  });
   oyEl.addEventListener("mouseenter", () => { oy.hover = true; });
   oyEl.addEventListener("mouseleave", () => { oy.hover = false; });
   document.body.append(oyEl);
   return oyEl;
 }
 
-/** What the pill counts: fresh waiting turns, suggestions and an agent's
+/** What the notch counts: fresh waiting turns, suggestions and an agent's
  *  offers, which are in amber; and the older ones, which are not. */
 function oyCounts(d, f) {
   const waiting = f.turns.filter(w => shown(w) && !w.answered_at);
@@ -107,28 +115,25 @@ function riseHtml(d, f, esc) {
   return `<div class="oy-card${first ? " rise" : ""}"><ul class="dk-turn-list" data-part="desk.turns">${body}</ul>${more}</div>`;
 }
 
-/** The tray, where the pill was: under its head (On you, the pin, and
- *  its ✕), what is fresh, newest first, the older ones folded under a line
- *  of their own, and Suggested. With nothing fresh above them the older ones
- *  are the tray, drawn open (#118), and the head says Older: an ON YOU head
- *  over an OLDER head over one card was two titles for one thing. */
-function trayHtml(d, f, esc, old) {
+/** The tray, over the notch: under its head (On you, the pin, and its ✕),
+ *  what is fresh, newest first, then the older ones, dimmed, each with its
+ *  age, and Suggested. Older is not a fold of its own: an unanswered ask is
+ *  on the reader however old it is, and the fold was one more thing to open
+ *  before it could be answered. Each question is its title line and two
+ *  lines of the rest here (`qClamp`), a click from the whole. */
+function trayHtml(d, f, esc) {
   const gone = filedGone && (filedGone.k === "w" || filedGone.k === "g") ? goneRow(filedGone.k, filedGone.id, filedGone.text, esc) : "";
-  const rows = gone + turnRows(d, f, esc, false);
+  qClamp = true;
+  const rows = gone + turnRows(d, f, esc, false), old = turnRows(d, f, esc, true);
+  qClamp = false;
   const said = rows ? `<ul class="dk-turn-list" data-part="desk.turns">${rows}</ul>` : "";
-  const why = `data-tip="Older" data-tip-sub="Its panel closed, asked over half an hour ago, or its panel was prompted since. It goes by itself after three days, and can come back"`;
-  const olderOnly = !rows && old;
-  const older = !old ? ""
-    : !rows ? `<ul class="dk-turn-list">${turnRows(d, f, esc, true)}</ul>`
-    : `<button type="button" class="oy-older" data-a="oy-older" aria-expanded="${oy.older}" ${why}>${old} older</button>` +
-      (oy.older ? `<ul class="dk-turn-list">${turnRows(d, f, esc, true)}</ul>` : "");
+  const older = old ? `<ul class="dk-turn-list oy-old" aria-label="Older" data-tip="Older" data-tip-sub="Its panel closed, asked over half an hour ago, or its panel was prompted since. It goes by itself after three days, and can come back">${old}</ul>` : "";
   const K = ctx.corner?.(), offers = K ? K.offersHtml() : "";
   const all = said + older + (offers ? `<ul class="dk-turn-list cn-list">${offers}</ul>` : "") + sugRows(f, d);
-  const title = olderOnly ? `<h3 class="oy-h" ${why}>On you · older</h3>`
-    : `<h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>`;
+  const title = `<h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do on this desk. Your answer goes with your next message to the panel that asked">On you</h3>`;
   const close = `<button type="button" class="oy-x" data-a="oy-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${ico("x")}</button>`;
   const head = `<div class="oy-head">${title}<span class="oy-gap"></span>${pinBtn()}${close}</div>`;
-  return `<div class="oy-tray" role="dialog" aria-label="On you and Lately" tabindex="-1">${head}<div class="oy-scroll">${all || `<p class="oy-none">Nothing is on you here.</p>`}${K ? K.trayHtml() : ""}</div></div>`;
+  return `<div class="oy-tray" role="dialog" aria-label="On you" tabindex="-1">${head}<div class="oy-scroll">${all || `<p class="oy-none">Nothing is on you here.</p>`}</div></div>`;
 }
 
 /** Where the corner sits: in the rail's column, at its width, its foot just
@@ -147,7 +152,14 @@ function oyPlace(el) {
   el.style.setProperty("--oy-w", `${Math.round(rr.width - 16)}px`);
   el.style.setProperty("--oy-b", `${Math.round(innerHeight - foot + 6)}px`);
   el.style.setProperty("--oy-max", `${Math.max(160, Math.round(foot - rr.top - 40))}px`);
+  // The notch sits on the foot's rule, at its right end, half above it.
+  const rule = m && m.height ? m.top : rr.bottom;
+  el.style.setProperty("--oy-nt", `${Math.round(rule - NOTCH_H / 2)}px`);
+  el.style.setProperty("--oy-nr", `${Math.round(innerWidth - rr.right + 12)}px`);
 }
+/** The notch's height: half of it above the foot's rule, and the lowest
+ *  card stands 8 px above that rule, so the notch never touches a card. */
+const NOTCH_H = 16;
 addEventListener("resize", () => { if (oyEl?.isConnected) oyPlace(oyEl); });
 
 /** The corner, drawn after the rail: the tray or the risen card, and the
@@ -166,15 +178,17 @@ function onYou(d) {
   if (oy.rise && oy.open) { oy.rise = 0; oy.more = 0; }
   const card = oy.rise ? riseHtml(d, f, esc) : "";
   if (oy.rise && !card) { oy.rise = 0; oy.more = 0; clearTimeout(oy.timer); }
-  const tray = oy.open ? trayHtml(d, f, esc, n.old) : "";
+  const tray = oy.open ? trayHtml(d, f, esc) : "";
   // What came from outside rises here too, over a turn's card never.
-  const K = ctx.corner?.(), news = K && !tray && !card ? K.cardHtml(true) : "", lit = !!K?.dot();
-  const say = (n.now ? `On you <span class="n">${n.now}</span>` : n.old ? `${n.old} older` : lit || K?.keep() ? "Lately" : "On you") +
-    (lit ? `<span class="cn-dot" aria-label="something new in Lately"></span>` : "");
-  // The open tray is closed by its head's ✕: a pill under it as well said
-  // "1 older" a second time, over the rail's last row (the notes' field).
-  const pill = !tray && (card || news || n.now || n.old || lit || K?.keep())
-    ? `<button type="button" class="oy-pill${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" data-tip="On you" data-tip-sub="What only you can do on this desk, and what came lately" data-key="ctrl+alt+y">${say}</button>` : "";
+  const K = ctx.corner?.(), news = K && !tray && !card ? K.cardHtml(true) : "";
+  // In the rail it is a notch on the foot's rule: an icon and the count,
+  // amber while something is fresh. It takes no row and moves nothing; with
+  // nothing on the reader it is not there at all. With no rail in view it
+  // is the pill in the window's corner, as before.
+  const count = n.now + n.old;
+  const label = `${count} on you${n.now && n.old ? `, ${n.old} of them older` : !n.now ? ", all older" : ""}`;
+  const pill = !tray && count
+    ? `<button type="button" class="oy-pill oy-notch${n.now ? " on" : ""}" data-a="oy-open" aria-expanded="false" aria-label="${label}" data-tip="On you" data-tip-sub="${n.now ? "What only you can do on this desk" : "Older asks, still waiting on you"}" data-key="ctrl+alt+y">${ico("tray")}<span class="n">${count}</span></button>` : "";
   // A redraw replaces every button: the one the keyboard was on gets the
   // focus back, by what it does and to which row, or a press on a card
   // button dropped the hand to the page's body (W24).
@@ -256,7 +270,6 @@ function oyToggle() {
   const at = document.activeElement;
   oy.back = at && !oyEl?.contains(at) ? at : null;
   oy.open = true; oy.rise = 0; clearTimeout(oy.timer);
-  ctx.corner?.()?.opened();
   rail();
   oyEl?.querySelector(".oy-tray")?.focus({ preventScroll: true });
 }
@@ -267,7 +280,7 @@ export function openTray() { if (!oy.open && current()) oyToggle(); }
  *  stays open until a click elsewhere, as an unpinned tray does. */
 function oyPin(d) {
   setPinned(d.id, !oy.pin);
-  if (oy.pin && !oy.open) { oy.open = true; oy.rise = 0; clearTimeout(oy.timer); ctx.corner?.()?.opened(); }
+  if (oy.pin && !oy.open) { oy.open = true; oy.rise = 0; clearTimeout(oy.timer); }
   rail();
   oyEl?.querySelector(".oy-pin")?.focus({ preventScroll: true });
 }
@@ -276,7 +289,7 @@ function oyPin(d) {
  *  where that click put it. */
 function oyClose(back) {
   if (back && oy.pin) setPinned(deskId, false);
-  oy.open = false; oy.older = false;
+  oy.open = false;
   if (current()) rail();
   if (back && oy.back?.isConnected) oy.back.focus({ preventScroll: true });
   oy.back = null;
@@ -308,7 +321,7 @@ document.addEventListener("keydown", e => {
  *  this browser. */
 function forgetOnYou() {
   clearTimeout(oy.timer);
-  Object.assign(oy, { open: false, older: false, rise: 0, drawnRise: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, more: 0 });
+  Object.assign(oy, { open: false, rise: 0, drawnRise: 0, hover: false, seen: null, at: null, pin: false, pinAt: null, back: null, more: 0 });
   oyEl?.remove(); oyEl = null;
   document.documentElement.style.setProperty("--oy-h", "0px");
 }
@@ -322,7 +335,13 @@ const ONYOU_CSS = `
    last lines; the card and the tray as wide as the column. */
 .oy.in-rail { left: var(--oy-l); right: auto; bottom: var(--oy-b); width: var(--oy-w); align-items: stretch; }
 .oy.in-rail > .oy-card, .oy.in-rail > .oy-tray { width: auto; }
-.oy.in-rail > .oy-pill { align-self: flex-end; }
+/* The notch: fixed on the rail foot's rule, its right end (oyPlace), so it
+   is in no flow at all and nothing moves as it comes and goes. Amber while
+   something is fresh, the rail's quiet ink when only older asks wait. */
+.oy.in-rail > .oy-notch { position: fixed; top: var(--oy-nt); right: var(--oy-nr); height: 16px; gap: 3px; padding: 0 6px; line-height: 1; box-shadow: none; background: var(--bg-side); }
+.oy-notch svg { width: 11px; height: 11px; }
+.oy-notch:not(.on) .n { color: var(--fg-2); font-weight: 500; }
+.oy.in-rail > .oy-notch.on { color: var(--warn); }
 .oy.in-rail .oy-scroll { max-height: calc(var(--oy-max) - 40px); }
 /* The card that rises: one turn, small. Its question is said whole (#114):
    cut at two lines, a key's steps ended in "then..." with no way to read on.
@@ -345,10 +364,9 @@ const ONYOU_CSS = `
 .oy-pin:hover { background: var(--rule-2); color: var(--fg); }
 .oy-pin.on { color: var(--accent); }
 .oy-pin.on svg { fill: currentColor; }
-.oy-older { display: block; margin: 8px 2px 0; font-size: var(--fs-micro); color: var(--fg-3); text-decoration: underline dotted; }
-/* The pill floats over the rail's foot: the rail keeps that much room at
-   its end, always, so its last row -- the notes' field -- scrolls clear of
-   the pill rather than sit under it, and nothing moves as the pill comes. */
-#toc:has(> .dk-rail) { padding-bottom: 40px; }
+/* Older asks, under the fresh ones: dimmed, their age in their own line. */
+.oy-tray .oy-old > li { opacity: .72; }
+.oy-tray .oy-old > li:hover, .oy-tray .oy-old > li:focus-within { opacity: 1; }
+.oy-tray .dk-turn-list + .oy-old > li:first-child { border-top: 1px solid var(--rule); }
 .oy .dk-note.gone { list-style: none; display: flex; align-items: center; gap: 6px; border: 1px dashed var(--rule-2); background: var(--bg-raise); }
 `;

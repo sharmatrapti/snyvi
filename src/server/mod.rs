@@ -488,6 +488,10 @@ fn thread_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/note", post(pane_note))
         .route("/api/claude-mod", get(mod_setting).post(set_mod_setting))
         .route("/api/desks/{id}/threads", get(desk_threads))
+        .route(
+            "/api/desks/{id}/panes/{pane}/cards/{card}/{act}",
+            post(desk_card_act),
+        )
         .route("/api/desks/{id}/threads/{row}/move", post(desk_move_thread))
         .route("/api/desks/{id}/threads/{row}/{act}", post(desk_thread_act))
         .route("/api/desks/{id}/turns/{row}/answer", post(desk_answer_turn))

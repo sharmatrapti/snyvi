@@ -252,6 +252,23 @@
   $("#btn-wrap").addEventListener("click", control("wrap", toggleWrap));
   pressed($("#btn-wrap"), root.dataset.wrap === "1");
 
+  /* Focus follows the pointer (#161) is the whole app's, so it is here with
+   * the look and not in one desk's ⋯, where it read as that desk's. One key
+   * in this browser, as it always was; an open desk hears the change
+   * (`snyvi:hover-focus`, 14-hover.js). Never dimmed off a desk: it is a
+   * preference, set before a desk is ever opened. */
+  const HOVER = "snyvi.hover-focus", hoverBtn = $("#btn-hover");
+  const paintHover = () => { const on = store.get(HOVER) === "1"; pressed(hoverBtn, on); hoverBtn.dataset.tip = `Focus follows the pointer: ${on ? "on" : "off"}`; };
+  hoverBtn.addEventListener("click", () => {
+    const on = store.get(HOVER) !== "1";
+    store.set(HOVER, on ? "1" : "0");
+    dispatchEvent(new CustomEvent("snyvi:hover-focus", { detail: on }));
+    toast(on ? "Focus follows the pointer" : "Focus on click", { sub: on ? "rest the pointer on a panel to type in it" : "click a panel to type in it" });
+  });
+  addEventListener("snyvi:hover-focus", paintHover);
+  addEventListener("storage", e => { if (e.key === HOVER) paintHover(); });
+  paintHover();
+
   /** The terminal's text size, after Aa on a desk: the panels' text is the
    *  answer, and Aa's label, under the hand, names the size. */
   const sayTermSize = paintControls;
@@ -374,7 +391,7 @@
    * sections say: waiting, panels that need you, agents connected. */
   const railNav = $("#rail-nav");
   ICONS.search = '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/>';
-  for (const b of railNav.querySelectorAll("[data-ico]")) b.insertAdjacentHTML("afterbegin", icon(b.dataset.ico));
+  for (const b of document.querySelectorAll("#side [data-ico]")) b.insertAdjacentHTML("afterbegin", icon(b.dataset.ico));
   /** A number on a rail icon; none at 0. Hoisted: the renderers call it at boot. */
   function badge(sel, n, cls = "") {
     const b = document.querySelector(`#rail-nav ${sel} .badge`);
@@ -389,6 +406,13 @@
     if (b) useActs().then(m => m.pop(actsCtx, b.dataset.pop, b));
     else if (e.target.closest("#rail-search")) openPalette();
   });
+  /* Lately is every desk's, so it is the sidebar's, which is every page's:
+   * one button in its head, and the same in the rail when it is folded. It
+   * opens in the rail's popover, as a section would, with the rows
+   * corner.js draws; opening it is looking, so the dot goes everywhere. */
+  const openLately = b => corner(m => { m.lately(); useActs().then(a => a.pop(actsCtx, "lately", b)); });
+  for (const b of document.querySelectorAll(".lt-btn")) b.addEventListener("click", () => openLately(b));
+  if (boot.lately_unseen) root.dataset.lately = "1";
   // A toolbar: the arrows walk it, Tab leaves it.
   railNav.addEventListener("keydown", e => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;

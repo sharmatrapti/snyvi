@@ -437,8 +437,9 @@ function entries(ctx, el, byKey = false) {
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
       dk && { label: "Keys…", run: () => dk.keysHere() },
-      // Off unless asked for: the panel the pointer settles on takes the keys (#161).
-      dk && { label: "Focus follows the pointer", hint: dk.hoverFocus() ? "on" : "off", run: () => dk.hoverFocus(!dk.hoverFocus()) }, RULE,
+      // Focus follows the pointer left this menu for the foot strip (1.43):
+      // it is the whole app's, and here it read as this desk's alone.
+      RULE,
       // Where it is in the list; what cannot move it is not offered.
       ...(here ? [] : moves(ctx, id, byKey)),
       files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
@@ -768,7 +769,10 @@ function install(ctx) {
  * it is fetched on the first press of a rail icon, and a reader whose
  * sidebar is never folded never pays for it. */
 const $ = s => document.querySelector(s), root = document.documentElement;
-const POPS = { inbox: ["#inbox-row"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"] };
+// Lately is no section of the tree: corner.js makes its element and keeps
+// it, out of sight, in #trees between openings (`lately`), so it opens and
+// closes as the sections do.
+const POPS = { inbox: ["#inbox-row"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], lately: ["#lately-nav"] };
 /** #trees' order: the reader's (app.js `placeLeft` writes it), or index.html's. */
 const home = () => ($("#trees").dataset.order || "#inbox-row #tree #desk-nav #browse-nav #widgets-nav").split(" ");
 let popBtn = null, popWired = false;
@@ -787,6 +791,9 @@ export function pop(ctx, sec, btn) {
   if (sec === "tree") ctx.drawTree();
   // Level with the icon, and moved only as far as it takes to stay on the
   // window, the way a toast answers a control in the rail.
+  // Lately opens from the sidebar's head too, with the sidebar open: beside
+  // the sidebar then, not over its own rows.
+  popEl.style.left = root.dataset.side === "0" ? "" : Math.round($("#side").getBoundingClientRect().right + 6) + "px";
   const r = btn.getBoundingClientRect(), h = popEl.offsetHeight;
   popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, innerHeight - h - 8))) + "px";
   (popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
@@ -854,7 +861,7 @@ function wirePop(popEl) {
   popEl.addEventListener("click", e => { if (e.target.closest("a[href]")) queueMicrotask(() => unpop()); });
   // The context menu is on <body>, but a row's menu is the popover's own: an
   // action there (Rename, Remove with its Undo) happens in the row, in here.
-  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target) && !e.target.closest?.("#ctx")) unpop(false); }, true);
+  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target) && !e.target.closest?.("#ctx, #btn-lately")) unpop(false); }, true);
 }
 
 /** Shut the menu from outside, which is what Escape does everywhere else on

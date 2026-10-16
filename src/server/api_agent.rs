@@ -507,9 +507,12 @@ pub(crate) async fn pane_card(
                 .into_response()
         }
     };
+    // A card the reader closed stays closed, put again or not: the agent is
+    // told, so it stops putting it.
     match app.panes.put_card(&id, op) {
-        Some(changed) => {
-            Json(serde_json::json!({ "ok": true, "changed": changed })).into_response()
+        Some((changed, closed)) => {
+            Json(serde_json::json!({ "ok": true, "changed": changed, "closed": closed }))
+                .into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }

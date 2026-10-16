@@ -36,6 +36,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/mcp/threads.rs` | 247 | the seven #90 MCP tools: start_thread, move_thread, ask, hand_over, settle_asks, suggest_panel, suggest_desk |
 | `src/project.rs` | 168 | cwd → project (git root) |
 | `src/git.rs` | 251 | branch, dirt, unpushed, recent commits for Home |
+| `src/gh.rs` | 200 | a thread's PR as `gh pr view` says it: open, merged, closed, the merge and who made it, the checks; who gh is signed in as (1.43) |
 | `src/resolve.rs` | 211 | a Ctrl-clicked word → a path |
 
 ## Desks

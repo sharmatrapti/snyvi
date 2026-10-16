@@ -32,6 +32,7 @@
     .then(m => (cornerMod ||= m.init({ root, store, esc, relShort, capability, deskApi, sayErr, toast, who: whoIco, glyph, peek: mascotPeek, showDoc: id => showDoc(id, true, false, state.view === "desk"), showDesk, showHome, showStart,
       view: () => state.view, onDesk: () => state.view === "desk" && !!desk, friends: () => state.friends,
       deskRedraw: () => desk?.arranged?.(), deskTray: () => desk?.openTray?.(), homeRedraw: () => homeMod?.redraw?.(),
+      openLately: () => openLately($(root.dataset.side === "0" ? "#rail-lately" : "#btn-lately")), unpop: () => closePop(false),
       hop: () => { const m = $(".brand-mark"); if (m && !quiet()) { m.classList.remove("hop"); void m.offsetWidth; m.classList.add("hop"); } } })))
     .catch(e => { cornerLoading = null; throw e; }));
   const corner = f => cornerUse().then(f, () => {});

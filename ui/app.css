@@ -350,7 +350,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    hears it, since #pop is inside #trees. */
 #rail-nav, #pop[hidden] { display: none; }
 :root[data-side="0"] #rail-nav { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; min-height: 0; padding: 6px 0; }
-:root[data-side="0"] :is(.brand-name, #live, #btn-search, #side .gutter, #trees > :not(#pop)) { display: none; }
+:root[data-side="0"] :is(.brand-name, #live, #btn-search, #btn-lately, #side .gutter, #trees > :not(#pop)) { display: none; }
 :root[data-side="0"] .side-head { flex-direction: column; gap: 10px; padding: 14px 0 4px; }
 :root[data-side="0"] #btn-side-hide { margin: 0; }
 /* The mark in a box the size of the rail's icons, so it sits on their
@@ -378,6 +378,12 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    second dot, and a figure off the corner (#130). Solid, so the icon's line
    does not show through it. */
 .badge.q { color: var(--fg-2); background: color-mix(in srgb, var(--fg) 10%, var(--bg-side)); }
+/* Lately's button, in the head and in the rail: a dot in the accent while
+   something in it is unseen (corner.js sets data-lately), never a number. */
+.lt-btn { position: relative; }
+#side .lt-dot { display: none; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg-side); opacity: 1; }
+:root[data-lately] #side .lt-dot { display: block; }
+.lt-btn[aria-expanded="true"] { color: var(--accent); background: var(--accent-bg); }
 #rail-nav i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .6; }
 #rail-live.on i { opacity: 1; background: var(--ok); box-shadow: var(--led-glow); }
 @media (max-width: 760px) {
@@ -399,6 +405,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #main { grid-area: main; }
 #rail { grid-area: rail; }
 #main { min-width: 0; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
+/* Off a desk the corner (On you) sits over #main's bottom right, so the
+   page's end leaves it its height (corner.js --oy-h): it never covers the
+   last row, and growing the end moves nothing above it. */
+:root:not([data-view="desk"]) #main::after { content: ""; display: block; height: var(--oy-h, 0px); }
 /* Parts the OS would draw, drawn once, snyvi's way (docs/DESIGN.md §8.2).
    Every scrolling list in the chrome has the same thin bar -- there when a
    list is longer than its place, and no wider than it needs to be -- and the
@@ -685,7 +695,7 @@ button.sec-fold:hover { color: var(--fg-2); }
 /* Their layers are the column's own business: nothing they stack over
    leaves #trees, so nothing outside it is covered. Not on the rail, where
    #pop has to stand over the page. */
-:root:not([data-side="0"]) #trees { isolation: isolate; }
+:root:not([data-side="0"]):not([data-pop]) #trees { isolation: isolate; }
 #trees > :is(#inbox-row, #desk-nav, #browse-nav, #widgets-nav) { display: flow-root; background: var(--bg-side); }
 #trees > #inbox-row { position: sticky; top: 0; z-index: 1; }
 #trees > :is(#desk-nav, #browse-nav, #widgets-nav) { position: relative; z-index: 2; }

@@ -90,8 +90,8 @@ function stepsRow(d, w, n, from, esc) {
       `<div class="tn-step-b">${s.say ? `<span class="tn-step-say">${esc(s.say)}</span>` : ""}${s.cmd ? `<code class="sg-cmd tn-cmd">${esc(s.cmd)}</code>` : ""}</div>` +
       `<span class="tn-step-a">${act}</span></li>`;
   }).join("");
-  return `<li class="dk-turn tn-walk" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p><ol class="tn-steps">${rows}</ol>` +
-    `<p class="tn-by">run · ${esc(from)} · ${st.done.size} of ${steps.length} done${sv ? ` · its shell is panel ${m}` : ""}</p>` +
+  return `<li class="dk-turn tn-walk" data-w="${w.id}">${qHtml(w, esc)}<ol class="tn-steps">${rows}</ol>` +
+    byHtml(w, d, esc, ` · ${st.done.size} of ${steps.length} done${sv ? ` · its shell is panel ${m}` : ""}`) +
     `<div class="tn-acts"><button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
     `</li>` + errLine(`w${w.id}`, esc);
 }

@@ -45,6 +45,11 @@ notes, its threads, the user's On you list.
   user reopened says what is still wrong; the brief leads with it.
 - `hand_over` is for what blocks you that only they can do: a command to run
   (as `run`, never as text to type), a key, a merge. `ask` is for a decision.
+  A merge hand-over carries the PR's page as its `link`: snyvi settles it
+  itself when GitHub says that PR merged, and the user's own merge ticks the
+  thread's notes (a merge by anyone else lands them for the user's check).
+  Don't tick a thread's notes for a merge yourself. Keep one thread on one
+  branch: a commit on another branch is not counted for it.
 - `leave_off` when a stretch ends: the next step and its condition, one line.
 - A friend on the list can be offered a document (`offer_document`) or a line
   (`offer_line`); the user decides whether it goes.
@@ -76,4 +81,6 @@ PR, a CI run) or one line of **text** on where it is ("Building 3/7"). Use
 `show_card` with an `id` and send it again to update in place; `for` is the
 seconds it stays, left out to keep it while the session runs; `clear_card`
 takes it off. Never a paragraph or a to-do of theirs. A figure for the whole
-desk to keep is a widget.
+desk to keep is a widget. The user can close a card with its ✕; snyvi then
+tells you so, and a closed card stays closed for the session. Don't put a PR
+card: snyvi shows the thread's PR, with its checks, while it is open.

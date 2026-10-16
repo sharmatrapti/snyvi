@@ -617,11 +617,24 @@ fn promote(
         workflow_key: &wf_name.to_lowercase(),
         workflow_title: &wf_title,
     };
+    // What this send is a version of: the last one sent of the file, past
+    // the hook's drafts between. A plan edited and sent again went to
+    // Lately as a new document each time, five rows for one plan (1.43, G1).
+    let mut supersedes = None;
+    let mut at = store.previous(draft)?;
+    for _ in 0..64 {
+        let Some(prev) = at else { break };
+        if !quiet(&prev.origin) {
+            supersedes = Some(prev.id);
+            break;
+        }
+        at = store.previous(&prev)?;
+    }
     Ok(Received {
         doc: store.promote(&draft.id, &by)?,
         needs_full_highlight: false,
         existing: false,
-        supersedes: None,
+        supersedes,
         quiet: false,
         promoted: true,
     })
@@ -789,6 +802,7 @@ mod tests {
 
         let sent = receive(&s, &r, mk("mcp", Some("The plan"), Some("Send paths"))).unwrap();
         assert!(sent.promoted && !sent.existing && !sent.quiet);
+        assert_eq!(sent.supersedes, None, "the first send of the file");
         assert_eq!(sent.doc.id, draft.doc.id, "one row");
         assert_eq!(sent.doc.title, "The plan");
         assert_eq!(sent.doc.origin, "mcp");
@@ -837,6 +851,14 @@ mod tests {
         assert!(!v4.quiet && !v4.promoted && !v4.existing);
         assert_eq!(v4.supersedes.as_deref(), Some(read_then.doc.id.as_str()));
         assert_eq!(s.waiting().unwrap(), 2);
+
+        // Drafted, then sent: a version of the last send, past the drafts
+        // between, so Lately says "2 versions" and not two documents (G1).
+        std::fs::write(&file, "# From the H1\n\nv5").unwrap();
+        receive(&s, &r, mk("hook", None, None)).unwrap();
+        let v5 = receive(&s, &r, mk("mcp", None, None)).unwrap();
+        assert!(v5.promoted);
+        assert_eq!(v5.supersedes.as_deref(), Some(v4.doc.id.as_str()));
     }
 
     #[test]
