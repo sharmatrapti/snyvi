@@ -151,6 +151,10 @@ const OLD_1_37: &str = "ALTER TABLE desk_notes DROP COLUMN landed_commit;
 const OLD_1_42: &str =
     "ALTER TABLE threads DROP COLUMN pr_state; ALTER TABLE desks DROP COLUMN links;";
 
+/// And of 1.43's: why an agent put an On you card away (step 25,
+/// `thread::AWAY_COLUMN_1_44`).
+const OLD_1_43: &str = "ALTER TABLE turns DROP COLUMN away;";
+
 #[test]
 fn insert_get_previous_search() {
     let (s, _d) = temp_store();
@@ -959,7 +963,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
-         {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1248,7 +1252,7 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
-         {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
          {OLD_1_33}
          {OLD_1_32}
          {OLD_1_30}
@@ -1781,7 +1785,7 @@ fn a_1_32_database_gains_the_session_column() {
     };
     let conn = Connection::open(&paths.db_path).unwrap();
     conn.execute_batch(&format!(
-        "{OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
+        "{OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
     ))
     .unwrap();
     drop(conn);
@@ -1795,5 +1799,5 @@ fn a_1_32_database_gains_the_session_column() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!((version, session.as_str()), (24, ""));
+    assert_eq!((version, session.as_str()), (25, ""));
 }

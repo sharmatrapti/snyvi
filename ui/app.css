@@ -235,6 +235,11 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: .15em; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-xs); }
+/* A popover opened with the pointer takes the focus without a ring: WebKit
+   draws one for any focus a script moves, and on On you's tray and Lately's
+   first row it read as an error (audit 98b9d67a7d). The first key brings
+   it back (.ring-quiet comes off). */
+.ring-quiet:focus-visible, .ring-quiet :focus-visible { outline: none; }
 ::selection { background: var(--accent-bg); }
 
 /* ---------- layout ---------- */
@@ -321,10 +326,19 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #chrome .over-x:hover { background: var(--rule-2); color: var(--fg); }
 /* Width, beside the way back: only where it does something, a page of
    prose. Elsewhere it keeps its room unseen, so the way back never moves. */
-#chrome .over-w { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); visibility: hidden; transition: background var(--t), color var(--t); }
+#chrome :is(.over-w, .over-c) { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
+#chrome .over-w { visibility: hidden; }
 :root:has(#doc article.kind-markdown) #chrome .over-w { visibility: visible; }
-#chrome .over-w:hover { background: var(--rule-2); color: var(--fg); }
+#chrome :is(.over-w, .over-c):hover { background: var(--rule-2); color: var(--fg); }
 #chrome .over-w.on { color: var(--accent); }
+/* Copy all (#165), beside Width: on every page with text to copy. On a
+   picture, a film, a song or a binary its place is kept and empty, so the
+   bar does not move from one page to the next. Its answer is a ✓ in the
+   same box (.did): the word "Copied" would widen it and push the title. */
+#chrome .over-c > svg { grid-area: 1 / 1; }
+#chrome .over-c .c-ok, #chrome .over-c.did .c-ic { visibility: hidden; }
+#chrome .over-c.did .c-ok { visibility: visible; color: var(--ok); }
+:root:has(#doc article:is(.kind-image, .kind-video, .kind-audio, .kind-binary)) #chrome .over-c, :root:has(#doc article.sk-body) #chrome .over-c { visibility: hidden; }
 /* A desk draws its own head, with the desk's name in it, and the pane does
    not scroll: there the bar is only its buttons, laid over the desk's
    header, which makes room for them (desk.js, .dk-head). */
@@ -378,9 +392,13 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    second dot, and a figure off the corner (#130). Solid, so the icon's line
    does not show through it. */
 .badge.q { color: var(--fg-2); background: color-mix(in srgb, var(--fg) 10%, var(--bg-side)); }
-/* Lately's button, in the head and in the rail: a dot in the accent while
-   something in it is unseen (corner.js sets data-lately), never a number. */
+/* Lately's button: a dot in the accent while something in it is unseen
+   (corner.js sets data-lately), never a number. It is a log of what already
+   rose as a card, so it sits in the foot beside the theme, not first in the
+   head where Search belongs; folded, it is the rail's last icon, held down
+   by the foot it would sit beside. */
 .lt-btn { position: relative; }
+:root[data-side="0"] #rail-lately { margin-top: auto; }
 #side .lt-dot { display: none; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg-side); opacity: 1; }
 :root[data-lately] #side .lt-dot { display: block; }
 .lt-btn[aria-expanded="true"] { color: var(--accent); background: var(--accent-bg); }

@@ -157,6 +157,7 @@ export function letter(e, c) {
     case "a": if (!c.noteBar()) return false; break;
     case "w": c.wide(); break;
     case "z": c.wrap(); break;
+    case "y": c.copyAll(); break;
     case "t": c.rail(); break;
     // The diagram under the cursor, or the last one used: fit it, or fill the
     // screen with it. Both are no-ops on a page with no diagram on it.

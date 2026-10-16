@@ -570,6 +570,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (22, desk::LOOP_COLUMNS_1_37), // 1.37: a line landed by a commit, and its reply
     (23, thread::PR_STATE_1_43), // 1.43: where a thread's PR is, as GitHub says it
     (24, crate::links::COLUMN_1_43), // 1.43: a desk's links in the rail's foot
+    (25, thread::AWAY_COLUMN_1_44), // 1.44: why an agent put an On you card away
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

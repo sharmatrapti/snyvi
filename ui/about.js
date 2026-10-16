@@ -319,6 +319,7 @@ const HELP = `
     <div class="hk"><span>Maximise width</span><span class="keys"><kbd>w</kbd></span></div>
     <div class="hk"><span>Wrap long lines</span><span class="keys"><kbd>z</kbd></span></div>
     <div class="hk"><span>Open source</span><span class="keys"><kbd>o</kbd></span></div>
+    <div class="hk"><span>Copy all</span><span class="keys"><kbd>y</kbd></span></div>
   </section>
 </div>
 <div class="help-col" id="help-col-2">

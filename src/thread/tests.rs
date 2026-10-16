@@ -14,6 +14,7 @@ fn db() -> Connection {
     conn.execute_batch(TAKEN_COLUMN).unwrap();
     conn.execute_batch(GROUP_COLUMN).unwrap();
     conn.execute_batch(PR_STATE_1_43).unwrap();
+    conn.execute_batch(AWAY_COLUMN_1_44).unwrap();
     for c in SUGGEST_COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
     }
@@ -1334,4 +1335,105 @@ fn a_run_turn_carries_steps_each_checked_like_one_command() {
         ..run(&[])
     };
     assert_eq!(ask(&mut conn, d, &try_it, 4).unwrap(), Asked::BadOptions);
+}
+
+/// The same command handed over twice is one card (#174): the newer one
+/// stands, the older is put away -- spaced differently, or a step of a
+/// walk-through -- recoverable as a ✕ is. A different command is not a
+/// repeat, and a non-run never puts anything away.
+#[test]
+fn a_command_handed_over_again_puts_the_older_card_away() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let run = |cmd: &str, steps: &[&str]| Ask {
+        kind: "run".into(),
+        text: "Add the Cloudflare account ID".into(),
+        cmd: cmd.into(),
+        options: steps.iter().map(|s| s.to_string()).collect(),
+        pane: "p2".into(),
+        ..Ask::default()
+    };
+    let id = |a: Asked| match a {
+        Asked::Turn(t) => t.id,
+        other => panic!("{other:?}"),
+    };
+    let first = id(ask(&mut conn, d, &run("gh secret set ID --repo a/b", &[]), 1).unwrap());
+    let other = id(ask(&mut conn, d, &run("gh run rerun 7", &[]), 2).unwrap());
+    let again = id(ask(&mut conn, d, &run("gh  secret set ID   --repo a/b", &[]), 3).unwrap());
+    let open = |c: &Connection| -> Vec<i64> {
+        waiting_on(c, d, false, 4)
+            .unwrap()
+            .iter()
+            .map(|t| t.id)
+            .collect()
+    };
+    assert_eq!(open(&conn), vec![other, again]);
+    // A walk-through whose step types it puts the single card away too.
+    let steps = id(ask(
+        &mut conn,
+        d,
+        &run(
+            "",
+            &["$ gh secret set ID --repo a/b", "Wait for the deploy"],
+        ),
+        5,
+    )
+    .unwrap());
+    assert_eq!(open(&conn), vec![other, steps]);
+    // Recoverable, as a ✕ is, and never a reason said for it.
+    assert!(restore_turn(&conn, d, first).unwrap());
+    assert!(put_away_lately(&conn, d, 6).unwrap().is_empty());
+    let decide = Ask {
+        kind: "decide".into(),
+        text: "Which?".into(),
+        options: vec!["a".into(), "b".into()],
+        pane: "p2".into(),
+        ..Ask::default()
+    };
+    id(ask(&mut conn, d, &decide, 7).unwrap());
+    assert!(open(&conn).contains(&other));
+}
+
+/// An agent on the desk puts any waiting card away with why (#174), and only
+/// with why: the tray says it for a day with Bring back, which clears it.
+/// One already answered, or on another desk, is not its to put away.
+#[test]
+fn an_agent_puts_a_card_away_with_why_and_the_reader_brings_it_back() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let rel = Ask {
+        kind: "run".into(),
+        text: "Release v1.43.0".into(),
+        cmd: "gh workflow run release.yml -f version=1.43.0".into(),
+        pane: "gone".into(),
+        ..Ask::default()
+    };
+    let Asked::Turn(t) = ask(&mut conn, d, &rel, 10).unwrap() else {
+        panic!()
+    };
+    assert_eq!(put_away(&conn, d, t.id, "panel 1", "  ", 20).unwrap(), None);
+    assert_eq!(
+        put_away(&conn, d + 1, t.id, "panel 1", "done", 20).unwrap(),
+        None
+    );
+    let away = put_away(&conn, d, t.id, "panel 1", "v1.43.0 is released", 20)
+        .unwrap()
+        .unwrap();
+    assert_eq!(away.away, "panel 1: v1.43.0 is released");
+    assert_eq!(away.removed_at, 20);
+    assert!(waiting_on(&conn, d, false, 21).unwrap().is_empty());
+    assert_eq!(put_away_lately(&conn, d, 21).unwrap()[0].id, t.id);
+    // Said for a day, then only kept.
+    assert!(put_away_lately(&conn, d, 20 + AWAY_SHOWN_S + 1)
+        .unwrap()
+        .is_empty());
+    // Twice is nothing: it is no longer waiting.
+    assert_eq!(
+        put_away(&conn, d, t.id, "panel 2", "again", 22).unwrap(),
+        None
+    );
+    assert!(restore_turn(&conn, d, t.id).unwrap());
+    let back = turn(&conn, d, t.id).unwrap().unwrap();
+    assert_eq!((back.removed_at, back.away.as_str()), (0, ""));
+    assert!(put_away_lately(&conn, d, 23).unwrap().is_empty());
 }

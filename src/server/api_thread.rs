@@ -172,19 +172,37 @@ pub(crate) struct QuestionBody {
     recommended: Option<i64>,
 }
 
+/// What else waits on the reader on the desk, told back to the agent that
+/// just asked (#174): it can see a card it repeats, or one a session before
+/// it left that is done, and remove that one (`pane_away`).
+fn also_open(app: &App, desk: i64, not: &[i64]) -> Vec<serde_json::Value> {
+    let waiting = app
+        .store
+        .clocked(|c, now| thread::waiting_on(c, desk, false, now))
+        .unwrap_or_default();
+    waiting
+        .iter()
+        .filter(|t| !not.contains(&t.id))
+        .map(|t| json!({ "id": t.id, "kind": t.kind, "text": t.text, "cmd": t.cmd, "stale": t.stale, "created_at": t.created_at }))
+        .collect()
+}
+
 fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
     match r {
         Ok(Asked::Turn(t)) => {
             threads_moved(app, desk);
             notify_turn(app, &t, 0);
-            (StatusCode::CREATED, Json(json!({ "turn": t }))).into_response()
+            let open = also_open(app, desk, &[t.id]);
+            (StatusCode::CREATED, Json(json!({ "turn": t, "open": open }))).into_response()
         }
         Ok(Asked::Group(ts)) => {
             threads_moved(app, desk);
             notify_turn(app, &ts[0], ts.len() - 1);
+            let ids: Vec<i64> = ts.iter().map(|t| t.id).collect();
+            let open = also_open(app, desk, &ids);
             (
                 StatusCode::CREATED,
-                Json(json!({ "turn": ts[0], "turns": ts })),
+                Json(json!({ "turn": ts[0], "turns": ts, "open": open })),
             )
                 .into_response()
         }
@@ -323,6 +341,50 @@ pub(crate) async fn pane_settle(
             }
             Json(json!({ "settled": n })).into_response()
         }
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AwayBody {
+    turn: i64,
+    #[serde(default)]
+    why: String,
+}
+
+/// `remove_card`: an agent on the desk removes a card from On you, saying why
+/// (#174). Any waiting turn on its own desk, never another desk's; the why
+/// is said in the tray with Bring back, and nothing is deleted.
+pub(crate) async fn pane_away(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<AwayBody>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    if b.why.trim().is_empty() {
+        return refused(
+            StatusCode::BAD_REQUEST,
+            "say why it is no longer on the user",
+        );
+    }
+    let desk = placed.desk_id;
+    let who = format!("panel {}", placed.pane.slot);
+    match app
+        .store
+        .clocked(|c, now| thread::put_away(c, desk, b.turn, &who, &b.why, now))
+    {
+        Ok(Some(t)) => {
+            threads_moved(&app, desk);
+            Json(json!({ "turn": t })).into_response()
+        }
+        Ok(None) => refused(
+            StatusCode::NOT_FOUND,
+            "no card of that id is waiting on the user on this desk",
+        ),
         Err(e) => err(e),
     }
 }
@@ -963,13 +1025,14 @@ pub(crate) async fn desk_threads(
             thread::for_desk(c, id)?,
             thread::turns(c, id, now - ANSWERED_SHOWN, now)?,
             thread::suggestions(c, id)?,
+            thread::put_away_lately(c, id, now)?,
         ))
     });
     match r {
-        Ok((threads, turns, suggestions)) => {
-            Json(json!({ "threads": threads, "turns": turns, "suggestions": suggestions }))
-                .into_response()
-        }
+        Ok((threads, turns, suggestions, away)) => Json(json!({
+            "threads": threads, "turns": turns, "suggestions": suggestions, "away": away,
+        }))
+        .into_response(),
         Err(e) => err(e),
     }
 }

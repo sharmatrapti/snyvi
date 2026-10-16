@@ -1,9 +1,10 @@
 //! The #90 tools, for an agent in a desk's panel: start_thread and
 //! move_thread file a piece of work, ask and hand_over put what only the
 //! reader can do on On you, settle_asks takes back the questions the reader
-//! answered in the conversation, and suggest_panel and suggest_desk offer a
-//! card the reader clicks or not (`crate::thread`). Each description is kept
-//! short: all seven are in every panel session's tool list.
+//! answered in the conversation, remove_card removes a card that is no longer
+//! on the reader, and suggest_panel and suggest_desk offer a card the reader
+//! clicks or not (`crate::thread`). Each description is kept short: all eight
+//! are in every panel session's tool list.
 
 use super::{arg, said, Session};
 use crate::client;
@@ -38,6 +39,11 @@ shell of its own when it asks for a password (sudo), and tick each done.";
 const SETTLE_ASKS: &str = "Take your open questions off the user's On you list when their message in this \
 conversation answered them. Your hand-overs stay. snyvi says, at their next message, which questions of \
 yours are still open.";
+
+const REMOVE_CARD: &str = "Remove a card from the user's On you list in snyvi once it is no longer on them: you can \
+see it is done (a tag, a merge, the key there) or a newer card asks the same. Any card on this desk, by the \
+id the desk brief or ask and hand_over's reply give; never only because it is old. Say why, in a few words: \
+the user sees it and can bring it back.";
 
 const SUGGEST_PANEL: &str = "Suggest a panel on this desk: a name, the exact command it would run, and why. \
 The user sees a card with the command and opens it or not; nothing runs until they click. Three wait at \
@@ -107,6 +113,14 @@ pub(super) fn specs() -> Vec<Value> {
             "annotations": ann(true)
         }),
         json!({
+            "name": "remove_card", "title": "Remove a card from On you", "description": REMOVE_CARD,
+            "inputSchema": { "type": "object", "properties": {
+                "id": { "type": "integer", "description": "The card's id." },
+                "why": { "type": "string", "description": "A few words: what shows it is no longer on the user." }
+            }, "required": ["id", "why"], "additionalProperties": false },
+            "annotations": ann(true)
+        }),
+        json!({
             "name": "suggest_panel", "title": "Suggest a panel", "description": SUGGEST_PANEL,
             "inputSchema": { "type": "object", "properties": {
                 "name": { "type": "string" },
@@ -124,6 +138,40 @@ pub(super) fn specs() -> Vec<Value> {
             "annotations": ann(false)
         }),
     ]
+}
+
+/// What else waits on the user on the desk, after an ask or a hand-over
+/// (#174): a card this one repeats, or one an ended session left that is
+/// done, is the agent's to remove. Nothing when nothing else waits.
+fn also_open(v: &Value) -> String {
+    let open: Vec<String> = v
+        .get("open")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(6)
+        .map(|t| {
+            let s = |k: &str| t.get(k).and_then(Value::as_str).unwrap_or("");
+            let text: String = s("text").chars().take(80).collect();
+            let old = if t.get("stale").and_then(Value::as_bool) == Some(true) {
+                ", older"
+            } else {
+                ""
+            };
+            format!(
+                "#{} {}: \"{text}\"{old}",
+                t.get("id").and_then(Value::as_i64).unwrap_or(0),
+                s("kind")
+            )
+        })
+        .collect();
+    if open.is_empty() {
+        return String::new();
+    }
+    format!(
+        " Also on the user's On you list on this desk: {}. If one is done, or this card repeats it, remove_card it with why.",
+        open.join("; ")
+    )
 }
 
 /// A thread in one line, as the agent is told it back.
@@ -225,14 +273,12 @@ impl Session {
         match self.thread_call("ask", body) {
             Ok(v) => {
                 let n = v.get("turns").and_then(Value::as_array).map_or(1, Vec::len);
-                said(
-                    if n > 1 {
-                        format!("Asked {n} questions, on one card on the user's On you list in snyvi; the answers come with their next message. Carry on with what does not depend on them.")
-                    } else {
-                        "Asked. It is on the user's On you list in snyvi; the answer comes with their next message. Carry on with what does not depend on it.".to_string()
-                    },
-                    false,
-                )
+                let head = if n > 1 {
+                    format!("Asked {n} questions, on one card on the user's On you list in snyvi; the answers come with their next message. Carry on with what does not depend on them.")
+                } else {
+                    "Asked. It is on the user's On you list in snyvi; the answer comes with their next message. Carry on with what does not depend on it.".to_string()
+                };
+                said(head + &also_open(&v), false)
             }
             Err(e) => e,
         }
@@ -245,10 +291,15 @@ impl Session {
             "cmd": arg(args, "cmd"), "key": arg(args, "key"), "by": self.by(), "options": steps,
         });
         let run = arg(args, "kind") == "run";
+        let head = if run && !steps.is_empty() {
+            "Handed over as steps. The user runs each command with a click, in order -- typed into this panel as a ! command, its output arriving here as their message, or into a shell panel of its own where you do not see it -- and ticks each step done. When all are, their answer says which ran where. Say so in your reply; do not repeat the commands for them to paste."
+        } else if run {
+            "Handed over. When the user clicks Run, it is typed into this panel as a ! command, and its output arrives here as their message. Say so in your reply; do not ask them to paste it."
+        } else {
+            "Handed over. It is on the user's On you list in snyvi; their answer comes with their next message. Say so in your reply."
+        };
         match self.thread_call("handover", body) {
-            Ok(_) if run && !steps.is_empty() => said("Handed over as steps. The user runs each command with a click, in order -- typed into this panel as a ! command, its output arriving here as their message, or into a shell panel of its own where you do not see it -- and ticks each step done. When all are, their answer says which ran where. Say so in your reply; do not repeat the commands for them to paste.", false),
-            Ok(_) if run => said("Handed over. When the user clicks Run, it is typed into this panel as a ! command, and its output arrives here as their message. Say so in your reply; do not ask them to paste it.", false),
-            Ok(_) => said("Handed over. It is on the user's On you list in snyvi; their answer comes with their next message. Say so in your reply.", false),
+            Ok(v) => said(head.to_string() + &also_open(&v), false),
             Err(e) => e,
         }
     }
@@ -268,6 +319,18 @@ impl Session {
                     false,
                 ),
             },
+            Err(e) => e,
+        }
+    }
+
+    /// A card that is no longer on the reader, off On you with why (#174).
+    pub(super) fn remove_card(&self, args: &Value) -> Value {
+        let id = args.get("id").and_then(Value::as_i64).unwrap_or(0);
+        match self.thread_call("away", json!({ "turn": id, "why": arg(args, "why") })) {
+            Ok(_) => said(
+                "Removed. It is off the user's On you list; the tray says why for a day, with Bring back.",
+                false,
+            ),
             Err(e) => e,
         }
     }
@@ -334,12 +397,12 @@ fn run_steps(args: &Value) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Seven tools in every panel session: each says what it does in a few
+    /// Eight tools in every panel session: each says what it does in a few
     /// lines, takes only what it names, and none is destructive.
     #[test]
-    fn the_seven_are_short_and_take_only_what_they_name() {
+    fn the_eight_are_short_and_take_only_what_they_name() {
         let specs = specs();
-        assert_eq!(specs.len(), 7);
+        assert_eq!(specs.len(), 8);
         for s in &specs {
             let d = s["description"].as_str().unwrap();
             assert!(d.len() <= 350, "{}: {} chars", s["name"], d.len());

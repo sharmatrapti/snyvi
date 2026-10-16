@@ -113,7 +113,8 @@
   addEventListener("popstate", () => { if (history.state && history.state.n != null) navStep(); });
   const useNav = () => import(`/assets/nav.js${boot.v ? `?v=${boot.v}` : ""}`)
     .then(m => (navMod = m.init({ stepAt, rep0, top: () => navTop, setTop: n => { navTop = n; navStep(); }, menuFor: (el, x, y) => menuFor(el, x, y, false), relShort })));
-  (window.requestIdleCallback || setTimeout)(() => useNav().catch(() => {}), { timeout: 1500 });
+  // Copy all's chunk (09-answers.js) comes at the same idle moment.
+  (window.requestIdleCallback || setTimeout)(() => { useNav().catch(() => {}); useCopy().catch(() => {}); }, { timeout: 1500 });
   navStep();
 
   window.addEventListener("popstate", () => {

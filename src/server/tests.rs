@@ -2,7 +2,7 @@
 
 use super::{
     desk_key, desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
-    BOOT_JS, BROWSE_JS, CORNER_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS,
+    BOOT_JS, BROWSE_JS, COPY_JS, CORNER_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS,
     INDEX_HTML, KEYS_JS, LOOK_JS, MENU_JS, MMD_JS, NAV_JS, PALETTE_JS, PATHS_JS, PEER_JS, TIP_JS,
     TOAST_JS,
 };
@@ -703,6 +703,7 @@ fn every_id_the_script_uses_unguarded_is_in_the_page() {
         ("palette.js", PALETTE_JS),
         ("look.js", LOOK_JS),
         ("nav.js", NAV_JS),
+        ("copy.js", COPY_JS),
         ("corner.js", CORNER_JS),
         ("tip.js", TIP_JS),
         ("home.js", HOME_JS),

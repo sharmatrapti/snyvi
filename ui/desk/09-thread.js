@@ -182,14 +182,51 @@ function turnCard(d, f, w, esc) {
  *  sent stays with the fresh. */
 function turnRows(d, f, esc, older) {
   const drawn = new Set();
+  const card = w => older && qClamp && !oldOpen.has(w.ask_group || w.id) ? olderLine(d, f, w, esc) : turnCard(d, f, w, esc);
   return f.turns.filter(w => shown(w) && (w.answered_at ? !older && sendable.has(w.id) : fresh(d, w) !== older))
     .sort((a, b) => b.id - a.id)
     .map(w => {
-      if (!w.ask_group) return turnCard(d, f, w, esc);
+      if (!w.ask_group) return card(w);
       if (drawn.has(w.ask_group)) return "";
       drawn.add(w.ask_group);
-      return turnCard(d, f, w, esc);
+      return card(w);
     }).join("");
+}
+
+/** The older asks opened from their line in the tray, by turn or card id;
+ *  forgotten when the tray closes. */
+const oldOpen = new Set();
+/** An older ask in the tray (#174): Lately's row -- its title, then where
+ *  and when, quiet -- a click from its whole card. Its panel closed, or it
+ *  was asked over half an hour ago: no one is waiting on it this minute,
+ *  and at full height three of them were most of the tray. Not a fold of
+ *  them all, which 1.43 took out: each is still there, and its ✕ with it.
+ *  One row grammar for On you and Lately (audit 98b9d67a7d). */
+function olderLine(d, f, w, esc) {
+  const g = w.ask_group, n = g ? f.turns.filter(x => x.ask_group === g && !x.answered_at).length : 1;
+  const [head, body] = qParts(w.text || "");
+  const what = (n > 1 ? `${n} decisions · ` : "") + (head || body);
+  const slot = slotOf(d, w.pane), where = slot ? `panel ${slot}` : "panel closed";
+  const x = g
+    ? `<button type="button" class="cn-rx" data-a="tn-gx" data-g="${g}" data-tip="Not now, all" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(what)}">${ico("x")}</button>`
+    : `<button type="button" class="cn-rx" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button>`;
+  return `<li class="cn-row"${g ? ` data-g="${g}"` : ` data-w="${w.id}"`}><span class="cn-b">` +
+    `<span class="cn-tl"><button type="button" class="cn-t" data-a="tn-old" data-w="${g || w.id}" aria-expanded="false" data-tip="${esc(w.text)}"><span class="cn-tx">${inlineCode(what, esc)}</span></button></span>` +
+    `<span class="cn-bl"><span class="cn-w" data-tip="${esc(fromOf(d, w))}">${esc(where)} · ${esc(w.kind === "decide" ? "decision" : w.kind)}</span><span class="cn-at">${esc(ctx.relShort(w.created_at))}</span></span>` +
+    `</span>${x}</li>`;
+}
+
+/** Cards an agent removed in the last day (#174): Lately's row, its title
+ *  and Bring back, then who removed it and why -- "Removed by panel 1:
+ *  v1.43.0 is released" -- and when. An agent may remove any card on its
+ *  desk, so what it did is said where the card was, not only told to the
+ *  agent; Bring back puts it on the reader again. */
+function awayRows(f, esc) {
+  return (f.away || []).map(w => `<li class="cn-row" data-w="${w.id}"><span class="cn-b">` +
+    `<span class="cn-tl"><span class="cn-t" data-tip="${esc(w.text)}" data-tip-overflow><span class="cn-tx">${inlineCode(w.text, esc)}</span></span>` +
+    `<button type="button" class="tn-opt quiet" data-a="tn-back" data-w="${w.id}">Bring back</button></span>` +
+    `<span class="cn-bl"><span class="cn-w">Removed by ${esc(w.away)}</span><span class="cn-at">${esc(ctx.relShort(w.removed_at))}</span></span>` +
+    `</span></li>` + errLine(`b${w.id}`, esc)).join("");
 }
 
 /** A decide's options, the recommended one marked -- with a star, in
@@ -410,7 +447,7 @@ async function getFiled(id, again) {
   catch { filedGet = null; if (id === deskId) { filedOff = id; } return; }
   filedGet = null; filedOff = null;
   if (id !== deskId) return;
-  filed = { threads: j.threads || [], turns: j.turns || [], suggestions: j.suggestions || [] };
+  filed = { threads: j.threads || [], turns: j.turns || [], suggestions: j.suggestions || [], away: j.away || [] };
   filedAt = id;
   // An answer that is not here any more, or was taken up by the panel, has
   // nothing left to send.
@@ -587,6 +624,14 @@ async function filedAct(a, b, d) {
   if (a === "tn-more") { const id = +b.dataset.w; if (!qOpen.delete(id)) qOpen.add(id); rail(); return true; }
   if (a === "oy-pin") { oyPin(d); return true; }
   if (a === "tn-key") { addKeyOpen(d); return true; }
+  if (a === "tn-old") { oldOpen.add(+b.dataset.w); rail(); oyEl?.querySelector(`.dk-turn[data-w="${+b.dataset.w}"] button, .dk-turn[data-g="${+b.dataset.w}"] button`)?.focus({ preventScroll: true }); return true; }
+  if (a === "tn-back") {
+    // An agent's removal undone: on the reader again, as it was.
+    const id = +b.dataset.w;
+    if (await told({ ...b.dataset }, `b${id}`, "Could not bring it back", () => {},
+      () => ctx.api(`/api/desks/${d.id}/turns/${id}/restore`, {}))) await getFiled(d.id, true);
+    return true;
+  }
   const t = filed.threads.find(x => x.id === +b.dataset.t);
   const w = filed.turns.find(x => x.id === +b.dataset.w);
   const s = filed.suggestions.find(x => x.id === +b.dataset.s);
@@ -754,7 +799,10 @@ const THREAD_CSS = `
 .tn-gq.said .tn-q { color: var(--fg-2); }
 .tn-gfoot { padding-top: 6px; border-top: 1px solid var(--rule); }
 /* A handed-over command is shown whole: what Run types is what is read. */
-.sg-cmd.tn-cmd { white-space: pre-wrap; overflow-wrap: anywhere; text-overflow: clip; max-height: 9em; overflow-y: auto; }
+/* A command breaks where it has spaces, so "--repo" and "snymrova/snyvi"
+   stay whole (#174); only a word longer than the line -- a hash, a token --
+   breaks inside itself. */
+.sg-cmd.tn-cmd { white-space: pre-wrap; word-break: normal; overflow-wrap: break-word; text-overflow: clip; max-height: 9em; overflow-y: auto; }
 .sg-for { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; }
 .sg-chip { padding: 1px 8px; border: 1px solid var(--rule-2); border-radius: var(--r-pill); font-size: var(--fs-micro); color: var(--fg-2); }
 .sg-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }

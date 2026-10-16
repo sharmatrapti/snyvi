@@ -243,6 +243,15 @@
   $("#btn-wide-top").addEventListener("click", control("wide", toggleWide));
   pressed($("#btn-wide-top"), root.dataset.wide === "1");
 
+  /** Copy all (#165) is ui/copy.js, fetched once the page is idle, with
+   *  nav.js (07-nav.js): by the first click it is here, and the click
+   *  reaches the clipboard with nothing awaited before it, which WebKit
+   *  asks. A click before it came waits for it. */
+  let copyMod = null;
+  const useCopy = () => import(`/assets/copy.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (copyMod = m.init({ state, rawUrl, toast, keyHint })));
+  const copyAll = btn => copyMod ? copyMod.copyAll(btn) : useCopy().then(m => m.copyAll(btn));
+  $("#btn-copy-top").addEventListener("click", e => copyAll(e.currentTarget));
+
   function toggleWrap() {
     const on = root.dataset.wrap !== "1";
     on ? (root.dataset.wrap = "1") : delete root.dataset.wrap;
@@ -468,6 +477,7 @@
     openFind, deleteCurrent, openNext, showInbox, showHome, rawUrl, mmd: () => mmd,
     noteBar: () => state.view === "home" && !!homeMod?.focusBar(),
     wide: () => control("wide", toggleWide)(), wrap: () => control("wrap", toggleWrap)(),
+    copyAll: () => copyAll($("#chrome .over:not([hidden]) #btn-copy-top")),
     rail: () => railNarrow.matches ? rail.classList.contains("empty") || toggleSheet("rail") : fold("rail"),
     side: () => closePop() || fold("side") };
 

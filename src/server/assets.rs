@@ -66,6 +66,10 @@ pub(crate) const PALETTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/pale
 pub(crate) const LOOK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/look.js"));
 pub(crate) const NAV_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/nav.js"));
 
+/// Copy all (#165), fetched once the page is idle, as nav.js is: by the
+/// first click on it, it is here.
+pub(crate) const COPY_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/copy.js"));
+
 /// The aside card at the sidebar's foot, fetched when there is an aside to
 /// show: a reader no agent has spoken to never pays for it.
 pub(crate) const CORNER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/corner.js"));
@@ -784,6 +788,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("palette.js", PALETTE_JS, JS),
     ("look.js", LOOK_JS, JS),
     ("nav.js", NAV_JS, JS),
+    ("copy.js", COPY_JS, JS),
     ("corner.js", CORNER_JS, JS),
     ("tip.js", TIP_JS, JS),
     ("home.js", HOME_JS, JS),
