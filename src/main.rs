@@ -17,6 +17,7 @@ mod gh;
 mod git;
 mod hook;
 mod lately;
+mod links;
 mod mcp;
 mod pane;
 mod peer;

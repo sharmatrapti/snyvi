@@ -58,7 +58,8 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/hook.rs` | 1190 | Claude Code hooks: SessionStart brief, prompt/tool/stop status, Markdown writes sent |
 | `src/brief.rs` | 627 | the desk brief text |
 | `src/session.rs` | 128 | session id ↔ cwd/pane bookkeeping shared by hook and MCP |
-| `src/statusline.rs` | 394 | Claude Code status line |
+| `src/statusline.rs` | 514 | Claude Code status line: feeds the panel, prints its line in a desk panel |
+| `src/links.rs` | 252 | a desk's links in the rail's foot (`pin_link`) |
 | `src/mcp.rs` | 1040 | the stdio MCP server, nine tools |
 | `src/agents.rs` | 1157 | the registry: claude, codex, cursor, gemini; what each has |
 | `src/client.rs` | 1153 | CLI/MCP → daemon over HTTP with the token; starts the daemon if needed |

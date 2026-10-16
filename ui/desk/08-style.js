@@ -6,7 +6,7 @@ function style() {
   if (document.getElementById("desk-css")) return;
   const s = document.createElement("style");
   s.id = "desk-css";
-  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS;
+  s.textContent = CSS + THREAD_CSS + ONYOU_CSS + ELSEWHERE_CSS + SIGNIN_CSS + HOVER_CSS + CARDS_CSS + STEPS_CSS + LINKS_CSS;
   document.head.append(s);
 }
 
@@ -372,7 +372,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-panes .dot { width: 8px; flex: none; text-align: center; font-size: 8px; color: var(--fg-3); align-self: center; }
 .dk-panes .run .dot { color: var(--ok); }
 .dk-panes .blk .dot { color: var(--warn); font-weight: 700; font-size: 11px; }
-.dk-panes .slot, .dk-docs .slot, .dk-slot { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
+.dk-panes .slot, .dk-docs .slot { font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); flex: none; font-variant-numeric: tabular-nums; }
 .dk-panes .on .slot { color: var(--accent); }
 .dk-panes .nm { overflow: hidden; text-overflow: ellipsis; }
 .dk-new { display: block; color: var(--fg-3); padding: 3px 8px; font-size: var(--fs-small); border-radius: var(--r-sm); }
@@ -438,25 +438,13 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 /* On a desk the rail's foot is the sidebar's foot's twin (#163): the same
  * height, --foot-h, its rule on the same line across the window, and one
  * line in it that never wraps. Its height is set, not found, so nothing that
- * comes and goes in it -- a clock ticking wider, a folder, the repository
+ * comes and goes in it -- a link, its Undo, the repository
  * answering late -- can move the list above. It runs to the rail's edge, as
  * the sidebar's does, and is opaque and in front: the cards rise from behind
  * it (15-cards.js). */
 :root[data-view="desk"] #rail { padding-bottom: 0; }
 :root[data-view="desk"] #meta, :root[data-view="desk"] #meta:empty { height: var(--foot-h); max-height: none; overflow: hidden; display: flex; align-items: center; gap: 4px;
   margin-left: -8px; padding: 0 8px; border-top: 1px solid var(--rule); background: var(--bg-side); line-height: 1; white-space: nowrap; position: relative; z-index: 2; }
-#meta .dk-pl { display: flex; flex-wrap: nowrap; align-items: center; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
-#meta .dk-pl > * { flex: none; white-space: nowrap; }
-/* Whole or not at all: a name that shrank to "O…" would hide the overflow
- * the fit reads, and the clock would stay while the model went (plFit). */
-#meta .dk-pl .dk-m { flex: none; }
-/* The slot's neighbour, whichever it is once the model has given way. */
-#meta .dk-slot + * { padding-left: .4em; }
-#meta .dk-sep { padding: 0 .4em; }
-/* The model and its context are what the line is read for: the name in
- * the ink, the clock after them quiet. */
-#meta .dk-pl .dk-m { color: var(--fg); }
-#meta .dk-since { font-variant-numeric: tabular-nums; color: var(--fg-3); }
 /* The desk's repository on the web: an icon in a slot that is there whether
  * or not the answer has come, quiet until pointed at. */
 #meta .dk-repo { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border-radius: var(--r-sm); color: var(--fg-3); text-decoration: none; }

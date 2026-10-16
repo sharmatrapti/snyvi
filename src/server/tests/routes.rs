@@ -284,6 +284,7 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         true,
     ),
     ("POST", "/api/desks/1/notes/1/keep", None, Gate::Desk, true),
+    ("POST", "/api/desks/1/links/1/hide", None, Gate::Desk, true),
     (
         "POST",
         "/api/desks/1/panes/nope/cards/pr-1-2/hide",
@@ -567,6 +568,13 @@ pub(super) const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
         "POST",
         "/api/panes/nope/card",
         Some(r#"{"label":"x"}"#),
+        Gate::Token,
+        true,
+    ),
+    (
+        "POST",
+        "/api/panes/nope/links",
+        Some(r#"{"label":"x","url":"https://a.b"}"#),
         Gate::Token,
         true,
     ),

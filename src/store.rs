@@ -4,10 +4,8 @@
 use crate::accounts;
 use crate::config::Paths;
 use crate::desk::{self, Desk, Opened, Origin, Placed};
-use crate::peer;
 use crate::render::Kind;
-use crate::thread;
-use crate::widget;
+use crate::{peer, thread, widget};
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -571,6 +569,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (21, thread::ON_YOU_1_36[1]),
     (22, desk::LOOP_COLUMNS_1_37), // 1.37: a line landed by a commit, and its reply
     (23, thread::PR_STATE_1_43), // 1.43: where a thread's PR is, as GitHub says it
+    (24, crate::links::COLUMN_1_43), // 1.43: a desk's links in the rail's foot
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.

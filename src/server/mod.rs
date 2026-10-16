@@ -391,6 +391,9 @@ fn pane_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/notes/{note}/mark", post(pane_mark_note))
         .route("/api/panes/{id}/name", post(pane_name))
         .route("/api/panes/{id}/card", post(pane_card))
+        // A desk's links (`crate::links`): an agent pins one, the reader hides it.
+        .route("/api/panes/{id}/links", post(pane_pin_link))
+        .route("/api/desks/{id}/links/{link}/{to}", post(hide_desk_link))
         .route("/api/panes/{id}/brief", get(pane_brief))
         .route("/api/panes/{id}/changes", get(pane_changes))
         .route("/api/panes/{id}/keys/{name}", get(pane_key))

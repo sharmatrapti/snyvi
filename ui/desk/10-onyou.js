@@ -137,8 +137,8 @@ function trayHtml(d, f, esc) {
 }
 
 /** Where the corner sits: in the rail's column, at its width, its foot just
- *  above the rail's own last lines (the panel's pid and age, `ctx.metaEl`),
- *  so it covers neither a panel nor that line (U1, U2). With no rail in
+ *  above the rail's foot (its repository and links, `ctx.metaEl`),
+ *  so it covers neither a panel nor the foot (U1, U2). With no rail in
  *  view -- folded to its strip, hidden, or a sheet on a narrow window -- the
  *  window's corner, and nothing rises there (`arrived`). */
 function oyPlace(el) {

@@ -2,8 +2,6 @@
  * order (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
 // ---------- the rail ----------
 
-const ago = s => { const d = Math.max(0, Date.now() / 1000 - s); return d < 60 ? `${Math.round(d)}s` : d < 3600 ? `${Math.round(d / 60)}m` : `${Math.floor(d / 3600)}h ${Math.round((d % 3600) / 60)}m`; };
-
 /** A pane as a row names it: the shell's title less the `user@host:` a
  *  prompt puts before the folder. Every row on a desk carries the same
  *  prefix, and it is the folder after it that tells them apart. A program's
@@ -429,81 +427,23 @@ function repoName(url) {
   catch { return null; }
 }
 
-/** The desk's focused panel, in one line at the rail's foot: as tall as the
- *  sidebar's foot and on its rule, so the two feet read as one band across
- *  the window, and never a line more (#163). A line that wrapped when its
- *  clock ticked wider ("done 52s" / "done 1m") moved the list above it every
- *  minute. What had rows of its own goes where it costs no height: the
- *  folder the panel's shell moved to is in the tip on its number, and the
- *  desk's repository on the web is an icon in a slot kept for it at the end,
- *  there or not, so its late answer fills the slot and moves nothing. */
+/** The rail's foot: the desk's doorways. As tall as the sidebar's foot and
+ *  on its rule, so the two feet read as one band across the window, and
+ *  never a line more (#163). The repository's icon has a slot kept for it,
+ *  there or not, so its late answer fills the slot and moves nothing; the
+ *  desk's links follow it (17-links.js). The focused panel's line that was
+ *  here -- its model, its context, its clock -- is under Claude's own prompt
+ *  now (`snyvi statusline`), and what only its tip said, the pid and the
+ *  folder the shell moved to, is on the panel's number in its head. */
 function meta() {
   const d = current();
   if (!d) return;
-  const { esc } = ctx, v = views.get(focused), s = v ? v.status : null;
-  const since = !s ? "" : s.agent && s.agent_since ? `${s.agent.replace("_", " ")} ${ago(s.agent_since)}` : s.blocked && s.blocked_since ? `blocked ${ago(s.blocked_since)}` : s.running && s.since ? `up ${ago(s.since)}` : s.exit != null ? `exited ${s.exit}` : "not running";
-  const cp = ctxPct(s), us = cp == null ? "" : usageSub();
-  const here = v && (s.cwd || v.pane.cwd), away = here && here !== d.root ? ` data-tip-sub="In ${esc(tilde(here))}"` : "";
-  // What the line is for is which model this panel is and how full its
-  // context is; a pid said nothing anyone acts on. So a Claude panel leads
-  // with its model and the figure, a Claude not yet answered says Claude,
-  // and a shell says shell. When the rail is narrow the clock gives way
-  // first, then the model's name -- its first word, then gone, into the
-  // slot's tip -- and the context figure never (`plFit`). The name cut to
-  // "O…" said nothing, and the line wrapped under it (#166).
-  const model = s && s.model ? s.model : s && s.agent_in ? "Claude" : s && s.running ? "shell" : "";
-  const fig = cp == null ? "" : `<span class="${ctxCls(cp)}${ctxUsed(s) == null ? " none" : ""}" data-tip="${esc(ctxTip(s))}"${us ? ` data-tip-sub="${esc(us)}"` : ""}>${ctxFig(s)}</span>`;
-  const slot = v ? `<span class="dk-slot" data-tip="Panel ${v.pane.slot}${model ? ` · ${esc(model)}` : ""}${s && s.pid ? ` · pid ${s.pid}` : ""}"${away} data-key="ctrl+alt+${v.pane.slot}">[${v.pane.slot}]</span>` : "";
-  const line = lv => `<span class="dk-pl">${slot}${!v ? "" : v.pane.held && !s.running ? `<span class="dk-m">not started</span>`
-    : [lv < 3 && model ? `<span class="dk-m">${esc(lv === 2 ? model.split(" ")[0] : model)}</span>` : "", fig, lv < 1 && since ? `<span class="dk-since">${since}</span>` : ""]
-      .filter(Boolean).map((x, i) => (i ? `<span class="dk-sep">·</span>` : "") + x).join("")}</span>`;
-  // Fitted again only when what could overflow changed -- the model, the
-  // figure coming or going, the clock a character wider -- or the rail's
-  // width did (`plWatch`), not on every tick.
-  const fitKey = `${v?.id}|${model}|${cp == null}|${since.length}`;
-  const low = line(plLevel);
+  const { esc } = ctx;
   const url = repoOf(d), rn = url && repoName(url), on = rn && rn.path ? `${esc(rn.path)} on ${esc(rn.host)}` : "";
-  const foot = on ? `<a class="dk-repo" href="${esc(url)}" target="_blank" rel="noopener" data-tip="${on}" data-tip-sub="${esc(url)}" aria-label="${on}">${REPO}</a>` : `<span class="dk-repo"></span>`;
-  // The line ticks ("up 12s") on every frame that brings a status, and the
-  // icon beside it may be under the pointer: the line is written alone while
-  // the icon is still the one drawn here.
-  const el = ctx.metaEl, pl = el.querySelector(".dk-pl");
-  if (pl && el.$foot === foot && el.firstElementChild === el.$first) {
-    if (low !== el.$low) { pl.outerHTML = low; el.$first = el.firstElementChild; el.$html = low + foot; }
-  } else drawIn(el, low + foot);
-  el.$low = low; el.$foot = foot;
-  if (fitKey !== plKey) { plKey = fitKey; plFit(el, line); }
-  plWatch(el);
+  const repo = on ? `<a class="dk-repo" href="${esc(url)}" target="_blank" rel="noopener" data-tip="${on}" data-tip-sub="${esc(url)}" aria-label="${on}">${REPO}</a>` : `<span class="dk-repo"></span>`;
+  linksDraw(ctx.metaEl, d, repo);
   ctx.rail.classList.remove("empty");
   cards();
-}
-
-/** How much the panel line has given way: 0 none, 1 no clock, 2 the
- *  model's first word, 3 no model -- the context figure always stays. */
-let plLevel = 0, plKey = "", plSeen = null;
-/** The panel line, given way only as far as it must to fit on one line,
- *  `line(level)` drawn at each step and read once. */
-function plFit(el, line) {
-  const pl = el.querySelector(".dk-pl");
-  if (!pl) return;
-  const tmp = document.createElement("span");
-  for (plLevel = 0; plLevel < 3; plLevel++) {
-    tmp.innerHTML = line(plLevel);
-    pl.innerHTML = tmp.firstElementChild.innerHTML;
-    if (pl.scrollWidth <= pl.clientWidth + 1) break;
-  }
-  if (plLevel === 3) { tmp.innerHTML = line(3); pl.innerHTML = tmp.firstElementChild.innerHTML; }
-  el.$low = line(plLevel); el.$html = el.$low + el.$foot;
-}
-/** The rail's width changes the room, and nothing else redraws the line
- *  for it: one observer, made once, on the foot. */
-function plWatch(el) {
-  if (plSeen?.el === el || typeof ResizeObserver === "undefined") return;
-  plSeen?.ro.disconnect();
-  let w = el.clientWidth;
-  const ro = new ResizeObserver(() => { if (el.clientWidth !== w) { w = el.clientWidth; plKey = ""; meta(); } });
-  ro.observe(el);
-  plSeen = { el, ro };
 }
 
 /** Write `html` into `el`, unless `el` already holds exactly that as this

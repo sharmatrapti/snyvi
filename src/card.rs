@@ -134,7 +134,7 @@ pub fn parse(b: &Value, now: i64) -> Result<Op, String> {
 /// A link a card may carry: the web, or this machine (a dev server, a test
 /// window). Never `javascript:`, `data:`, `file:` or anything else a click
 /// could run or read. The URL as given, and the host to show.
-fn link(raw: &str) -> Result<(String, String), String> {
+pub(crate) fn link(raw: &str) -> Result<(String, String), String> {
     if raw.is_empty() {
         return Err("a link card needs a url".into());
     }
@@ -159,7 +159,7 @@ fn link(raw: &str) -> Result<(String, String), String> {
 }
 
 /// Tabs, newlines and the like as one space each: a card is one line.
-fn one_line(s: &str) -> String {
+pub(crate) fn one_line(s: &str) -> String {
     s.split(|c: char| c.is_control() || c == '\u{2028}' || c == '\u{2029}')
         .filter(|p| !p.is_empty())
         .collect::<Vec<_>>()

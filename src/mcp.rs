@@ -198,6 +198,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("add_to_gallery", Session::add_to_gallery),
     ("show_card", Session::show_card),
     ("clear_card", Session::clear_card),
+    ("pin_link", Session::pin_link),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {

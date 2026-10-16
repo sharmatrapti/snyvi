@@ -1,10 +1,26 @@
 //! A desk's keys and the Claude accounts (`crate::desk`, `crate::accounts`):
 //! names and labels here, values in `crate::secrets`, which is why a reset
 //! hands back what it took. Beside the store rather than in it, as `talk` is.
+//! A desk's links (`crate::links`) are here too: the desk's, and thin.
 
 use super::*;
 
 impl Store {
+    /// Pin a link on a desk (`links::pin_on`); `None` for no such desk.
+    pub fn pin_desk_link(
+        &self,
+        desk_id: i64,
+        link: (&str, &str, &str),
+        by: &str,
+    ) -> Result<Option<crate::links::Pinned>> {
+        crate::links::pin_on(&self.conn.lock().unwrap(), desk_id, link, by, now())
+    }
+
+    /// The reader's ✕ on a desk's link, or its Undo (`links::hide_on`).
+    pub fn hide_desk_link(&self, desk_id: i64, id: i64, hidden: bool) -> Result<bool> {
+        crate::links::hide_on(&self.conn.lock().unwrap(), desk_id, id, hidden)
+    }
+
     /// A desk's keys by name: its own and the every-desk ones (`desk::keys`).
     pub fn desk_keys(&self, desk_id: i64) -> Result<Vec<desk::DeskKey>> {
         desk::keys(&self.conn.lock().unwrap(), desk_id)

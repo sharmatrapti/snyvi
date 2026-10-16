@@ -780,6 +780,33 @@ pub(crate) async fn restore_desk_note(
     }
 }
 
+/// The reader's ✕ on one of the desk's links (`crate::links`), and its
+/// Undo: `hide` true takes it out of the rail's foot, false brings it back.
+/// The link stays in the desk's row either way.
+pub(crate) async fn hide_desk_link(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, link, to)): Path<(i64, i64, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let hidden = match to.as_str() {
+        "hide" => true,
+        "show" => false,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    match app.store.hide_desk_link(id, link, hidden) {
+        Ok(true) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// Keep an agent's suggestion: it is an ordinary line of the reader's from
 /// here. Its ✕ is `remove_desk_note`, as any row's.
 pub(crate) async fn keep_desk_note(

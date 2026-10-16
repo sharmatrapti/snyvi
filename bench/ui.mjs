@@ -3612,10 +3612,10 @@ async function panelRows(cdp, base, token) {
     rmSync(paste, { force: true });
 
     // U1, U2: the corner is the rail's column, over no panel, and above the
-    // rail's foot line (the panel's pid and age).
-    const placed = await q.ev(`(() => { const e = document.querySelector('#onyou'), o = e?.getBoundingClientRect(), r = document.querySelector('#rail')?.getBoundingClientRect(), pl = document.querySelector('.dk-pl')?.getBoundingClientRect();
+    // rail's foot (its repository and links).
+    const placed = await q.ev(`(() => { const e = document.querySelector('#onyou'), o = e?.getBoundingClientRect(), r = document.querySelector('#rail')?.getBoundingClientRect(), pl = document.querySelector('#meta')?.getBoundingClientRect();
       return o && r ? { inRail: e.classList.contains("in-rail") && o.left >= r.left - 1 && o.right <= r.right + 1, overFoot: !!pl && pl.height > 0 && o.height > 0 && o.bottom > pl.top + 1 } : null; })()`);
-    rows.push(["the corner sits in the rail's column, above its foot line", !!placed && placed.inRail && !placed.overFoot,
+    rows.push(["the corner sits in the rail's column, above its foot", !!placed && placed.inRail && !placed.overFoot,
       !placed ? "no corner, or no rail" : JSON.stringify(placed)]);
 
     // U7: hand-overs in a burst ring once, and the card says the rest.
@@ -3760,7 +3760,8 @@ async function panelRows(cdp, base, token) {
   return rows;
 }
 
-/** #161-#164: the rail's foot is the sidebar's foot's twin and never moves;
+/** #161-#164: the rail's foot is the sidebar's foot's twin and never moves,
+ *  with the desk's links in it (1.43);
  *  cards rise above it and move nothing; focus follows a settled pointer
  *  when asked to, and a sweep takes nothing; a run in steps is one card,
  *  stepped through in order. */
@@ -3788,7 +3789,7 @@ async function footRows(cdp, base, token) {
     return { meta: r("#meta"), side: r(".side-foot"), toc: r("#toc") }; })()`;
   try {
     await q.goto(`${base}/desk/${desk}#cap=${cap}`);
-    await until(`document.querySelectorAll(".dk-grid > .pn").length === 2 && !!document.querySelector("#meta .dk-pl")`);
+    await until(`document.querySelectorAll(".dk-grid > .pn").length === 2 && !!document.querySelector("#meta .dk-repo")`);
     await q.clickOn(`${P(pa)} .pn-body`);
     await sleep(600);
 
@@ -3796,12 +3797,28 @@ async function footRows(cdp, base, token) {
     const feet = await q.ev(rects);
     rows.push(["the rail's foot is the sidebar's foot's height, its rule level with it", !!feet.meta && !!feet.side && feet.meta[1] === feet.side[1] && Math.abs(feet.meta[0] - feet.side[0]) <= .5,
       JSON.stringify(feet)]);
-    // A model name too long for the rail is cut short; the line stays one.
-    await agent(pa, "agent", { model: "Fable 5.1 with an unusually long model name for the rail", ctx: { pct: 41, size: 1000000, input: 410000 } });
-    await sleep(800);
-    const long = await q.ev(`(() => { const l = document.querySelector("#meta .dk-pl"); return { h: l?.getBoundingClientRect().height, rects: ${rects} }; })()`);
-    rows.push(["a long model name is cut, the foot holds still", long.h > 0 && long.h < 24 && JSON.stringify(long.rects) === JSON.stringify(feet),
-      JSON.stringify(long)]);
+    // 1.43: the desk's links sit in the foot, whole, the rest under +N, and
+    // nothing moves; a seventh is refused, and so is what is not the web.
+    const notWeb = await agent(pa, "links", { label: "x", url: "javascript:alert(1)" });
+    rows.push(["a link refuses what is not the web", notWeb.status === 400, `answered ${notWeb.status}`]);
+    for (const [i, l] of ["Live site", "Staging", "Dashboard", "Docs", "Status page", "Analytics"].entries())
+      await agent(pa, "links", { label: l, url: `http://127.0.0.1:7801/${i}` });
+    const seventh = await agent(pa, "links", { label: "Seventh", url: "http://127.0.0.1:7801/7" });
+    const lkUp = await until(`document.querySelectorAll("#meta .dk-lk").length + +(document.querySelector("#meta .dk-lk-more")?.textContent.slice(1) || 0) === 6`, 40);
+    await sleep(300);
+    const sat = await q.ev(`(() => { const m = document.querySelector("#meta"), b = m.getBoundingClientRect(), cs = [...m.querySelectorAll(".dk-lk")].map(c => c.getBoundingClientRect());
+      return { whole: cs.every(c => c.right <= b.right + .5 && c.top >= b.top - .5 && c.bottom <= b.bottom + .5), shown: cs.length, more: m.querySelector(".dk-lk-more")?.textContent || "", rects: ${rects} }; })()`);
+    rows.push(["links sit whole in the foot, the rest under +N, and nothing moves", lkUp && seventh.status === 409 && sat.whole && JSON.stringify(sat.rects) === JSON.stringify(feet),
+      JSON.stringify({ seventh: seventh.status, ...sat })]);
+    // Its ✕ leaves Undo in the link's place; Undo brings it back.
+    const lid = await q.ev(`document.querySelector("#meta .dk-lk-x")?.dataset.lk || ""`);
+    await q.ev(`document.querySelector("#meta .dk-lk-x")?.click()`);
+    const shut = await until(`!!document.querySelector('#meta .dk-lk.shut .dk-lk-undo[data-lk="${lid}"]')`, 20);
+    const shutRects = await q.ev(rects);
+    await q.ev(`document.querySelector("#meta .dk-lk-undo")?.click()`);
+    const lkBack = await until(`!document.querySelector("#meta .dk-lk.shut") && !!document.querySelector('#meta .dk-lk-x[data-lk="${lid}"]')`, 30);
+    rows.push(["a link's ✕ leaves Undo in its place, and Undo brings it back", !!lid && shut && lkBack && JSON.stringify(shutRects) === JSON.stringify(feet),
+      JSON.stringify({ lid, shut, back: lkBack })]);
 
     // #162: cards rise above the foot and move nothing.
     const refused = await agent(pa, "card", { kind: "link", label: "x", url: "javascript:alert(1)" });
