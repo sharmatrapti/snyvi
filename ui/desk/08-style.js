@@ -189,7 +189,7 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    the right-hand group, split the space with the tabs' and left a wide gap
    between the key and the +. Here, after those rules, so it wins. */
 .dk-head .dk-keys ~ :is(.icon, .dk-cap) { margin-left: 0; }
-/* 8px apart: room for the focused panel's 5px ring (.pn.on) with air
+/* 8px apart: room for the focused panel's 3px ring (.pn.on) with air
    between it and the next panel's line. */
 .dk-grid { flex: 1; min-height: 0; display: grid; gap: 8px; position: relative; }
 .dk-none { color: var(--fg-3); padding: 24px; }
@@ -200,10 +200,13 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-grid:not([data-cols="2"]) .dk-v, .dk-grid:not([data-rows="2"]) .dk-h { display: none; }
 .dk-div:hover, .dk-div:focus-visible { background: var(--accent-bg); }
 .pn { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--pn-bg); overflow: hidden; }
-/* The panel with the keys (#169): a 6px band, its 1px line in the accent and
-   a 5px ring of it outside, drawn as a shadow so the panel and its terminal
-   keep their size as the focus moves (no layout shift). */
-.pn.on { border-color: var(--accent); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 35%, transparent); }
+/* The panel with the keys (#169): a 4px band, its 1px line in the accent and
+   a 3px ring of it outside, drawn as a shadow so the panel and its terminal
+   keep their size as the focus moves (no layout shift). The way a Mac marks
+   the key window: no glow, a crisper edge. The line is the stronger rule with
+   a hint of accent, and the ring is the text colour at a few percent, a halo
+   that reads as lift in every theme rather than as colour. */
+.pn.on { border-color: color-mix(in srgb, var(--accent) 25%, var(--rule-2)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fg) 5%, transparent); }
 /* A head carried onto another pane: the one carried goes faint, the one it
    would trade places with is outlined. */
 .pn.pn-drag { opacity: .55; }
