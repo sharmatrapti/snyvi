@@ -2383,7 +2383,10 @@ async function deskRows(cdp, base, token) {
     // head or on the folded rail -- On you's tray holds only what is on you.
     await until(`!!document.querySelector("#onyou .cn-card")`, 10);
     await p.ev(`document.querySelector("#onyou [data-a=cn-later]")?.click(); 1`);
-    await p.clickOn(await p.ev(`document.querySelector("#btn-lately").getClientRects().length ? "#btn-lately" : "#rail-lately"`));
+    // 1.44: the clock is in the sidebar's foot, which a browser with no
+    // hover (this one) lays out as a row too wide for it, the clock past
+    // its edge; so it is pressed, not clicked where it is drawn.
+    await p.ev(`document.querySelector(document.querySelector("#btn-lately").getClientRects().length ? "#btn-lately" : "#rail-lately").click(), 1`);
     const go = `#lately-nav .cn-t[data-a="cn-go"][data-r="${note && note.id}"]`;
     const led = !!from && from.id === da && from.slot === 2 && await until(`!!document.querySelector(${JSON.stringify(go)})`);
     if (led) await p.clickOn(go);
@@ -2446,7 +2449,7 @@ async function deskRows(cdp, base, token) {
     if (rose3) { await sleep(400); await p.clickOn(".dk .pn .pn-body"); }
     const clock = await p.ev(`document.querySelector("#btn-lately").getClientRects().length ? "#btn-lately" : "#rail-lately"`);
     const dotted = rose3 && await until(`!document.querySelector("#onyou .oy-doc") && !!document.querySelector(${JSON.stringify(clock)}).querySelector(".lt-dot")?.getClientRects().length`, 30);
-    if (dotted) await p.clickOn(clock);
+    if (dotted) await p.ev(`document.querySelector(${JSON.stringify(clock)}).click(), 1`);
     const inTray = `#lately-nav [data-a="cn-go"][data-r]`;
     const kept = dotted && await until(`[...document.querySelectorAll(${JSON.stringify(inTray)})].some(b => /Missed from still-b/.test(b.textContent))`, 30);
     if (kept) await p.ev(`[...document.querySelectorAll(${JSON.stringify(inTray)})].find(b => /Missed from still-b/.test(b.textContent)).click(), 1`);
@@ -3531,7 +3534,7 @@ async function panelRows(cdp, base, token) {
     // They rise in the corner as one card; the pill opens the tray, where
     // they wait however long the answering takes.
     const gRose = gIds.length === 3 && await until(`!!document.querySelector('#onyou .oy-card .dk-turn.grp[data-g="${gIds[0]}"]')`, 40);
-    if (gRose) await q.clickOn("#onyou .oy-pill");
+    if (gRose) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
     const gCard = gIds.length === 3 && await until(`document.querySelectorAll('.dk-turn.grp[data-g="${gIds[0]}"] .tn-gq').length === 3`, 40);
     const gRec = gCard && await q.ev(`document.querySelectorAll('.dk-turn.grp[data-g="${gIds[0]}"] .tn-opt.rec').length`);
     const steps = [];
@@ -3631,7 +3634,7 @@ async function panelRows(cdp, base, token) {
     const g2 = await (await agent("ask", { by: "bench-agent", questions: [
       { question: "bench: all one?", options: ["A", "B"] }, { question: "bench: all two?", options: ["A", "B"] }] })).json().catch(() => ({}));
     const g2Id = g2.turns?.[0]?.id;
-    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#onyou .oy-pill");
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
     const gx = !!g2Id && await until(`!!document.querySelector('#onyou [data-a="tn-gx"][data-g="${g2Id}"]')`, 40);
     if (gx) await q.clickOn(`#onyou [data-a="tn-gx"][data-g="${g2Id}"]`);
     const gxGone = gx && await until(`!document.querySelector('.dk-turn.grp[data-g="${g2Id}"]') && !!document.querySelector('#onyou [data-a="fd-back"][data-k="g"]')`, 30);
@@ -3674,7 +3677,7 @@ async function panelRows(cdp, base, token) {
     // #115: pinned, the tray stays open while the reader works elsewhere --
     // a click on the desk, an Esc there -- and is pinned again on the next
     // visit; its head's ✕ closes it, and unpins.
-    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#onyou .oy-pill");
+    if (!(await q.ev(`!!document.querySelector('#onyou .oy-tray')`))) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
     const trayUp = await until(`!!document.querySelector('#onyou .oy-tray [data-a="oy-pin"]')`, 20);
     if (trayUp) await q.clickOn('#onyou .oy-tray [data-a="oy-pin"]');
     const pinOn = trayUp && await until(`document.querySelector('#onyou .oy-pin')?.getAttribute("aria-pressed") === "true"`, 20);
@@ -3693,16 +3696,18 @@ async function panelRows(cdp, base, token) {
     // #118: with nothing fresh, the pill says they are all older, and its
     // tray opens onto them -- not onto one more "N older" to press in an
     // empty box. 1.43: the pill is the rail's notch, its count in quiet ink
-    // (not `on`) and "all older" in its label. An hour on the page's clock
-    // makes every waiting turn an older one.
+    // (not `on`) and "all older" in its label; 1.44: the foot's button, and
+    // an older ask is one line in the tray (09-thread.js olderLine), not a
+    // turn's card. An hour on the page's clock makes every waiting turn an
+    // older one.
     await q.ev(`window.__now = Date.now; Date.now = () => window.__now.call(Date) + 3600e3; 1`);
     const later = await agent("handover", { kind: "try", text: "bench: try the older tray", by: "bench-agent" });
     const laterTurn = (await later.json().catch(() => ({}))).turn?.id;
-    const olderPill = await until(`(() => { const b = document.querySelector('#onyou .oy-pill'); return !!b && !b.classList.contains('on') && /, all older$/.test(b.getAttribute('aria-label') || ""); })()`, 60);
-    if (olderPill) await q.clickOn("#onyou .oy-pill");
-    const olderOpen = olderPill && await until(`(() => { const t = document.querySelector('#onyou .oy-tray'); return !!t && !t.querySelector('.oy-older') && t.querySelectorAll('.dk-turn').length >= 2; })()`, 30);
+    const olderPill = await until(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return !!b && !b.classList.contains('on') && /, all older$/.test(b.getAttribute('aria-label') || ""); })()`, 60);
+    if (olderPill) await q.clickOn("#meta .oy-foot, #onyou .oy-pill");
+    const olderOpen = olderPill && await until(`(() => { const t = document.querySelector('#onyou .oy-tray'); return !!t && !t.querySelector('.oy-older') && t.querySelectorAll('.dk-turn, .oy-old .cn-row').length >= 2; })()`, 30);
     rows.push(["with nothing fresh the pill says older, and its tray opens onto them", olderOpen,
-      !olderPill ? `the pill read "${await q.ev(`(() => { const b = document.querySelector('#onyou .oy-pill'); return b ? (b.getAttribute('aria-label') || b.textContent) + (b.classList.contains('on') ? ", lit" : "") : ""; })()`)}"` : !olderOpen ? "the tray held only a fold to press" : "the pill said all older, and its tray opened onto them"]);
+      !olderPill ? `the pill read "${await q.ev(`(() => { const b = document.querySelector('#meta .oy-foot, #onyou .oy-pill'); return b ? (b.getAttribute('aria-label') || b.textContent) + (b.classList.contains('on') ? ", lit" : "") : ""; })()`)}"` : !olderOpen ? "the tray held only a fold to press" : "the pill said all older, and its tray opened onto them"]);
     await q.ev(`Date.now = window.__now; document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
     for (const id of [keyTurn, laterTurn]) if (id) await agent(`turns/${id}`, { drop: true });
 
