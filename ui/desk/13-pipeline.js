@@ -14,6 +14,13 @@
  * starting moves nothing beside it either. The sheet lays over the panel's
  * top, like the panel's other strips. */
 
+/** Hidden since 1.42 (2026-10-16): the reader set the feature aside while a
+ *  simpler shape is worked out (the Away brainstorm, docs 5e66a26179 and
+ *  9074c8ca08). The daemon, its routes and the runner stay as they are; the
+ *  window just stops offering it -- no menu entry, no chip, no read of the
+ *  desk's pipelines. Flip this to bring it back whole. */
+const PIPES_SHOWN = false;
+
 /** This desk's pipelines, as the daemon last said them, and which desk. */
 let pipes = [], pipesAt = null;
 /** The sheet open over one panel: { pane, edit: pipeline id | 0 for new | null }. */
@@ -24,6 +31,7 @@ let pipeErr = "";
 /** This desk's pipelines, read again: on open and on every change the
  *  daemon announces (the `desknotes` event, `pipeline_run::changed`). */
 async function pipesGet(id) {
+  if (!PIPES_SHOWN) return;
   let j;
   try { j = await ctx.api(`/api/desks/${id}/pipelines`); } catch { return; }
   if (id !== deskId) return;
@@ -40,6 +48,7 @@ const PIPE_SAYS = { draft: "ready", running: "running", waiting: "Go?", paused: 
 
 /** The head's chip: name, stage count, state. Absent on a panel with none. */
 function pipeChip(v) {
+  if (!PIPES_SHOWN) return;
   pipeStyle();
   const hd = v.el.querySelector(".pn-head"), p = pipesAt === deskId ? pipeOf(v.id) : null;
   let c = hd.querySelector(".pn-pipe");
@@ -60,6 +69,7 @@ function pipeChip(v) {
 
 /** The panel menu's "Pipeline…": the sheet, or the editor for a new one. */
 function pipeItems(v) {
+  if (!PIPES_SHOWN) return [];
   return [{ label: pipeOf(v.id) ? "Pipeline…" : "New pipeline…", run: () => pipeToggle(v.id, !pipeOf(v.id)) }];
 }
 

@@ -1165,37 +1165,12 @@ before you flip it picks the change up at its next start.
 
 ## Pipelines
 
-A pipeline gives one panel a plan to work through while you watch, or while
-you are away. Right-click a panel and choose **New pipeline…**:
-
-- **My steps, in order.** Each step is a prompt, or `/goal <condition>`,
-  which Claude Code keeps working at until its judge finds it met. Put a line
-  of `---` between steps.
-- **One step, again.** The same step each cycle, until the cycles run out or
-  two cycles in a row end with `NOTHING LEFT`.
-- **A goal.** A planner, a separate Claude run that has no tools, reads what
-  the last stage did and git on the branch, then writes the next step. With
-  **Autopilot** off, each of its steps waits for your **Go**.
-
-Press **Start** in the sheet. snyvi cuts a worktree beside the desk's folder
-on a `pipeline/<name>` branch, then starts each stage as a fresh `claude` in
-that panel, in auto mode, on the desk's Claude account, with the step as its
-first prompt. Stages commit their own work there and never push. The chip in
-the panel's head shows where the pipeline is. Click it for the steps, who
-wrote each, and Pause, Resume and Stop.
-
-A pipeline stops itself:
-
-- at your caps: stages, cycles, minutes, and lines a stage may change
-- when the five-hour window passes your percentage (it goes on when the
-  window resets)
-- when the planner says the goal holds
-- when a turn fails, or when you type in the panel
-
-A goal step that fills the context past your limit is asked to commit and
-leave off, and a fresh session takes it on from there. When a pipeline ends,
-a report lands on the desk: each stage, who wrote it, its commits, and the
-session it can be resumed from.
+Set aside. 1.40 let a panel work through a list of steps, one step looped,
+or a goal a planner wrote, each stage a fresh Claude on a branch of its own.
+The window no longer offers it: a simpler shape for working while you are
+away is being worked out, and the 1.40 one will come back changed or not at
+all. The daemon's side stays (`docs/TERMINAL.md` §9a says what it holds to),
+so nothing already made is lost.
 
 ## The rail
 
