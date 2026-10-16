@@ -1170,7 +1170,8 @@ or a goal a planner wrote, each stage a fresh Claude on a branch of its own.
 The window no longer offers it: a simpler shape for working while you are
 away is being worked out, and the 1.40 one will come back changed or not at
 all. The daemon's side stays (`docs/TERMINAL.md` §9a says what it holds to),
-so nothing already made is lost.
+so nothing already made is lost, and a pipeline you started before 1.43 keeps
+its chip in the panel's head, with Pause and Stop, until it ends.
 
 ## The rail
 
