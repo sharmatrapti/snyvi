@@ -1542,17 +1542,20 @@ async function lossRows(p, base, token, arrive, browsed) {
   const aside = await say("An aside whose Undo will be refused.");
   await p.goto(`${origin}/`);
   await p.pointerAway();
-  await until(`!!document.querySelector("#cn .oy-pill, #cn .cn-card")`);
+  // 1.43: asides are Lately's, and Lately is the sidebar's (the head's
+  // clock opens it); the corner's pill is On you's alone. An aside inside
+  // the daemon's quiet may not rise, so its card is not waited for.
+  await until(`!!document.querySelector("#cn .cn-card")`, 10);
   await p.ev(`document.querySelector("#cn [data-a=cn-later]")?.click(); 1`);
-  await p.clickOn("#cn .oy-pill");
-  const row = `#cn .cn-row:has(.cn-t) .cn-rx[data-r="${aside.id}"]`;
+  await p.clickOn("#btn-lately");
+  const row = `#lately-nav .cn-row:has(.cn-t) .cn-rx[data-r="${aside.id}"]`;
   await until(`!!document.querySelector(${JSON.stringify(row)})`);
   await p.ev(`document.querySelector(${JSON.stringify(row)}).click(); 1`);
   await sleep(500);
   await refuse(p, "POST", /^\/api\/lately\/restore$/);
-  await p.ev(`document.querySelector("#cn .cn-gone .cn-undo")?.click(); 1`);
+  await p.ev(`document.querySelector("#lately-nav .cn-gone .cn-undo")?.click(); 1`);
   await sleep(300);
-  const card = await p.ev(`document.querySelector("#cn .cn-gone")?.textContent || null`);
+  const card = await p.ev(`document.querySelector("#lately-nav .cn-gone")?.textContent || null`);
   const still = (await (await fetch(`${base}/api/notes`)).json()).notes.find(n => n.id === aside.id)?.dismissed === true;
   rows.push(["aside undo refused → its row says so, the Undo a Retry", await refused(p) && /Could not bring it back/.test(card || "") && still,
     !(await refused(p)) ? "the Undo never asked the daemon" : !/Could not bring it back/.test(card || "") ? `the row reads "${card}"` : "the row says so, and the daemon still has it removed"]);
@@ -1620,17 +1623,21 @@ async function reachRows(p, base, token, arrive) {
   await say("The newest aside.");
   await p.goto(`${origin}/`);
   await p.pointerAway();
-  await until(`!!document.querySelector("#cn .oy-pill, #cn .cn-card")`);
-  await p.press("y", { ctrl: true, alt: true });
-  await until(`!!document.querySelector("#cn .oy-tray")`);
+  // 1.43: Lately is the sidebar's, behind the clock in its head, which Tab
+  // reaches like any button; Enter opens it with the focus inside, and Tab
+  // goes on down its rows. Ctrl Alt Y is On you's alone.
+  await until(`!!document.querySelector("#cn .cn-card")`, 10);
+  await p.ev(`document.querySelector("#cn [data-a=cn-later]")?.click(); document.querySelector("#btn-lately").focus(); 1`);
+  await p.press("Enter");
+  await until(`document.documentElement.dataset.pop === "lately" && !!document.querySelector("#lately-nav .cn-t")`);
   let on = null;
   for (let i = 0; i < 12 && !/first older aside/.test(on || ""); i++) {
     await p.press("Tab", { raw: true });
-    on = await p.ev(`document.activeElement?.matches("#cn .cn-t") ? document.activeElement.textContent : null`);
+    on = await p.ev(`document.activeElement?.matches("#lately-nav .cn-t") ? document.activeElement.textContent : null`);
   }
   await p.press("Enter");
   const went = await until(`document.title === ${JSON.stringify(d.title)}`);
-  rows.push(["Ctrl Alt Y and Tab reach an older aside in Lately; Enter opens it", /first older aside/.test(on || "") && went,
+  rows.push(["Lately's clock and Tab reach an older aside; Enter opens it", /first older aside/.test(on || "") && went,
     !on ? `Tab went to ${JSON.stringify(await p.ui("focus"))}, not Lately` : !/first older aside/.test(on) ? `Tab reached "${on}"` : went ? "reached, and Enter opened the document it is about" : `Enter left the page on "${await p.ev("document.title")}"`]);
   await p.pointerAway();
   return rows;
@@ -1837,7 +1844,10 @@ async function asideRows(p, base, token) {
   };
   const daemon = async () => (await (await fetch(`${base}/api/notes`)).json()).notes;
   const lately = async () => (await (await fetch(`${base}/api/lately`)).json());
-  const row = id => `#cn .cn-rx[data-r="${id}"]`;
+  // 1.43: what settles goes to Lately, the sidebar's: its clock in the head
+  // takes the dot, and opens it. The corner's pill is On you's alone.
+  const row = id => `#lately-nav .cn-rx[data-r="${id}"]`;
+  const dotLit = `!!document.querySelector("#btn-lately .lt-dot")?.getClientRects().length`;
   // The quiet is the daemon's: an aside within ten minutes of one that lit
   // up does not light up, and does not rise. Seen, so the dot starts out.
   await p.goto(`${base}/`);
@@ -1850,50 +1860,50 @@ async function asideRows(p, base, token) {
   rows.push(["an aside rises in the corner, its byline first who spoke", rose && /^bench-agent/.test(by),
     !rose ? `the corner reads ${JSON.stringify(await p.ev(`document.querySelector("#cn")?.textContent || null`))}` : !/^bench-agent/.test(by) ? `the byline reads "${by}"` : `"${by}"`]);
 
-  // A click elsewhere settles it into the pill, its dot lit: nothing that
-  // came goes on a timer, or on a click (plan b0bca0a11f).
+  // A click elsewhere settles it into Lately, its clock dotted: nothing
+  // that came goes on a timer, or on a click (plan b0bca0a11f).
   await p.click(400, 300);
-  const settled = await until(`!document.querySelector("#cn .cn-card") && !!document.querySelector("#cn .oy-pill .cn-dot")`);
-  rows.push(["a click elsewhere settles it into the pill, the dot lit", settled,
-    settled ? "the card went into the pill, which holds a dot and no number" : `the corner reads ${JSON.stringify(await p.ev(`document.querySelector("#cn")?.innerHTML.slice(0, 160) || null`))}`]);
+  const settled = await until(`!document.querySelector("#cn .cn-card") && ${dotLit}`);
+  rows.push(["a click elsewhere settles it into Lately, its clock dotted", settled,
+    settled ? "the card went, and Lately's clock holds a dot" : `the corner reads ${JSON.stringify(await p.ev(`document.querySelector("#cn")?.innerHTML.slice(0, 160) || null`))}`]);
 
-  await p.clickOn("#cn .oy-pill");
+  await p.clickOn("#btn-lately");
   const listed = await until(`!!document.querySelector(${JSON.stringify(row(lit.id))})`);
   await sleep(300);
-  const seen = !(await lately()).unseen;
-  rows.push(["the pill opens the tray: the aside is in Lately, and seen", listed && seen,
-    !listed ? "the tray has no row for it" : !seen ? "the daemon still has it unseen" : "listed under Lately, and the daemon has it seen"]);
+  const seen = !(await lately()).unseen && !(await p.ev(dotLit));
+  rows.push(["Lately's clock opens it: the aside is listed, and seen", listed && seen,
+    !listed ? "Lately has no row for it" : !seen ? "it is still unseen, in the daemon or on the clock" : "listed in Lately, the daemon has it seen, and the dot is out"]);
 
   await p.ev(`document.querySelector(${JSON.stringify(row(lit.id))}).click(); 1`);
   await sleep(300);
-  const gone = await p.ev(`document.querySelector("#cn .cn-gone")?.textContent || null`);
+  const gone = await p.ev(`document.querySelector("#lately-nav .cn-gone")?.textContent || null`);
   const flagged = (await daemon()).find(n => n.id === lit.id)?.dismissed === true;
   rows.push(["✕ removes it, and Undo stands in its row", /Removed/.test(gone || "") && flagged,
     !gone ? "the row went with nothing in its place" : !flagged ? "the daemon was not told" : "one line, \"Removed · Undo\", and the daemon keeps it flagged"]);
 
-  await p.ev(`document.querySelector("#cn .cn-gone .cn-undo").click(); 1`);
+  await p.ev(`document.querySelector("#lately-nav .cn-gone .cn-undo").click(); 1`);
   await sleep(300);
   const back = !!(await p.ev(`!!document.querySelector(${JSON.stringify(row(lit.id))})`)) && (await daemon()).find(n => n.id === lit.id)?.dismissed === false;
   rows.push(["Undo puts it back", back, back ? "the row is back, and unflagged in the daemon" : "the row did not come back"]);
 
-  await p.ev(`document.querySelector("#cn .oy-tray")?.focus(); 1`);
+  await p.ev(`(document.querySelector("#lately-nav .cn-t") || document.querySelector("#pop"))?.focus(); 1`);
   const was = await p.ev("location.pathname");
   await p.press("Escape");
   await sleep(300);
-  const closed = await p.ev(`!document.querySelector("#cn .oy-tray")`), stayed = await p.ev(`location.pathname === ${JSON.stringify(was)}`);
-  rows.push(["Esc closes the tray, and only that", closed && stayed,
+  const closed = await p.ev(`!document.documentElement.dataset.pop && document.querySelector("#pop").hidden`), stayed = await p.ev(`location.pathname === ${JSON.stringify(was)}`);
+  rows.push(["Esc closes Lately, and only that", closed && stayed,
     !stayed ? `Esc also left the page for ${await p.ev("location.pathname")}` : !closed ? "Esc did not close it" : "closed, and the page stayed"]);
 
   // Within the quiet: kept, the dot lit, and nothing rises.
   const quiet = await say("A quiet aside, inside the ten minutes.");
-  const dotted = await until(`!!document.querySelector("#cn .oy-pill .cn-dot")`);
+  const dotted = await until(dotLit);
   const roseQuiet = await p.ev(`!!document.querySelector("#cn .cn-card")`);
   const kept = (await lately()).rows.some(r => r.id === quiet.id);
   rows.push(["a quiet aside is kept and dotted, and does not rise", dotted && !roseQuiet && kept,
-    !kept ? "the daemon did not keep it" : roseQuiet ? "it rose, inside the quiet" : !dotted ? "the pill has no dot" : "in Lately, the pill dotted, no card"]);
+    !kept ? "the daemon did not keep it" : roseQuiet ? "it rose, inside the quiet" : !dotted ? "Lately's clock has no dot" : "in Lately, its clock dotted, no card"]);
   // Seen, the way a reader does: an aside left waiting keeps the logo
   // blinking, and the rows after this one count every animation that runs.
-  await p.clickOn("#cn .oy-pill");
+  await p.clickOn("#btn-lately");
   await sleep(300);
   await p.press("Escape");
   await p.pointerAway();
@@ -2369,10 +2379,12 @@ async function deskRows(cdp, base, token) {
     const r = await fetch(`${base}/api/notes`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify({ text: "Four evenings on that one, and it held.", sender: "bench-agent", pane: second }) });
     const note = r.ok && (await r.json()).note, from = note && note.from;
-    await until(`!!document.querySelector("#onyou .oy-pill, #onyou .cn-card")`);
+    // 1.43: the row is in Lately, the sidebar's, opened by its clock in the
+    // head or on the folded rail -- On you's tray holds only what is on you.
+    await until(`!!document.querySelector("#onyou .cn-card")`, 10);
     await p.ev(`document.querySelector("#onyou [data-a=cn-later]")?.click(); 1`);
-    await p.press("y", { ctrl: true, alt: true });
-    const go = `#onyou .cn-t[data-a="cn-go"][data-r="${note && note.id}"]`;
+    await p.clickOn(await p.ev(`document.querySelector("#btn-lately").getClientRects().length ? "#btn-lately" : "#rail-lately"`));
+    const go = `#lately-nav .cn-t[data-a="cn-go"][data-r="${note && note.id}"]`;
     const led = !!from && from.id === da && from.slot === 2 && await until(`!!document.querySelector(${JSON.stringify(go)})`);
     if (led) await p.clickOn(go);
     const there = led && await until(`location.pathname === "/desk/${da}" && document.querySelector(".pn.on .pn-body")?.getAttribute("aria-label") === "Panel 2"`);
@@ -2426,19 +2438,21 @@ async function deskRows(cdp, base, token) {
 
     // 1.38, the one the reader lost: a page from another desk rises while
     // they work in a panel, and a click into the panel used to take it away
-    // for good. Now it settles into the pill, dotted, and the tray holds it
-    // under Lately, where Open reads it (plan b0bca0a11f).
+    // for good. Now it settles into Lately, whose clock is dotted, and
+    // Lately holds it, where Open reads it (plan b0bca0a11f; 1.43 moved
+    // Lately from the tray to the sidebar).
     const lost = (await post("/api/docs", { content: "# Missed\n\nFrom still-b.", title: "Missed from still-b", origin: "mcp", pane: third }, TK)).doc;
     const rose3 = !!lost && await until(`/Missed from still-b/.test(document.querySelector("#onyou .oy-doc .oy-title")?.textContent || "")`, 40);
     if (rose3) { await sleep(400); await p.clickOn(".dk .pn .pn-body"); }
-    const dotted = rose3 && await until(`!document.querySelector("#onyou .oy-doc") && !!document.querySelector("#onyou .oy-pill .cn-dot")`, 30);
-    if (dotted) await p.clickOn("#onyou .oy-pill");
-    const inTray = `#onyou .oy-tray .cn-lately [data-a="cn-go"][data-r]`;
+    const clock = await p.ev(`document.querySelector("#btn-lately").getClientRects().length ? "#btn-lately" : "#rail-lately"`);
+    const dotted = rose3 && await until(`!document.querySelector("#onyou .oy-doc") && !!document.querySelector(${JSON.stringify(clock)}).querySelector(".lt-dot")?.getClientRects().length`, 30);
+    if (dotted) await p.clickOn(clock);
+    const inTray = `#lately-nav [data-a="cn-go"][data-r]`;
     const kept = dotted && await until(`[...document.querySelectorAll(${JSON.stringify(inTray)})].some(b => /Missed from still-b/.test(b.textContent))`, 30);
     if (kept) await p.ev(`[...document.querySelectorAll(${JSON.stringify(inTray)})].find(b => /Missed from still-b/.test(b.textContent)).click(), 1`);
     const read = kept && await until(`location.pathname === "/d/${lost && lost.id}"`, 30);
-    rows.push(["a page from another desk, missed, settles into the pill; the tray holds it, Open reads it", !!read,
-      !rose3 ? "it never rose" : !dotted ? "a click into the panel left no dotted pill" : !kept ? "the tray has no Lately row for it" : !read ? `its row opened ${await p.ev("location.pathname")}` : "settled, dotted, kept under Lately, and read from there"]);
+    rows.push(["a page from another desk, missed, settles into Lately, its clock dotted; Open reads it", !!read,
+      !rose3 ? "it never rose" : !dotted ? "a click into the panel left Lately's clock with no dot" : !kept ? "Lately has no row for it" : !read ? `its row opened ${await p.ev("location.pathname")}` : "settled, the clock dotted, kept in Lately, and read from there"]);
     if (read) { await p.ev("history.back(), 1"); await until(`location.pathname === "/desk/${da}"`, 30); }
     await p.pointerAway();
   } finally {
@@ -2778,7 +2792,7 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     const place = `(() => { const t = document.querySelector("#trees"), d = document.querySelector("#doc"); return { h: t.getBoundingClientRect().height, top: [...t.querySelectorAll("a")].slice(-1)[0]?.getBoundingClientRect().top, doc: Math.round(d.getBoundingClientRect().height) }; })()`;
     const before = await p.ev(place);
     await post("/api/notes", { text: "An aside over the page.", sender: "bench-agent" }, T);
-    await until(`!!document.querySelector("#cn .cn-card, #cn .oy-pill")`);
+    await until(`!!document.querySelector("#cn .cn-card") || !!document.querySelector("#btn-lately .lt-dot")?.getClientRects().length`);
     await sleep(400);
     const after = await p.ev(place);
     const still = before.h === after.h && before.top === after.top && before.doc === after.doc;
@@ -2815,9 +2829,10 @@ async function homeRows(cdp, base, token, arrive, tmp) {
     await sleep(800);
     const ev20 = await p.ev(`window.__hm`);
     const inLately = await p.ev(`/Quiet aside 20\\./.test(document.querySelector(".hm-arrived")?.textContent || "")`);
-    // Home shows the newest five, as Arrived did, and the tray the rest.
-    const capped = await p.ev(`(() => { const l = document.querySelector(".hm-arrived .cn-large"); return { n: l?.querySelectorAll(".cn-row").length ?? -1, more: !!l?.querySelector("[data-a=cn-open]") }; })()`);
-    rows.push(["Home under 20 asides: Lately takes them in, five shown and the rest in the tray, no redraw, no friends read", ev20.draws === 0 && ev20.peers === 0 && inLately && capped.n === 5 && capped.more,
+    // Home shows the newest five, as Arrived did, and the sidebar's Lately
+    // the rest (1.43; it was the corner's tray).
+    const capped = await p.ev(`(() => { const l = document.querySelector(".hm-arrived .cn-large"); return { n: l?.querySelectorAll(".cn-row").length ?? -1, more: !!l?.querySelector("[data-a=cn-lately]") }; })()`);
+    rows.push(["Home under 20 asides: Lately takes them in, five shown and the rest in the sidebar's, no redraw, no friends read", ev20.draws === 0 && ev20.peers === 0 && inLately && capped.n === 5 && capped.more,
       `${ev20.draws} redraw${ev20.draws === 1 ? "" : "s"}, ${ev20.peers} read${ev20.peers === 1 ? "" : "s"} of /api/peers, ${ev20.home} of /api/home${inLately ? ", the last in Lately" : ", the last not in Lately"}, ${capped.n} rows shown${capped.more ? " and a way to the rest" : ", no way to the rest"}`]);
   } finally {
     if (other) await post(`/api/desks/${other}/delete`).catch(() => {});
@@ -3654,17 +3669,19 @@ async function panelRows(cdp, base, token) {
       pinHeld && pinKept && pinOff,
       !trayUp ? "no tray with a pin" : !pinOn ? "the pin did not press" : !pinHeld ? "the tray closed under the pin" : !pinKept ? "the pin was not remembered" : !pinOff ? "the ✕ left it open, or pinned" : "held open, remembered, then closed and unpinned"]);
 
-    // #118: with nothing fresh, the pill says "N older", and its tray opens
-    // onto them -- not onto one more "N older" to press in an empty box. An
-    // hour on the page's clock makes every waiting turn an older one.
+    // #118: with nothing fresh, the pill says they are all older, and its
+    // tray opens onto them -- not onto one more "N older" to press in an
+    // empty box. 1.43: the pill is the rail's notch, its count in quiet ink
+    // (not `on`) and "all older" in its label. An hour on the page's clock
+    // makes every waiting turn an older one.
     await q.ev(`window.__now = Date.now; Date.now = () => window.__now.call(Date) + 3600e3; 1`);
     const later = await agent("handover", { kind: "try", text: "bench: try the older tray", by: "bench-agent" });
     const laterTurn = (await later.json().catch(() => ({}))).turn?.id;
-    const olderPill = await until(`/^\\d+ older$/.test(document.querySelector('#onyou .oy-pill')?.textContent || "")`, 60);
+    const olderPill = await until(`(() => { const b = document.querySelector('#onyou .oy-pill'); return !!b && !b.classList.contains('on') && /, all older$/.test(b.getAttribute('aria-label') || ""); })()`, 60);
     if (olderPill) await q.clickOn("#onyou .oy-pill");
     const olderOpen = olderPill && await until(`(() => { const t = document.querySelector('#onyou .oy-tray'); return !!t && !t.querySelector('.oy-older') && t.querySelectorAll('.dk-turn').length >= 2; })()`, 30);
     rows.push(["with nothing fresh the pill says older, and its tray opens onto them", olderOpen,
-      !olderPill ? `the pill said "${await q.ev(`document.querySelector('#onyou .oy-pill')?.textContent || ""`)}"` : !olderOpen ? "the tray held only a fold to press" : "the pill said older, and its tray opened onto them"]);
+      !olderPill ? `the pill read "${await q.ev(`(() => { const b = document.querySelector('#onyou .oy-pill'); return b ? (b.getAttribute('aria-label') || b.textContent) + (b.classList.contains('on') ? ", lit" : "") : ""; })()`)}"` : !olderOpen ? "the tray held only a fold to press" : "the pill said all older, and its tray opened onto them"]);
     await q.ev(`Date.now = window.__now; document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); 1`);
     for (const id of [keyTurn, laterTurn]) if (id) await agent(`turns/${id}`, { drop: true });
 
