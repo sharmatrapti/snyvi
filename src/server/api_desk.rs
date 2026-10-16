@@ -539,6 +539,42 @@ pub(crate) async fn remove_desk_doc(
     desk_doc_off(&app, id, &doc, true)
 }
 
+/// The reader's ✕ on a card above the rail's foot (`hide`), or its Undo
+/// (`show`): the pane keeps the id on its `closed` list for the session,
+/// and the page hears it on the pane's own socket (1.43). Only a pane on
+/// this desk, and only an id a card could have.
+pub(crate) async fn desk_card_act(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, pane, card, act)): Path<(i64, String, String, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let shut = match act.as_str() {
+        "hide" => true,
+        "show" => false,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let ok = (1..=40).contains(&card.len())
+        && card
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if !ok || !crate::pane::valid_id(&pane) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match app.store.pane(&pane) {
+        Ok(Some(p)) if p.desk_id == id => {}
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    }
+    match app.panes.close_card(&pane, &card, shut) {
+        Some(changed) => Json(json!({ "ok": true, "changed": changed })).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 /// Undo, or Show's way back: the document is on the desk's list again.
 pub(crate) async fn restore_desk_doc(
     State(app): S,

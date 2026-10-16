@@ -189,7 +189,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
    the right-hand group, split the space with the tabs' and left a wide gap
    between the key and the +. Here, after those rules, so it wins. */
 .dk-head .dk-keys ~ :is(.icon, .dk-cap) { margin-left: 0; }
-.dk-grid { flex: 1; min-height: 0; display: grid; gap: 6px; position: relative; }
+/* 8px apart: room for the focused panel's 5px ring (.pn.on) with air
+   between it and the next panel's line. */
+.dk-grid { flex: 1; min-height: 0; display: grid; gap: 8px; position: relative; }
 .dk-none { color: var(--fg-3); padding: 24px; }
 .dk-none button { color: var(--accent); }
 .dk-div { position: absolute; z-index: 2; }
@@ -198,7 +200,10 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 .dk-grid:not([data-cols="2"]) .dk-v, .dk-grid:not([data-rows="2"]) .dk-h { display: none; }
 .dk-div:hover, .dk-div:focus-visible { background: var(--accent-bg); }
 .pn { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--pn-bg); overflow: hidden; }
-.pn.on { border-color: var(--rule-2); box-shadow: 0 0 0 1px var(--accent-bg); }
+/* The panel with the keys (#169): a 6px band, its 1px line in the accent and
+   a 5px ring of it outside, drawn as a shadow so the panel and its terminal
+   keep their size as the focus moves (no layout shift). */
+.pn.on { border-color: var(--accent); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 35%, transparent); }
 /* A head carried onto another pane: the one carried goes faint, the one it
    would trade places with is outlined. */
 .pn.pn-drag { opacity: .55; }
@@ -387,6 +392,9 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 #toc .dk-docs li a { display: flex; flex: 1; min-width: 0; align-items: baseline; gap: 6px; min-height: var(--sub-row-h); box-sizing: border-box; margin: 0; padding: 3px 8px; border: 0; border-radius: var(--r-sm); color: var(--fg-2); font-size: var(--fs-small); line-height: 18px; white-space: normal; overflow: hidden; -webkit-line-clamp: unset; transition: color var(--t); }
 .dk-docs a svg { flex: none; align-self: flex-start; margin-top: 3px; color: var(--fg-3); transition: color var(--t); }
 .dk-docs .age { flex: none; font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
+/* A head's count ends where the rows' times do: the rows sit 8px in, and the
+   count carries 4px of its own. */
+.dk-rail > .sec > .sec-head { padding-right: 4px; }
 .dk-docs a.new svg { color: var(--accent); }
 .dk-docs a.new .title { color: var(--fg); font-weight: 550; }
 /* The row, and not the link, carries the hover and the mark, so the copy
@@ -437,11 +445,18 @@ button.dk-left-b:hover { background: var(--rule); color: var(--fg); }
 :root[data-view="desk"] #rail { padding-bottom: 0; }
 :root[data-view="desk"] #meta, :root[data-view="desk"] #meta:empty { height: var(--foot-h); max-height: none; overflow: hidden; display: flex; align-items: center; gap: 4px;
   margin-left: -8px; padding: 0 8px; border-top: 1px solid var(--rule); background: var(--bg-side); line-height: 1; white-space: nowrap; position: relative; z-index: 2; }
-#meta .dk-pl { display: flex; align-items: center; flex: 1; min-width: 0; }
-#meta .dk-pl > * { flex: none; }
-#meta .dk-pl .dk-m { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-left: .4em; }
+#meta .dk-pl { display: flex; flex-wrap: nowrap; align-items: center; flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; }
+#meta .dk-pl > * { flex: none; white-space: nowrap; }
+/* Whole or not at all: a name that shrank to "O…" would hide the overflow
+ * the fit reads, and the clock would stay while the model went (plFit). */
+#meta .dk-pl .dk-m { flex: none; }
+/* The slot's neighbour, whichever it is once the model has given way. */
+#meta .dk-slot + * { padding-left: .4em; }
 #meta .dk-sep { padding: 0 .4em; }
-#meta .dk-since { font-variant-numeric: tabular-nums; }
+/* The model and its context are what the line is read for: the name in
+ * the ink, the clock after them quiet. */
+#meta .dk-pl .dk-m { color: var(--fg); }
+#meta .dk-since { font-variant-numeric: tabular-nums; color: var(--fg-3); }
 /* The desk's repository on the web: an icon in a slot that is there whether
  * or not the answer has come, quiet until pointed at. */
 #meta .dk-repo { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border-radius: var(--r-sm); color: var(--fg-3); text-decoration: none; }

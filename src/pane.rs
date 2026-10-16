@@ -250,6 +250,12 @@ pub struct Status {
     /// go with the session that put them there, like the model above.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cards: Vec<crate::card::Card>,
+    /// The cards the reader closed with their ✕, by id, for this session:
+    /// the page leaves them out, an agent's card of that id put again stays
+    /// out, and Undo takes the id off (1.43). `pr-<thread>-<n>` is the PR
+    /// card the page draws from the thread.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub closed: Vec<String>,
     /// The Claude account this process started as (`crate::accounts`): 0
     /// for the `/login` one, which is every panel until a reader adds
     /// another. Kept after the process ends, for "Continue as…": the panel
@@ -283,6 +289,7 @@ fn clear_context(s: &mut Status) {
     s.five_hour = None;
     s.seven_day = None;
     s.cards.clear();
+    s.closed.clear();
 }
 
 /// A rate-limit window as the page writes it: the whole percent left and
@@ -1123,14 +1130,41 @@ impl Panes {
     /// (`crate::card`). The page hears it on the pane's own socket, the way
     /// it hears the model. None for a pane that is not running; whether
     /// anything changed otherwise.
-    pub fn put_card(&self, id: &str, op: crate::card::Op) -> Option<bool> {
+    pub fn put_card(&self, id: &str, op: crate::card::Op) -> Option<(bool, bool)> {
         let l = self.live.lock().unwrap().get(id).cloned()?;
         let mut i = l.inner.lock().unwrap();
         if !i.status.running {
             return None;
         }
+        let shut = matches!(&op, crate::card::Op::Put(c) if i.status.closed.contains(&c.id));
         if !crate::card::apply(&mut i.status.cards, op, crate::store::now()) {
+            return Some((false, shut));
+        }
+        let s = i.status.clone();
+        drop(i);
+        let _ = l.tx.send(status_frame(&l.id, &s).into());
+        Some((true, shut))
+    }
+
+    /// The reader's ✕ on card `card` of pane `id`, or their Undo of it
+    /// (`shut` false). Nothing is deleted: the id goes on, or off, the
+    /// pane's `closed` list, the card itself stays where the agent put it.
+    /// None for a pane that is not here; whether anything changed.
+    pub fn close_card(&self, id: &str, card: &str, shut: bool) -> Option<bool> {
+        /// Enough for every card a panel keeps and a few PR cards besides.
+        const CLOSED_MAX: usize = 24;
+        let l = self.live.lock().unwrap().get(id).cloned()?;
+        let mut i = l.inner.lock().unwrap();
+        let had = i.status.closed.iter().any(|c| c == card);
+        if had == shut {
             return Some(false);
+        }
+        if shut {
+            i.status.closed.push(card.to_string());
+            let over = i.status.closed.len().saturating_sub(CLOSED_MAX);
+            i.status.closed.drain(..over);
+        } else {
+            i.status.closed.retain(|c| c != card);
         }
         let s = i.status.clone();
         drop(i);

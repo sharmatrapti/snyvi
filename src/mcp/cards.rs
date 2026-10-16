@@ -14,8 +14,8 @@ progress worth a glance (\"Building 3/7 shards\", \"Tests passed 412/412\"): kin
 it goes, ok, warn, bad) and for, the seconds it stays (10-3600; leave it out to keep it while this session \
 runs). Give an id and send the same id again to update it in place (a count going 3/7, 4/7) rather than \
 stacking a new one. The newest three show; a panel keeps six. Never a paragraph, an instruction, or something \
-the user must do (that is hand_over); a figure for the whole desk to keep is set_widget. Cards go when this \
-session ends.";
+the user must do (that is hand_over); a figure for the whole desk to keep is set_widget. The user can close \
+a card with its ✕; a closed card stays closed for the session. Cards go when this session ends.";
 
 const CLEAR: &str =
     "Take a card you showed with show_card off the rail's foot, by its id: when the link is \
@@ -60,6 +60,10 @@ impl Session {
             }
         }
         match client::pane_thread(&self.paths, p, "card", body) {
+            Ok(r) if r.get("closed").and_then(Value::as_bool) == Some(true) => said(
+                "The user closed this card with its ✕, so it stays out of view for this session. Don't put it again; if something about it needs them, say so in your reply.",
+                false,
+            ),
             Ok(_) => said(
                 match args.get("id").and_then(Value::as_str) {
                     Some(id) => format!("The card {id} is above the rail's foot while this panel has focus. Send the same id to update it; clear_card takes it off."),

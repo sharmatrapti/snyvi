@@ -128,6 +128,14 @@ pub const ON_YOU_1_36: [&str; 2] = [
     "ALTER TABLE turns ADD COLUMN key_name TEXT NOT NULL DEFAULT ''",
 ];
 
+/// 1.43 (plan b4a142a390, #167): where the thread's PR is, as GitHub says
+/// it -- `open`, `merged`, `closed` -- or `none` when a thread merged by
+/// git's guess was looked up and has no PR; empty until it is read. The PR
+/// card shows only while it is `open`, and a thread with an empty one is
+/// read once (`sweep_due`), which is how 1.42's drifted rows are put right.
+/// Version 23 of `store::MIGRATIONS`, never in `SCHEMA`.
+pub const PR_STATE_1_43: &str = "ALTER TABLE threads ADD COLUMN pr_state TEXT NOT NULL DEFAULT ''";
+
 /// How long a waiting turn is fresh: after it, it is "older" -- no rising,
 /// no sound, out of the cap, the brief's list, the band and Home's count.
 /// The page's `OLDER_S`, said once here so every reader agrees (B3).
@@ -211,6 +219,10 @@ pub struct Thread {
     /// The merge commit, once the PR is merged.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub merged: String,
+    /// `open`, `merged`, `closed`, `none`, or empty before it is read
+    /// (`PR_STATE_1_43`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub pr_state: String,
     #[serde(skip_serializing_if = "is_zero")]
     pub merged_at: i64,
     /// The next step, for a parked thread.
@@ -391,7 +403,7 @@ fn desk_open(conn: &Connection, desk_id: i64) -> Result<bool> {
 
 const THREAD_COLS: &str =
     "id, desk_id, name, stage, folder, branch, branch_seen, commits, pr, ci, merged, merged_at,
-     next, by, pane, created_at, moved_at, shipped_at, removed_at, moved_by, taken_at";
+     next, by, pane, created_at, moved_at, shipped_at, removed_at, moved_by, taken_at, pr_state";
 
 fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
     Ok(Thread {
@@ -416,6 +428,7 @@ fn row_to_thread(r: &rusqlite::Row) -> rusqlite::Result<Thread> {
         removed_at: r.get(18)?,
         moved_by: r.get(19)?,
         taken_at: r.get(20)?,
+        pr_state: r.get(21)?,
         rest: String::new(),
         notes: Vec::new(),
     })
@@ -763,6 +776,38 @@ pub struct Seen {
     pub pr: String,
     pub ci: String,
     pub merged: String,
+    /// The PR's state as gh said it: `open`, `merged`, `closed` (1.43).
+    pub state: String,
+    /// Who merged it, by GitHub login, as gh said it (1.43).
+    pub merged_by: String,
+    /// The merge was the reader's own: `merged_by` is who gh is signed in
+    /// as. Worked out by the daemon (`gh::viewer`), never taken from the
+    /// body: only the reader's merge ticks their notes.
+    #[serde(skip)]
+    pub mine: bool,
+}
+
+/// A trunk is no thread's own branch: a thread whose first commit was on
+/// main takes the branch it is switched to next.
+fn trunk(b: &str) -> bool {
+    matches!(b, "main" | "master" | "trunk" | "develop")
+}
+
+/// The branch a thread keeps after a sighting of `branch` with `commits`.
+/// It is set once -- by `git switch -c` or the first commit -- and never by
+/// a commit on another branch: one panel works one branch after another,
+/// and each commit used to be written onto whichever thread the panel held,
+/// so a thread was credited with another branch's merge (#167). A thread
+/// with a PR keeps the PR's branch.
+fn kept_branch(t: &Thread, branch: &str, commits: i64) -> String {
+    let take = !branch.is_empty()
+        && t.pr.is_empty()
+        && (t.branch.is_empty() || (trunk(&t.branch) && commits == 0 && !trunk(branch)));
+    if take {
+        branch.to_string()
+    } else {
+        t.branch.clone()
+    }
 }
 
 /// File what the mod saw on the pane's thread. `None` when the pane has no
@@ -781,83 +826,211 @@ pub fn seen(
         return Ok(None);
     };
     let t = &was;
-    let branch = if branch_ok(s.branch.trim()) {
+    let sighted = if branch_ok(s.branch.trim()) {
         s.branch.trim().to_string()
     } else {
         String::new()
     };
-    let pr = pr_number(&s.pr).unwrap_or_default();
-    let ci = line(&s.ci, 30);
-    let merged = s.merged.trim().to_ascii_lowercase();
-    let merged = if crate::desk::commit_ok(&merged) {
-        merged
+    let branch = kept_branch(t, &sighted, s.commits);
+    // Commits count when they were made on the thread's own branch, or on
+    // one the mod did not name. A new branch starts the count again.
+    let counted = if sighted.is_empty() || sighted == branch {
+        s.commits.clamp(0, 1000)
     } else {
-        String::new()
+        0
     };
-    // A new branch starts the count again: commits are the branch's.
+    // A thread with a PR keeps it, until that one was closed unmerged: a
+    // second `gh pr create` in the panel is for other work.
+    let pr = pr_number(&s.pr)
+        .filter(|_| t.pr.is_empty() || t.pr_state == "closed")
+        .unwrap_or_default();
     tx.execute(
         "UPDATE threads SET
-           commits = CASE WHEN ?3 != '' AND ?3 != branch THEN 0 ELSE commits END + ?4,
+           commits = CASE WHEN ?3 != branch THEN 0 ELSE commits END + ?4,
            branch_seen = CASE WHEN ?3 != '' OR ?4 > 0 OR ?5 != '' THEN 1 ELSE branch_seen END,
-           branch = CASE WHEN ?3 = '' THEN branch ELSE ?3 END,
+           branch = ?3,
            pr = CASE WHEN ?5 = '' THEN pr ELSE ?5 END,
-           ci = CASE WHEN ?6 = '' THEN ci ELSE ?6 END,
-           merged = CASE WHEN ?7 = '' THEN merged ELSE ?7 END,
-           merged_at = CASE WHEN ?7 != '' AND merged = '' THEN ?8 ELSE merged_at END
+           pr_state = CASE WHEN ?5 = '' OR ?5 = pr THEN pr_state ELSE '' END
          WHERE desk_id = ?1 AND id = ?2",
-        params![
-            desk_id,
-            t.id,
-            branch,
-            s.commits.clamp(0, 1000),
-            pr,
-            ci,
-            merged,
-            now
-        ],
+        params![desk_id, t.id, branch, counted, pr],
     )?;
-    // The first sight of the merge ticks the thread's open notes: merging is
-    // the reader's own yes to the work, and a note left open after it is a
-    // tick an agent forgot (#103-#106 stood a day that way). By "merged",
-    // with the merge and the PR, so the row says where the work went; the
-    // reader unticks one the merge did not finish. A suggestion is not
-    // theirs yet. The merge changes the thread too, so the event that tells
-    // the page goes out.
-    if was.merged.is_empty() && !merged.is_empty() {
-        let evidence = if crate::desk::evidence_ok(s.pr.trim()) {
-            s.pr.trim()
-        } else {
-            ""
-        };
-        tx.execute(
-            "UPDATE desk_notes SET done_at = ?3, done_by = 'merged', done_commit = ?4, done_doc = '', done_evidence = ?5, done_pane = ?6
-             WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
-            params![desk_id, t.id, now, merged, evidence, pane],
-        )?;
-        settle_merge(&tx, desk_id, t.id, &merged, now)?;
-    }
+    let now_t = get(&tx, desk_id, t.id)?.expect("the row just written");
+    let state = match s.state.trim().to_ascii_lowercase().as_str() {
+        st @ ("open" | "merged" | "closed") => st.to_string(),
+        _ if !s.merged.trim().is_empty() => "merged".to_string(),
+        _ => String::new(),
+    };
+    let facts = PrFacts {
+        state,
+        ci: line(&s.ci, 30),
+        merge: s.merged.trim().to_ascii_lowercase(),
+        merged_by: line(&s.merged_by, 64),
+        merged_at: now,
+        head: String::new(),
+        url: s.pr.trim().to_string(),
+    };
+    pr_facts(&tx, &now_t, &facts, s.mine, pane, now)?;
     let t = get(&tx, desk_id, t.id)?.expect("the row just written");
     tx.commit()?;
-    let changed = (&t.branch, t.commits, &t.pr, &t.ci, &t.merged, &t.stage)
-        != (
-            &was.branch,
-            was.commits,
-            &was.pr,
-            &was.ci,
-            &was.merged,
-            &was.stage,
-        );
+    let changed = (
+        &t.branch,
+        t.commits,
+        &t.pr,
+        &t.ci,
+        &t.merged,
+        &t.stage,
+        &t.pr_state,
+    ) != (
+        &was.branch,
+        was.commits,
+        &was.pr,
+        &was.ci,
+        &was.merged,
+        &was.stage,
+        &was.pr_state,
+    );
     Ok(Some((t, changed)))
 }
 
-/// The threads a merge could have passed by: on a branch, past their plan,
-/// not merged and not put away. With the folder to ask git in, or the
-/// desk's when that worktree is gone. `(id, folder, branch)`.
-pub fn unmerged(conn: &Connection, desk_id: i64) -> Result<Vec<(i64, String, String)>> {
+/// What is known of a thread's PR, from the mod's watch or the daemon's own
+/// `gh pr view` (`crate::gh`). Empty fields say nothing.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PrFacts {
+    pub state: String,
+    pub ci: String,
+    pub merge: String,
+    pub merged_by: String,
+    pub merged_at: i64,
+    /// The branch the PR is from: the thread's, whatever it said before.
+    pub head: String,
+    /// The PR's page, for the ticked note's link.
+    pub url: String,
+}
+
+impl From<&crate::gh::Pr> for PrFacts {
+    fn from(p: &crate::gh::Pr) -> PrFacts {
+        PrFacts {
+            state: p.state.clone(),
+            ci: p.ci.clone(),
+            merge: p.merge.clone(),
+            merged_by: p.merged_by.clone(),
+            merged_at: p.merged_at,
+            head: p.head.clone(),
+            url: p.url.clone(),
+        }
+    }
+}
+
+/// File what is known of thread `t`'s PR. The merge counts once, when it is
+/// new to the thread: the thread is merged and shipped as of it, its merge
+/// cards settle (`settle_merge`), and its open notes are ticked "merged"
+/// when the merge was the reader's own (`mine`), or land for the reader's
+/// check when someone else merged it -- a friend, a bot, or a merge nobody
+/// could say who made. A PR still open on a thread that counted as merged
+/// was a guess (git's, `landed`), and the guess is taken back. Whether
+/// anything changed.
+pub fn pr_facts(
+    conn: &Connection,
+    t: &Thread,
+    f: &PrFacts,
+    mine: bool,
+    pane: &str,
+    now: i64,
+) -> Result<bool> {
+    let (desk_id, id) = (t.desk_id, t.id);
+    let head = Some(f.head.trim())
+        .filter(|h| branch_ok(h) && *h != t.branch)
+        .unwrap_or("");
+    let mut changed = conn.execute(
+        "UPDATE threads SET
+           ci = CASE WHEN ?3 = '' THEN ci ELSE ?3 END,
+           pr_state = CASE WHEN ?4 = '' THEN pr_state ELSE ?4 END,
+           branch = CASE WHEN ?5 = '' THEN branch ELSE ?5 END,
+           commits = CASE WHEN ?5 = '' THEN commits ELSE 0 END
+         WHERE desk_id = ?1 AND id = ?2 AND (ci != ?3 AND ?3 != '' OR pr_state != ?4 AND ?4 != '' OR ?5 != '')",
+        params![desk_id, id, f.ci, f.state, head],
+    )? > 0;
+    let merge = f.merge.trim().to_ascii_lowercase();
+    if f.state == "open" && !t.merged.is_empty() && t.pr_state != "merged" {
+        changed |= conn.execute(
+            "UPDATE threads SET merged = '', merged_at = 0,
+               stage = CASE WHEN stage = 'shipped' THEN 'review' ELSE stage END,
+               shipped_at = CASE WHEN stage = 'shipped' THEN 0 ELSE shipped_at END
+             WHERE desk_id = ?1 AND id = ?2",
+            params![desk_id, id],
+        )? > 0;
+    }
+    if f.state != "merged" || !crate::desk::commit_ok(&merge) || merge == t.merged {
+        return Ok(changed);
+    }
+    let at = if f.merged_at > 0 { f.merged_at } else { now };
+    conn.execute(
+        "UPDATE threads SET merged = ?3, merged_at = ?4,
+           stage = 'shipped', shipped_at = CASE WHEN stage = 'shipped' AND shipped_at != 0 THEN shipped_at ELSE ?4 END
+         WHERE desk_id = ?1 AND id = ?2",
+        params![desk_id, id, merge, at],
+    )?;
+    if mine {
+        // Merging is the reader's own yes to the work, and a note left open
+        // after it is a tick an agent forgot (#103-#106 stood a day that
+        // way). By "merged", with the merge and the PR, so the row says
+        // where the work went; the reader unticks one the merge did not
+        // finish. A suggestion is not theirs yet.
+        let evidence = Some(f.url.trim())
+            .filter(|u| crate::desk::evidence_ok(u))
+            .unwrap_or("");
+        conn.execute(
+            "UPDATE desk_notes SET done_at = ?3, done_by = 'merged', done_commit = ?4, done_doc = '', done_evidence = ?5, done_pane = ?6
+             WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+            params![desk_id, id, now, merge, evidence, pane],
+        )?;
+    } else {
+        // Out, but not by the reader's hand: "check it", as a commit on main
+        // that names a line lands it (`desk::land_notes`).
+        conn.execute(
+            "UPDATE desk_notes SET landed_commit = ?3, landed_at = ?4
+             WHERE desk_id = ?1 AND thread_id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = '' AND landed_commit = ''",
+            params![desk_id, id, merge, at],
+        )?;
+    }
+    let pr = if t.pr.is_empty() {
+        pr_number(&f.url).unwrap_or_default()
+    } else {
+        t.pr.clone()
+    };
+    settle_merge(conn, desk_id, id, &pr, &merge, now)?;
+    Ok(true)
+}
+
+/// A thread the daemon reads GitHub for (`sweep_due`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Due {
+    pub id: i64,
+    /// The folder to ask in: the thread's, or the desk's when it has none.
+    pub dir: String,
+    /// The thread's folder is a worktree of its own, not the desk's folder:
+    /// the branch it has out is the thread's (`repair_branch`).
+    pub own: bool,
+    pub branch: String,
+    pub pr: String,
+    pub pr_state: String,
+    /// It counts as merged already: git's guess is not asked again.
+    pub merged: bool,
+}
+
+/// The threads whose PR is worth asking GitHub about, most recently moved
+/// first: one with a PR not yet merged or closed; one past its plan on a
+/// branch with no PR yet (opened on GitHub's page, say); and, once, one that
+/// counted as merged before 1.43 without its PR being read -- the rows a
+/// drifted branch had credited with another PR's merge.
+pub fn sweep_due(conn: &Connection, desk_id: i64) -> Result<Vec<Due>> {
     let mut st = conn.prepare(
-        "SELECT t.id, t.folder, d.root, t.branch FROM threads t JOIN desks d ON d.id = t.desk_id
-         WHERE t.desk_id = ?1 AND t.removed_at = 0 AND t.merged = '' AND t.branch != ''
-           AND t.stage NOT IN ('idea', 'planned', 'shipped')",
+        "SELECT t.id, t.folder, d.root, t.branch, t.pr, t.pr_state, t.merged != '' FROM threads t JOIN desks d ON d.id = t.desk_id
+         WHERE t.desk_id = ?1 AND t.removed_at = 0 AND (
+           (t.pr != '' AND t.pr_state IN ('', 'open'))
+           OR (t.pr = '' AND t.merged = '' AND t.branch != '' AND t.stage NOT IN ('idea', 'planned', 'shipped'))
+           OR (t.pr = '' AND t.merged != '' AND t.pr_state = ''))
+         ORDER BY t.moved_at DESC, t.id DESC LIMIT 12",
     )?;
     let rows = st.query_map(params![desk_id], |r| {
         Ok((
@@ -865,25 +1038,86 @@ pub fn unmerged(conn: &Connection, desk_id: i64) -> Result<Vec<(i64, String, Str
             r.get::<_, String>(1)?,
             r.get::<_, String>(2)?,
             r.get::<_, String>(3)?,
+            r.get::<_, String>(4)?,
+            r.get::<_, String>(5)?,
+            r.get::<_, bool>(6)?,
         ))
     })?;
-    let home = |p: &str| match (p.strip_prefix("~/"), dirs::home_dir()) {
-        (Some(rest), Some(h)) => h.join(rest),
-        _ => std::path::PathBuf::from(p),
-    };
     Ok(rows
         .filter_map(|r| r.ok())
-        .filter(|(.., b)| branch_ok(b))
-        .map(|(id, folder, root, b)| {
+        .map(|(id, folder, root, branch, pr, pr_state, merged)| {
             let f = home(&folder);
-            let at = if !folder.is_empty() && f.is_dir() {
+            let r = home(&root);
+            let own =
+                !folder.is_empty() && f.is_dir() && f.canonicalize().ok() != r.canonicalize().ok();
+            let dir = if !folder.is_empty() && f.is_dir() {
                 f
             } else {
-                home(&root)
+                r
             };
-            (id, at.to_string_lossy().into_owned(), b)
+            Due {
+                id,
+                dir: dir.to_string_lossy().into_owned(),
+                own,
+                branch,
+                pr,
+                pr_state,
+                merged,
+            }
         })
         .collect())
+}
+
+fn home(p: &str) -> std::path::PathBuf {
+    match (p.strip_prefix("~/"), dirs::home_dir()) {
+        (Some(rest), Some(h)) => h.join(rest),
+        _ => std::path::PathBuf::from(p),
+    }
+}
+
+/// A thread's branch put right, and its PR when it had none: what a
+/// worktree of its own has out is its branch (`git::branch_of`), and the
+/// PR from that branch is its PR -- unless another thread on the desk has
+/// that PR already. Whether anything changed.
+pub fn repair_branch(
+    conn: &Connection,
+    desk_id: i64,
+    id: i64,
+    branch: &str,
+    pr: &str,
+) -> Result<bool> {
+    let branch = Some(branch.trim()).filter(|b| branch_ok(b)).unwrap_or("");
+    let pr = pr_number(pr)
+        .filter(|n| {
+            !conn
+                .query_row(
+                    "SELECT 1 FROM threads WHERE desk_id = ?1 AND id != ?2 AND pr = ?3 AND removed_at = 0",
+                    params![desk_id, id, n],
+                    |_| Ok(()),
+                )
+                .optional()
+                .ok()
+                .flatten()
+                .is_some()
+        })
+        .unwrap_or_default();
+    Ok(conn.execute(
+        "UPDATE threads SET
+           branch = CASE WHEN ?3 = '' THEN branch ELSE ?3 END,
+           commits = CASE WHEN ?3 = '' OR ?3 = branch THEN commits ELSE 0 END,
+           pr = CASE WHEN ?4 = '' OR pr != '' THEN pr ELSE ?4 END
+         WHERE desk_id = ?1 AND id = ?2 AND ((?3 != '' AND ?3 != branch) OR (?4 != '' AND pr = ''))",
+        params![desk_id, id, branch, pr],
+    )? > 0)
+}
+
+/// A thread with no PR found for it, once it was looked for: `none`, so a
+/// row merged by git's guess is read once and not every sweep after.
+pub fn no_pr(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE threads SET pr_state = 'none' WHERE desk_id = ?1 AND id = ?2 AND pr = '' AND merged != '' AND pr_state = ''",
+        params![desk_id, id],
+    )? > 0)
 }
 
 /// A merge git found that no panel reported (`git::merge_of`): the thread
@@ -902,7 +1136,12 @@ pub fn landed(conn: &Connection, desk_id: i64, id: i64, merge: &str, at: i64) ->
         params![desk_id, id, merge, at],
     )? > 0;
     if landed {
-        settle_merge(conn, desk_id, id, &merge, crate::store::now())?;
+        let pr: String = conn.query_row(
+            "SELECT pr FROM threads WHERE desk_id = ?1 AND id = ?2",
+            params![desk_id, id],
+            |r| r.get(0),
+        )?;
+        settle_merge(conn, desk_id, id, &pr, &merge, crate::store::now())?;
     }
     Ok(landed)
 }
@@ -1446,22 +1685,45 @@ pub fn settle_key(conn: &Connection, desk_id: i64, name: &str, now: i64) -> Resu
     )?)
 }
 
-/// snyvi saw a thread's merge -- the mod's gh, or git in main: the `merge`
-/// turns on that thread are answered with it, and told at the next prompt,
-/// so "Merged" is what was seen rather than a click (B5, X4).
+/// snyvi saw a thread's merge -- the mod's gh, the daemon's, or git in
+/// main: the `merge` turns it settles are answered with it, and told at the
+/// next prompt, so "Merged" is what was seen rather than a click (B5, X4).
+/// A turn whose link is a PR's page settles on that PR's merge only,
+/// whichever thread it was asked on: "Merge PR #89" was asked on the
+/// gallery's thread, which had merged #88, and so it was never settled, and
+/// "merge #88, then #89" was settled by #88 alone (#168). A turn with no PR
+/// in its link settles on its own thread's merge, as before. How many.
 fn settle_merge(
     conn: &Connection,
     desk_id: i64,
     thread: i64,
+    pr: &str,
     merge: &str,
     now: i64,
 ) -> Result<usize> {
     let short: String = merge.chars().take(7).collect();
-    Ok(conn.execute(
-        "UPDATE turns SET answer = ?4, answered_in = 'snyvi', answered_at = ?3
-         WHERE desk_id = ?1 AND thread_id = ?2 AND kind = 'merge' AND answered_at = 0 AND removed_at = 0",
-        params![desk_id, thread, now, format!("Merged ({short}, seen by snyvi)")],
-    )?)
+    let waiting: Vec<(i64, i64, String)> = conn
+        .prepare_cached(
+            "SELECT id, thread_id, link FROM turns
+             WHERE desk_id = ?1 AND kind = 'merge' AND answered_at = 0 AND removed_at = 0",
+        )?
+        .query_map(params![desk_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut up = conn.prepare_cached(
+        "UPDATE turns SET answer = ?2, answered_in = 'snyvi', answered_at = ?3 WHERE id = ?1",
+    )?;
+    let mut n = 0;
+    for (id, on, link) in waiting {
+        let names = link.contains("/pull/").then(|| pr_number(&link)).flatten();
+        let settles = match names {
+            Some(p) => !pr.is_empty() && p == pr,
+            None => on == thread,
+        };
+        if settles {
+            n += up.execute(params![id, format!("Merged ({short}, seen by snyvi)"), now])?;
+        }
+    }
+    Ok(n)
 }
 
 /// Answers a pane has not been told yet, and they are marked told: what its

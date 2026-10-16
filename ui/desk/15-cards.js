@@ -17,6 +17,13 @@
  * panel's focus moves, or the agent takes them off. The newest is nearest
  * the foot; three show, and the third counts the rest.
  *
+ * Every card has a ✕ (1.43): on a hover or the keyboard's focus the host
+ * at its right end gives way to it in the same box, so nothing moves. A
+ * click leaves an Undo where the card was for a few seconds, and the
+ * daemon keeps the card closed for that panel's session (`closed` in the
+ * pane's status), so every window agrees and an agent putting the same card
+ * again does not bring it back. Nothing is deleted.
+ *
  * The spring is the one motion here that is not the page's quiet ease: the
  * maker asked for cards that land like something with weight. It is
  * transform and opacity only, on the compositor, so the panels' canvases
@@ -58,30 +65,56 @@ function prUrl(url, n) {
   } catch { return null; }
 }
 
+/** How long a closed card's Undo stands where it was. */
+const UNDO_MS = 5000;
+/** Cards the reader closed here and the daemon has not said back yet, and
+ *  the ones holding their Undo, by `pane:id`. */
+const cardsShut = new Set(), cardUndo = new Map();
+
 /** Panel `v`'s cards on desk `d`, oldest first: its thread's PR, worked out
- *  here, then what its agent showed, less what has run its time. */
+ *  here, then what its agent showed, less what has run its time and what the
+ *  reader closed -- unless it is still holding its Undo. The PR card is
+ *  there only while the PR is open (1.43): a merged one said "merged" for
+ *  twelve hours, and once said it before the merge it named (#167). The
+ *  merge is told where it belongs -- the notes tick, the thread's row says
+ *  it -- and a closed PR is not news for the foot. */
 function cardsOf(d, v) {
   if (!v) return [];
   const out = [], now = Date.now() / 1000, t = paneThread(d, v.id), url = repoOf(d);
-  const pr = t && t.pr && url && prUrl(url, t.pr);
+  const open = t && t.pr && (t.pr_state === "open" || (!t.pr_state && !t.merged));
+  const pr = open && url && prUrl(url, t.pr);
   if (pr) {
     const ci = t.ci || "";
-    out.push({ id: "pr", kind: "link", label: `PR #${t.pr} · ${t.merged ? "merged" : ci ? `checks ${ci}` : "open"}`, url: pr,
+    out.push({ id: `pr-${t.id}-${t.pr}`, kind: "link", label: `PR #${t.pr} · ${ci ? `checks ${ci}` : "open"}`, url: pr,
       host: repoName(url)?.host || "", at: 0, life: 0, by: "snyvi, from this panel's thread",
-      tone: t.merged || /pass|success/i.test(ci) ? "ok" : /fail|error/i.test(ci) ? "bad" : "" });
+      tone: /pass|success/i.test(ci) ? "ok" : /fail|error/i.test(ci) ? "bad" : "" });
   }
   for (const c of v.status.cards || []) if (!c.for || now < c.at + c.for) out.push({ ...c, life: c.for || 0 });
-  return out;
+  const closed = new Set(v.status.closed || []);
+  return out.flatMap(c => {
+    const k = `${v.id}:${c.id}`;
+    if (cardUndo.has(k)) return [{ ...c, undo: true }];
+    return closed.has(c.id) || cardsShut.has(k) ? [] : [c];
+  });
 }
 
-/** What is inside a card: its mark, its words, where a link goes. */
+/** What is inside a card: its mark, its words, where a link goes, and its
+ *  ✕; or, closed a moment ago, its Undo in the same place. A link is the
+ *  card's inside, not the card, so the ✕ beside it is a button of its own. */
 function cardFill(el, c) {
   const { esc } = ctx;
+  el.classList.toggle("shut", !!c.undo);
+  if (c.undo) {
+    el.innerHTML = `<span class="dk-card-in"><span class="dk-card-tx">Closed</span><button type="button" class="dk-card-undo" data-card="${esc(c.id)}">Undo</button></span>`;
+    delete el.dataset.tip; delete el.dataset.tipSub;
+    return;
+  }
   const mark = c.kind === "link" ? `<span class="dk-card-ic" aria-hidden="true">↗</span>` : `<span class="dk-card-tone${c.tone ? ` ${c.tone}` : ""}" aria-hidden="true"></span>`;
-  el.innerHTML = `${mark}<span class="dk-card-tx">${esc(c.label)}</span>${c.host ? `<span class="dk-card-host">${esc(c.host)}</span>` : ""}`;
+  const inner = `${mark}<span class="dk-card-tx">${esc(c.label)}</span><span class="dk-card-host">${esc(c.host || "")}</span>`;
+  el.innerHTML = (c.kind === "link" ? `<a class="dk-card-in" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${inner}</a>` : `<span class="dk-card-in">${inner}</span>`) +
+    `<button type="button" class="dk-card-x" data-card="${esc(c.id)}" aria-label="Close card: ${esc(c.label)}" data-tip="Close" data-tip-sub="Undo for a few seconds; nothing is deleted">${ico("x")}</button>`;
   el.dataset.tip = c.label;
   el.dataset.tipSub = [c.kind === "link" ? c.url : "", c.by || (c.life ? `for ${c.life}s` : "while this panel's session runs")].filter(Boolean).join(" · ");
-  if (c.kind === "link") el.href = c.url;
   if (c.life) {
     const left = Math.max(0, c.at + c.life - Date.now() / 1000), bar = document.createElement("span");
     bar.className = "dk-card-drain";
@@ -90,11 +123,36 @@ function cardFill(el, c) {
   }
 }
 
+/** A card's ✕ or its Undo. Closed at once here, then told to the daemon;
+ *  a no puts it back, with the reason in the card's place. */
+async function cardClick(e) {
+  const b = e.target.closest(".dk-card-x, .dk-card-undo");
+  if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const d = current(), v = d && views.get(cardsPane);
+  if (!v) return;
+  const id = b.dataset.card, k = `${v.id}:${id}`, path = `/api/desks/${d.id}/panes/${v.id}/cards/${encodeURIComponent(id)}`;
+  if (b.classList.contains("dk-card-x")) {
+    cardsShut.add(k);
+    clearTimeout(cardUndo.get(k));
+    cardUndo.set(k, setTimeout(() => { cardUndo.delete(k); cards(); }, UNDO_MS));
+    cards();
+    cardsEl?.querySelector(".dk-card.shut .dk-card-undo")?.focus({ preventScroll: true });
+    try { await ctx.api(`${path}/hide`, {}); }
+    catch { cardsShut.delete(k); clearTimeout(cardUndo.get(k)); cardUndo.delete(k); cards(); ctx.toast("Could not close the card"); }
+    return;
+  }
+  clearTimeout(cardUndo.get(k)); cardUndo.delete(k);
+  cardsShut.delete(k);
+  cards();
+  try { await ctx.api(`${path}/show`, {}); }
+  catch { cardsShut.add(k); cards(); ctx.toast("Could not bring the card back"); }
+}
+
 function cardMake(c) {
-  const el = document.createElement(c.kind === "link" ? "a" : "div");
+  const el = document.createElement("div");
   el.className = "dk-card";
   el.setAttribute("role", "listitem");
-  if (c.kind === "link") { el.target = "_blank"; el.rel = "noopener noreferrer"; }
   cardFill(el, c);
   el.style.transform = `translateY(${CARD_HIDE}px)`;
   cardsEl.append(el);
@@ -158,6 +216,7 @@ function cards() {
     cardsEl = Object.assign(document.createElement("div"), { id: "dk-cards" });
     cardsEl.setAttribute("role", "list");
     cardsEl.setAttribute("aria-label", "Cards");
+    cardsEl.addEventListener("click", cardClick);
     ctx.metaEl.before(cardsEl);
   }
   const list = d ? cardsOf(d, v) : [], shown = list.slice(-CARDS_SHOWN).reverse();
@@ -167,7 +226,7 @@ function cards() {
   for (const [k, el] of cardEls) if (!want.has(k)) cardOut(k, el, swap);
   let rising = 0;
   shown.forEach((c, i) => {
-    const k = key(c), y = -i * (CARD_H + CARD_GAP), sig = JSON.stringify([c.label, c.url, c.host, c.tone, c.at, c.life]);
+    const k = key(c), y = -i * (CARD_H + CARD_GAP), sig = JSON.stringify([c.label, c.url, c.host, c.tone, c.at, c.life, !!c.undo]);
     let el = cardEls.get(k);
     if (!el) {
       el = cardMake(c);
@@ -184,7 +243,7 @@ function cards() {
   if (shown.length !== cardsUp) { cardsUp = shown.length; if (oyEl?.isConnected) oyPlace(oyEl); }
   // The next card whose time runs out takes itself off then.
   clearTimeout(cardsTimer);
-  const next = Math.min(...list.filter(c => c.life).map(c => c.at + c.life));
+  const next = Math.min(...list.filter(c => c.life && !c.undo).map(c => c.at + c.life));
   if (Number.isFinite(next)) cardsTimer = setTimeout(cards, Math.max(0, next * 1000 - Date.now()) + 50);
 }
 
@@ -194,6 +253,8 @@ const cardsLift = () => cardsUp ? cardsUp * (CARD_H + CARD_GAP) - CARD_GAP + CAR
 /** Off the desk: no stack, no timer. */
 function cardsDrop() {
   clearTimeout(cardsTimer);
+  for (const t of cardUndo.values()) clearTimeout(t);
+  cardUndo.clear(); cardsShut.clear();
   cardEls.clear();
   cardsEl?.remove();
   cardsEl = null; cardsPane = null; cardsUp = 0;
@@ -205,13 +266,31 @@ const CARDS_CSS = `
 /* The list always ends in room for three cards, so its last line can be
  * scrolled clear of them; that room never changes, so nothing moves. */
 :root[data-view="desk"] #toc { padding-bottom: calc(14px + 3 * 36px + 8px); }
-.dk-card { position: absolute; left: 0; right: 0; bottom: 8px; height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 10px;
+.dk-card { position: absolute; left: 0; right: 0; bottom: 8px; height: 30px;
   border-radius: var(--r-md); background: var(--bg-raise); border: 1px solid var(--rule-2); box-shadow: var(--shadow-1);
-  color: var(--fg-2); font-size: var(--fs-small); white-space: nowrap; pointer-events: auto; text-decoration: none; opacity: 0; }
-a.dk-card:hover, a.dk-card:focus-visible { border-color: var(--accent); color: var(--fg); text-decoration: none; }
+  color: var(--fg-2); font-size: var(--fs-small); white-space: nowrap; pointer-events: auto; opacity: 0; }
+.dk-card-in { display: flex; align-items: center; gap: 7px; height: 100%; padding: 0 10px; border-radius: inherit; color: inherit; text-decoration: none; }
+.dk-card:has(a.dk-card-in:hover), .dk-card:has(a.dk-card-in:focus-visible) { border-color: var(--accent); color: var(--fg); }
+a.dk-card-in:hover, a.dk-card-in:focus-visible { text-decoration: none; outline: none; }
 .dk-card-ic { flex: none; color: var(--accent); }
 .dk-card-tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.dk-card-host { flex: none; margin-left: auto; font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); }
+/* The host holds the card's right end, at least as wide as the ✕, which
+ * takes its place on a hover or the keyboard's focus: one box, two faces,
+ * crossed over, so the label never moves for it. Touch has no hover, so
+ * there the ✕ is always shown. */
+.dk-card-host { flex: none; min-width: 18px; margin-left: auto; text-align: right; font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-3); transition: opacity var(--dur-quick); }
+.dk-card-x { position: absolute; top: 50%; right: 6px; width: 20px; height: 20px; margin-top: -10px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-xs);
+  background: var(--bg-raise); color: var(--fg-3); opacity: 0; transition: opacity var(--dur-quick); cursor: pointer; }
+.dk-card-x svg { width: 11px; height: 11px; }
+.dk-card-x:hover, .dk-card-x:focus-visible { color: var(--fg); background: var(--rule-2); }
+.dk-card:hover .dk-card-x, .dk-card:focus-within .dk-card-x { opacity: 1; }
+.dk-card:hover .dk-card-host, .dk-card:focus-within .dk-card-host { opacity: 0; }
+@media (hover: none) { .dk-card .dk-card-x { opacity: 1; } .dk-card .dk-card-host { opacity: 0; } }
+/* Closed a moment ago: its Undo, in the card's own place. */
+.dk-card.shut { border-style: dashed; box-shadow: none; }
+.dk-card.shut .dk-card-tx { color: var(--fg-3); }
+.dk-card-undo { margin-left: auto; padding: 1px 8px; border: 0; border-radius: var(--r-xs); background: var(--rule); color: var(--fg); font-size: var(--fs-micro); font-weight: 600; cursor: pointer; }
+.dk-card-undo:hover, .dk-card-undo:focus-visible { background: var(--rule-2); }
 .dk-card-tone { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--fg-3); }
 .dk-card-tone.ok { background: var(--ok); }
 .dk-card-tone.warn { background: var(--warn); }

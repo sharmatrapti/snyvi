@@ -417,12 +417,30 @@ fn same(a: &Path, b: &Path) -> bool {
 
 /// One git command in `dir`, its output when it succeeded within `WAIT`.
 fn run(dir: &Path, args: &[&str]) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.args(["-c", "core.fsmonitor=false", "--no-optional-locks"])
-        .args(args)
+    let mut all = vec!["-c", "core.fsmonitor=false", "--no-optional-locks"];
+    all.extend_from_slice(args);
+    run_for("git", dir, &all, WAIT)
+}
+
+/// The branch a worktree has out, or None on a detached head or outside a
+/// repository: what a thread's own folder says its branch is, when the
+/// folder is a worktree made for it (`thread::repair_branch`).
+pub fn branch_of(dir: &Path) -> Option<String> {
+    let b = run(dir, &["branch", "--show-current"])?;
+    let b = b.trim();
+    (!b.is_empty()).then(|| b.to_string())
+}
+
+/// One command in `dir`, its output when it succeeded within `wait`: git's
+/// care -- no prompt, no window on Windows, no stall on a full pipe -- for
+/// `gh` too (`crate::gh`).
+pub(crate) fn run_for(program: &str, dir: &Path, args: &[&str], wait: Duration) -> Option<String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args)
         // Plain, not `\\?\`: git's own runtime reads its working directory.
         .current_dir(dunce::simplified(dir))
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -444,7 +462,7 @@ fn run(dir: &Path, args: &[&str]) -> Option<String> {
     let status = loop {
         match child.try_wait() {
             Ok(Some(st)) => break st,
-            Ok(None) if start.elapsed() < WAIT => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) if start.elapsed() < wait => std::thread::sleep(Duration::from_millis(10)),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();

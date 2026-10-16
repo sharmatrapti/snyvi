@@ -13,6 +13,7 @@ fn db() -> Connection {
     conn.execute_batch(CMD_COLUMN).unwrap();
     conn.execute_batch(TAKEN_COLUMN).unwrap();
     conn.execute_batch(GROUP_COLUMN).unwrap();
+    conn.execute_batch(PR_STATE_1_43).unwrap();
     for c in SUGGEST_COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
     }
@@ -149,8 +150,9 @@ fn moving_the_panes_thread_parks_and_ships_it() {
     );
 }
 
-/// What the mod sees lands on the pane's thread and is marked seen; a new
-/// branch starts the commit count again, and a merge is dated once.
+/// What the mod sees lands on the pane's thread and is marked seen; a
+/// commit on another branch is not the thread's (#167), and a merge is
+/// dated once.
 #[test]
 fn what_the_mod_saw_is_filed_on_the_panes_thread() {
     let mut conn = db();
@@ -173,10 +175,14 @@ fn what_the_mod_saw_is_filed_on_the_panes_thread() {
         (t.branch.as_str(), t.commits, t.seen, changed),
         ("claude/a", 3, true, true)
     );
-    let (t, _) = seen(&mut conn, d, "p1", &s("claude/b", 1), 5)
+    let (t, changed) = seen(&mut conn, d, "p1", &s("claude/b", 1), 5)
         .unwrap()
         .unwrap();
-    assert_eq!(t.commits, 1);
+    assert_eq!(
+        (t.branch.as_str(), t.commits, changed),
+        ("claude/a", 3, false),
+        "a commit on another branch is another thread's"
+    );
     let m = Seen {
         pr: "https://github.com/o/r/pull/57".into(),
         merged: "7E1C0A2".into(),
@@ -186,6 +192,10 @@ fn what_the_mod_saw_is_filed_on_the_panes_thread() {
     assert_eq!(
         (t.pr.as_str(), t.merged.as_str(), t.merged_at, changed),
         ("57", "7e1c0a2", 6, true)
+    );
+    assert_eq!(
+        (t.pr_state.as_str(), t.stage.as_str()),
+        ("merged", "shipped")
     );
     // The same sighting again changes nothing: the mod's CI watch says the
     // same thing every minute, and only the first time is an event.
@@ -199,12 +209,13 @@ fn what_the_mod_saw_is_filed_on_the_panes_thread() {
     assert!(!seen(&mut conn, d, "p1", &ci, 9).unwrap().unwrap().1);
     // Nothing that is not a branch gets in.
     let (t, changed) = seen(&mut conn, d, "p1", &s("a b", 0), 10).unwrap().unwrap();
-    assert_eq!((t.branch.as_str(), changed), ("claude/b", false));
+    assert_eq!((t.branch.as_str(), changed), ("claude/a", false));
 }
 
-/// The first sight of the merge ticks the thread's open notes, by "merged",
-/// with the merge and the PR; a note outside the thread stays open, and one
-/// the reader unticks is not ticked again by the same merge seen again.
+/// The first sight of the reader's own merge ticks the thread's open notes,
+/// by "merged", with the merge and the PR; a note outside the thread stays
+/// open, and one the reader unticks is not ticked again by the same merge
+/// seen again.
 #[test]
 fn a_merge_ticks_the_threads_notes() {
     let mut conn = db();
@@ -226,6 +237,7 @@ fn a_merge_ticks_the_threads_notes() {
     assert_eq!(open(&conn), 3, "a PR alone ticks nothing");
     let m = Seen {
         merged: "B6E235B".into(),
+        mine: true,
         ..pr
     };
     let (_, changed) = seen(&mut conn, d, "p1", &m, 3).unwrap().unwrap();
@@ -259,7 +271,7 @@ fn a_merge_no_panel_saw_ships_and_ticks_nothing() {
     start_as(&mut conn, d, "A", "p1", &n[..2]);
     let t = of_pane(&conn, d, "p1").unwrap().unwrap().id;
     assert!(
-        unmerged(&conn, d).unwrap().is_empty(),
+        sweep_due(&conn, d).unwrap().is_empty(),
         "no branch, no question"
     );
     let b = Seen {
@@ -267,14 +279,14 @@ fn a_merge_no_panel_saw_ships_and_ticks_nothing() {
         ..Seen::default()
     };
     seen(&mut conn, d, "p1", &b, 2).unwrap();
-    assert!(unmerged(&conn, d).unwrap().is_empty(), "still at its plan");
+    assert!(sweep_due(&conn, d).unwrap().is_empty(), "still at its plan");
     conn.execute("UPDATE threads SET stage = 'review' WHERE id = ?1", [t])
         .unwrap();
-    let u = unmerged(&conn, d).unwrap();
+    let u = sweep_due(&conn, d).unwrap();
     assert_eq!(u.len(), 1);
     assert_eq!(
-        (u[0].0, u[0].1.as_str(), u[0].2.as_str()),
-        (t, "/w", "claude/a"),
+        (u[0].id, u[0].dir.as_str(), u[0].branch.as_str(), u[0].own),
+        (t, "/w", "claude/a", false),
         "the desk's folder when the thread has none"
     );
     assert!(!landed(&conn, d, t, "not a sha", 5).unwrap());
@@ -289,7 +301,208 @@ fn a_merge_no_panel_saw_ships_and_ticks_nothing() {
         .unwrap()
         .iter()
         .all(|x| !x.done));
-    assert!(unmerged(&conn, d).unwrap().is_empty());
+    let u = sweep_due(&conn, d).unwrap();
+    assert_eq!(
+        (u.len(), u[0].merged),
+        (1, true),
+        "a guessed merge is read once for its PR"
+    );
+    assert!(no_pr(&conn, d, t.id).unwrap());
+    assert!(
+        sweep_due(&conn, d).unwrap().is_empty(),
+        "and then not again"
+    );
+}
+
+/// One panel works three branches, one thread after another: each thread
+/// keeps the branch it started on and counts only its own commits, and a
+/// thread with a PR keeps the PR's branch however the panel switches (#167).
+#[test]
+fn a_thread_keeps_its_own_branch() {
+    let mut conn = db();
+    let (d, _) = desk(&mut conn);
+    let s = |branch: &str, commits: i64| Seen {
+        branch: branch.into(),
+        commits,
+        ..Seen::default()
+    };
+    start_as(&mut conn, d, "A", "p1", &[]);
+    seen(&mut conn, d, "p1", &s("claude/a", 1), 2).unwrap();
+    let a = of_pane(&conn, d, "p1").unwrap().unwrap().id;
+    start(
+        &mut conn,
+        d,
+        &Start {
+            name: "B".into(),
+            pane: "p1".into(),
+            ..Start::default()
+        },
+        20,
+    )
+    .unwrap();
+    seen(&mut conn, d, "p1", &s("claude/b", 0), 21).unwrap();
+    seen(&mut conn, d, "p1", &s("claude/b", 1), 22).unwrap();
+    // A commit back on A's branch, from B's panel: not B's.
+    seen(&mut conn, d, "p1", &s("claude/a", 1), 23).unwrap();
+    let b = of_pane(&conn, d, "p1").unwrap().unwrap();
+    assert_eq!((b.branch.as_str(), b.commits), ("claude/b", 1));
+    let a = get(&conn, d, a).unwrap().unwrap();
+    assert_eq!((a.branch.as_str(), a.commits), ("claude/a", 1));
+    // A PR'd thread ignores a later `switch -c`.
+    let pr = Seen {
+        pr: "57".into(),
+        ..Seen::default()
+    };
+    seen(&mut conn, d, "p1", &pr, 24).unwrap();
+    let (b, _) = seen(&mut conn, d, "p1", &s("claude/c", 0), 25)
+        .unwrap()
+        .unwrap();
+    assert_eq!((b.branch.as_str(), b.pr.as_str()), ("claude/b", "57"));
+    // And keeps its PR when another is made in the panel.
+    let other = Seen {
+        pr: "58".into(),
+        ..Seen::default()
+    };
+    let (b, _) = seen(&mut conn, d, "p1", &other, 26).unwrap().unwrap();
+    assert_eq!(b.pr, "57");
+    // A first commit on main is no thread's own branch.
+    start(
+        &mut conn,
+        d,
+        &Start {
+            name: "C".into(),
+            pane: "p2".into(),
+            ..Start::default()
+        },
+        30,
+    )
+    .unwrap();
+    seen(&mut conn, d, "p2", &s("main", 1), 31).unwrap();
+    let (c, _) = seen(&mut conn, d, "p2", &s("claude/c", 0), 32)
+        .unwrap()
+        .unwrap();
+    assert_eq!((c.branch.as_str(), c.commits), ("claude/c", 0));
+}
+
+/// A merge by someone else -- a friend, a bot, or one nobody can say who
+/// made -- ships the thread and lands its notes for the reader's check;
+/// only the reader's own merge ticks them.
+#[test]
+fn only_the_readers_merge_ticks() {
+    let mut conn = db();
+    let (d, n) = desk(&mut conn);
+    start_as(&mut conn, d, "A", "p1", &n[..2]);
+    let m = Seen {
+        pr: "https://github.com/o/r/pull/67".into(),
+        merged: "B6E235B".into(),
+        merged_by: "trapti".into(),
+        ..Seen::default()
+    };
+    let (t, changed) = seen(&mut conn, d, "p1", &m, 3).unwrap().unwrap();
+    assert!(changed);
+    assert_eq!(
+        (t.stage.as_str(), t.pr_state.as_str()),
+        ("shipped", "merged")
+    );
+    let notes = crate::desk::notes(&conn, d).unwrap();
+    let mine: Vec<_> = notes.iter().filter(|x| n[..2].contains(&x.id)).collect();
+    assert!(mine.iter().all(|x| !x.done && x.landed_commit == "b6e235b"));
+}
+
+/// GitHub's word puts right what a guess got wrong: a PR still open takes
+/// back a merge git guessed, the PR's own branch is the thread's, and its
+/// merge, the reader's, ticks the notes and settles the card that names
+/// that PR -- and only that PR -- whichever thread it was asked on (#168).
+#[test]
+fn the_prs_word_settles_its_own_card() {
+    let mut conn = db();
+    let (d, n) = desk(&mut conn);
+    start_as(&mut conn, d, "Gallery", "p1", &[]);
+    let card = |text: &str, link: &str| Ask {
+        kind: "merge".into(),
+        text: text.into(),
+        link: link.into(),
+        pane: "p1".into(),
+        ..Ask::default()
+    };
+    let Asked::Turn(c89) = ask(
+        &mut conn,
+        d,
+        &card("Merge PR #89", "https://github.com/o/r/pull/89"),
+        2,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    let Asked::Turn(c88) = ask(
+        &mut conn,
+        d,
+        &card("Merge PR #88", "https://github.com/o/r/pull/88"),
+        2,
+    )
+    .unwrap() else {
+        panic!()
+    };
+    start_as(&mut conn, d, "Foot", "p2", &n[..2]);
+    let foot = of_pane(&conn, d, "p2").unwrap().unwrap();
+    // git guessed the gallery's merge for it.
+    assert!(landed(&conn, d, foot.id, "2cc6bd5", 5).unwrap());
+    assert!(repair_branch(&conn, d, foot.id, "claude/foot-cards", "89").unwrap());
+    let foot = get(&conn, d, foot.id).unwrap().unwrap();
+    assert_eq!(
+        (foot.branch.as_str(), foot.pr.as_str()),
+        ("claude/foot-cards", "89")
+    );
+    let open = PrFacts {
+        state: "open".into(),
+        ci: "9/13".into(),
+        ..PrFacts::default()
+    };
+    assert!(pr_facts(&conn, &foot, &open, false, "", 6).unwrap());
+    let foot = get(&conn, d, foot.id).unwrap().unwrap();
+    assert_eq!(
+        (
+            foot.merged.as_str(),
+            foot.stage.as_str(),
+            foot.pr_state.as_str(),
+            foot.ci.as_str()
+        ),
+        ("", "review", "open", "9/13")
+    );
+    let merged = PrFacts {
+        state: "merged".into(),
+        merge: "5294d9e".into(),
+        merged_by: "me".into(),
+        merged_at: 7,
+        head: "claude/foot-cards".into(),
+        url: "https://github.com/o/r/pull/89".into(),
+        ..PrFacts::default()
+    };
+    assert!(pr_facts(&conn, &foot, &merged, true, "", 8).unwrap());
+    let foot = get(&conn, d, foot.id).unwrap().unwrap();
+    assert_eq!(
+        (foot.merged.as_str(), foot.merged_at, foot.stage.as_str()),
+        ("5294d9e", 7, "shipped")
+    );
+    assert!(crate::desk::notes(&conn, d)
+        .unwrap()
+        .iter()
+        .filter(|x| n[..2].contains(&x.id))
+        .all(|x| x.done && x.done_by == "merged"));
+    assert_eq!(
+        turn(&conn, d, c89.id).unwrap().unwrap().answer,
+        "Merged (5294d9e, seen by snyvi)"
+    );
+    assert_eq!(
+        turn(&conn, d, c88.id).unwrap().unwrap().answered_at,
+        0,
+        "#88's card waits for #88"
+    );
+    // The same merge read again changes nothing.
+    assert!(!pr_facts(&conn, &foot, &merged, true, "", 9).unwrap());
+    // Another thread on the desk cannot take a PR that is the foot's.
+    let gallery = of_pane(&conn, d, "p1").unwrap().unwrap();
+    assert!(!repair_branch(&conn, d, gallery.id, "", "89").unwrap());
 }
 
 /// A desk's turns are its own: thirty-one waiting on another desk do not

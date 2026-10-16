@@ -13,23 +13,23 @@
  *   card that says "+N more".
  * - **Settle.** After a few seconds, at a click elsewhere, or at Later, the
  *   card goes into the pill. Nothing that came goes on a timer.
- * - **Stay.** The pill opens the tray: On you, what only the reader can do,
- *   counted in amber; and Lately, what came, kept by the daemon
- *   (`src/lately.rs`) and marked with a dot while some of it is unseen,
- *   never a number.
+ * - **Stay.** What only the reader can do is On you: the pill, counted in
+ *   amber, opens its tray. What came is Lately, kept by the daemon
+ *   (`src/lately.rs`) -- every desk's, so the sidebar's, which is every
+ *   page's (1.43): a button in its head and its rail, with a dot while some
+ *   of it is unseen, never a number, opening in the rail's popover
+ *   (`lately`, menu.js `pop`).
  *
  * On a desk the corner is the desk's own (ui/desk/10-onyou.js), in the
- * rail's column: it asks this file for the card, the pill's dot, the offers
- * and the Lately section, and hands this file their clicks. Anywhere else
- * this file draws it, with what waits on the reader across desks.
+ * rail's column: it asks this file for the card and the offers, and hands
+ * this file their clicks. Anywhere else this file draws it, with what waits
+ * on the reader across desks.
  */
 
 /** How long a risen card stays before it settles into the pill. */
 const RISE_MS = 8000;
 /** Arrivals this close together are one card, and one chime. */
 const BURST_MS = 1500;
-/** Documents from one sender this close together are one row in Lately. */
-const GROUP_S = 600;
 /** Home shows the newest few, as Arrived did; the tray holds the rest, so a
  *  busy day does not make Home as long as the log. */
 const HOME_ROWS = 5;
@@ -98,6 +98,22 @@ const CSS = `
 .cn-ico { flex: none; display: grid; place-items: center; width: 18px; height: 18px; margin-top: 1px; color: var(--fg-3); }
 .cn-b { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .cn-by { font-size: var(--fs-micro); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Lately's byline: where it came from, which gives way, and when, which
+   never does -- it was last, and the first thing an ellipsis ate. */
+.cn-bl { display: flex; gap: 8px; font-size: var(--fs-micro); color: var(--fg-3); white-space: nowrap; }
+.cn-w { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cn-w b { font-weight: 600; color: var(--fg-2); }
+.cn-w b.cn-snyvi { color: var(--accent); }
+.cn-at { flex: none; }
+/* The title, at most two lines (one for the reader's own answers, which a
+   click opens in place), and a file's versions counted beside it. */
+.cn-tl { display: flex; align-items: flex-end; gap: 8px; }
+.cn-tl > .cn-t { flex: 1; min-width: 0; }
+.cn-tx { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.cn-row.mine .cn-tx { -webkit-line-clamp: 1; }
+.cn-row.open .cn-tx { display: block; }
+.cn-n { flex: none; font-size: var(--fs-micro); color: var(--fg-3); white-space: nowrap; }
+:is(.cn-tx, .cn-text) code { font-family: var(--mono); font-size: .92em; padding: 0 3px; border-radius: var(--r-xs); background: var(--rule); }
 .cn-by b { font-weight: 600; color: var(--fg-2); }
 .cn-by b.cn-snyvi { color: var(--accent); }
 .cn-t { display: block; padding: 0; border: 0; background: none; font: inherit; font-size: var(--fs-small); line-height: 1.35; color: var(--fg-2); text-align: left; overflow-wrap: anywhere; }
@@ -106,9 +122,6 @@ button.cn-t:hover { color: var(--fg); text-decoration: underline; }
 .cn-row.new .cn-t { color: var(--fg); }
 .cn-row.new::before { content: ""; position: absolute; left: -7px; top: 13px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 .cn-row.mine .cn-t { color: var(--fg-3); }
-.cn-sub { margin: 2px 0 0; padding: 0 0 0 10px; list-style: none; border-left: 1px solid var(--rule-2); }
-.cn-sub li { font-size: var(--fs-small); line-height: 1.4; }
-.cn-sub .cn-t { color: var(--fg-2); }
 .cn-rx { position: absolute; top: 6px; right: -4px; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); opacity: 0; cursor: pointer; }
 .cn-row:is(:hover, :focus-within) .cn-rx { opacity: 1; }
 .cn-rx:hover { background: var(--rule-2); color: var(--fg); }
@@ -127,6 +140,11 @@ button.cn-t:hover { color: var(--fg); text-decoration: underline; }
 .cn-link { padding: 2px 4px; border: 0; background: none; font-size: var(--fs-small); color: var(--fg-3); text-decoration: underline dotted; cursor: pointer; }
 .cn-link:hover { color: var(--fg); }
 .cn-cmd { display: block; font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); overflow-wrap: anywhere; }
+/* Lately in the sidebar's popover: kept out of sight in #trees between
+   openings, as menu.js puts a section back where it lives. */
+#trees > #lately-nav { display: none; }
+#lately-nav .cn-lhead { padding: 6px 0 2px; }
+#lately-nav .cn-list { padding-left: 8px; }
 /* Home draws Lately large, in its own column: the same rows, more room. */
 .cn-large .cn-row { padding: 9px 20px 9px 0; }
 .cn-large .cn-t { font-size: var(--fs-ui); }
@@ -149,6 +167,8 @@ const L = {
   gone: new Map(),
   /** What a turn's or an offer's button did, said in its row: key -> text. */
   said: new Map(),
+  /** The reader's own answers opened to their full text, by row id. */
+  expanded: new Set(),
 };
 
 export function init(ctx) {
@@ -161,7 +181,7 @@ export function init(ctx) {
   setInterval(() => { if (!document.hidden && L.open) redraw(); }, 60000);
   load();
   if (c.friends()) offersLoad();
-  return { event, refresh, moved, rise, offer, says, sayHeld, toggle, open: openTray, draw, redraw,
+  return { event, refresh, moved, rise, offer, says, sayHeld, toggle, open: openTray, draw, redraw, lately,
     cardHtml, trayHtml: latelyHtml, offersHtml, offerCount: () => liveOffers().length, dot, keep: () => L.kept,
     act, opened, chime, ring, mark,
     /** The desk's first page while its card is up: its row in the rail is ringed. */
@@ -347,7 +367,6 @@ function openTray(tries = 0) {
   const at = document.activeElement;
   L.back = at && !el?.contains(at) ? at : null;
   L.open = true; L.card = null; clearTimeout(L.timer);
-  opened();
   redraw();
   el?.querySelector(".oy-tray")?.focus({ preventScroll: true });
 }
@@ -358,7 +377,7 @@ function closeTray(back) {
   if (back && L.back?.isConnected) L.back.focus({ preventScroll: true });
   L.back = null;
 }
-/** The tray opened, here or on a desk: everything in Lately is seen, in
+/** Lately opened, in the sidebar or on Home: everything in it is seen, in
  *  every page (`/api/lately/seen`), and snyvi's own lines in this browser. */
 function opened() {
   L.kept = false;
@@ -375,10 +394,15 @@ function mark() {
   const a = L.rows.find(r => r.kind === "aside" && !r.removed);
   if (a && !a.seen && L.unseen) c.root.dataset.note = a.lit ? "lit" : "new";
   else delete c.root.dataset.note;
+  // The sidebar's Lately button wears the dot (app.css).
+  c.root.toggleAttribute("data-lately", dot());
 }
 
-/** Redraw wherever the corner is drawn: the desk's, or this file's. */
+/** Redraw wherever the corner is drawn: the desk's, or this file's; and
+ *  Lately, in the sidebar's popover, wherever that is open. */
 function redraw() {
+  drawLately();
+  c.root.toggleAttribute("data-lately", dot());
   if (c.onDesk()) return c.deskRedraw?.();
   draw();
   c.homeRedraw?.();
@@ -392,9 +416,10 @@ function draw() {
   const onYou = c.capability ? freshTurns().length : 0, offers = liveOffers().length;
   const card = L.card ? cardHtml(false) : "";
   const tray = L.open ? offTray(esc) : "";
-  const n = onYou + offers, lit = dot();
-  const pill = !tray && (card || n || lit || L.kept)
-    ? `<button type="button" class="oy-pill${n ? " on" : ""}" data-a="cn-open" aria-expanded="false" data-tip="${n ? "On you" : "Lately"}" data-tip-sub="${n ? "What only you can do, and what came" : "What came lately"}" data-key="ctrl+alt+y">${n ? `On you <span class="n">${n}</span>` : "Lately"}${lit ? `<span class="cn-dot" aria-label="something new"></span>` : ""}</button>` : "";
+  const n = onYou + offers;
+  // Only what waits on the reader: what came is the sidebar's (Lately).
+  const pill = !tray && n
+    ? `<button type="button" class="oy-pill on" data-a="cn-open" aria-expanded="false" data-tip="On you" data-tip-sub="What only you can do, across your desks" data-key="ctrl+alt+y">On you <span class="n">${n}</span></button>` : "";
   if (!card && !tray && !pill) {
     if (el) { el.hidden = true; el.innerHTML = el.$html = ""; }
     document.documentElement.style.setProperty("--oy-h", "0px");
@@ -416,7 +441,7 @@ function node() {
   el = document.createElement("div");
   el.id = "cn"; el.className = "oy";
   el.setAttribute("role", "region");
-  el.setAttribute("aria-label", "On you and Lately");
+  el.setAttribute("aria-label", "On you");
   el.addEventListener("click", e => { const b = e.target.closest("[data-a]"); if (b) act(b.dataset.a, b); });
   // The logo looks down at whoever rests on an aside's card: a smile, a heart.
   el.addEventListener("mouseover", e => { if (e.target.closest(".cn-card:has(.cn-peek)")) c.root.dataset.noteNear = "1"; });
@@ -430,7 +455,7 @@ function keyOf(b) {
   return ds.a ? `[data-a="${q(ds.a)}"]` + ["r", "k", "v"].filter(k => ds[k] != null).map(k => `[data-${k}="${q(ds[k])}"]`).join("") : "";
 }
 
-/** The tray off a desk: On you across desks -- turns, offers -- then Lately. */
+/** The tray off a desk: On you across desks -- turns, offers. */
 function offTray(esc) {
   const turns = c.capability ? L.turns.filter(w => !w.answered_at) : [];
   const fresh = turns.filter(w => !w.stale), old = turns.filter(w => w.stale);
@@ -439,8 +464,8 @@ function offTray(esc) {
     : `<li><button type="button" class="cn-fold" data-a="cn-older" aria-expanded="${L.older}">${old.length} older</button></li>` + (L.older ? old.map(turnRow).join("") : "");
   const asks = said + fresh.map(turnRow).join("") + fold + offersHtml();
   const close = `<button type="button" class="oy-x" data-a="cn-open" aria-label="Close" data-tip="Close" data-tip-sub="Esc" data-key="ctrl+alt+y">${c.glyph("x", 12)}</button>`;
-  return `<div class="oy-tray" role="dialog" aria-label="On you and Lately" tabindex="-1"><div class="oy-head"><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do, across your desks">On you</h3><span class="oy-gap"></span>${close}</div>` +
-    `<div class="oy-scroll">${asks ? `<ul class="cn-list">${asks}</ul>` : `<p class="oy-none">Nothing is on you.</p>`}${latelyHtml()}</div></div>`;
+  return `<div class="oy-tray" role="dialog" aria-label="On you" tabindex="-1"><div class="oy-head"><h3 class="oy-h" data-tip="On you" data-tip-sub="What only you can do, across your desks">On you</h3><span class="oy-gap"></span>${close}</div>` +
+    `<div class="oy-scroll">${asks ? `<ul class="cn-list">${asks}</ul>` : `<p class="oy-none">Nothing is on you.</p>`}</div></div>`;
 }
 
 /** Who asked, as the reader knows them. */
@@ -454,7 +479,7 @@ function turnRow(w) {
   const where = `${esc(w.desk_name || "a desk")}${w.slot ? ` · panel ${w.slot}` : ""}`;
   return `<li class="cn-row cn-ask"><span class="cn-ico">${c.glyph("aside", 12)}</span><span class="cn-b">` +
     `<span class="cn-by"><b>${esc(w.by || whoOf(w))}</b> · ${where} · ${c.relShort(w.created_at)}</span>` +
-    `<span class="cn-t">${esc(w.text)}</span>${w.kind === "run" && w.options && w.options.length ? `<span class="cn-by">${w.options.filter(o => !o.startsWith("# ")).length} steps, run one at a time on the desk</span>` : w.kind === "run" && w.cmd ? `<code class="cn-cmd">${esc(w.cmd)}</code>` : ""}` +
+    `<span class="cn-t">${code(w.text)}</span>${w.kind === "run" && w.options && w.options.length ? `<span class="cn-by">${w.options.filter(o => !o.startsWith("# ")).length} steps, run one at a time on the desk</span>` : w.kind === "run" && w.cmd ? `<code class="cn-cmd">${esc(w.cmd)}</code>` : ""}` +
     `<span class="cn-acts">${opts.map((o, i) => `<button type="button" class="cn-opt${i === w.recommended ? " rec" : ""}" data-a="cn-answer" data-k="${w.id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
     `<button type="button" class="cn-link" data-a="cn-desk" data-k="${w.desk_id}" data-v="${w.slot || 0}">${w.kind === "run" ? "Run on the desk" : "Go to desk"}</button></span></span>` +
     `<button type="button" class="cn-rx" data-a="cn-notnow" data-k="${w.id}" aria-label="Not now: ${esc(w.text)}" data-tip="Not now" data-tip-sub="nothing is deleted">${c.glyph("x", 10)}</button></li>`;
@@ -475,62 +500,105 @@ function offerRow(o) {
 
 /* ---------- Lately ---------- */
 
-/** What a row says, by kind, and where a click on it goes. */
+/** Text with its `inline code` drawn as code, as a document draws it: an
+ *  agent's titles carry backticks, and they read as noise left in. */
+const code = s => c.esc(s).replace(/`([^`\n]+)`/g, "<code>$1</code>");
+
+/** Lately in the sidebar's popover (app.js `openLately`, menu.js `pop`):
+ *  its element, made once and kept in #trees, out of sight, between
+ *  openings. Opening it is looking at it, as the tray's opening was. */
+let latelyEl = null;
+function lately() {
+  if (!latelyEl?.isConnected) {
+    latelyEl = document.createElement("section");
+    latelyEl.id = "lately-nav";
+    latelyEl.setAttribute("aria-label", "Lately");
+    // Its clicks are this file's; the tree's own delegate has no business with them.
+    latelyEl.addEventListener("click", e => { const b = e.target.closest("[data-a]"); if (b && act(b.dataset.a, b)) e.stopPropagation(); });
+    document.getElementById("trees").append(latelyEl);
+  }
+  opened();
+  redraw();
+}
+/** What arrives while it is open lands in it, the focus kept on its button. */
+function drawLately() {
+  if (!latelyEl?.isConnected) return;
+  const html = latelyHtml();
+  if (latelyEl.$html === html) return;
+  const was = latelyEl.contains(document.activeElement) ? keyOf(document.activeElement) : "";
+  latelyEl.innerHTML = latelyEl.$html = html;
+  if (was) latelyEl.querySelector(was)?.focus({ preventScroll: true });
+}
+
+/** What a row says, by kind, and where a click on it goes. The reader's own
+ *  answer leads with what they chose; its question is the rest of the line. */
 function rowText(r) {
   const d = r.data || {};
   switch (r.kind) {
-    case "version": return ["Newer version: " + r.text, "doc"];
+    case "version": return [r.text, "doc"];
     case "reply": return [`Replied: ${r.text}`, r.doc ? "doc" : "home"];
     case "tick": return [`Ticked your line: ${r.text}`, "home"];
     case "line": return [`“${r.text}”`, d.desk ? "desk" : "home"];
-    case "answered": return [`You answered “${d.answer || ""}”: ${r.text}`, ""];
+    case "answered": return [`You chose “${d.answer || ""}” · ${r.text}`, ""];
     case "offered": return [`${d.sent ? "Sent" : "Not sent"} to ${d.to || "a friend"}: ${r.text}`, ""];
     case "aside": return [r.text, r.doc ? "doc" : r.from ? "desk" : ""];
     case "snyvi": return [r.text, "start"];
     default: return [r.text, "doc"];
   }
 }
-/** The byline leads with who spoke: `claude-code · snyvi · panel 2 · 6m`.
- *  snyvi's own lines say snyvi, in the accent. */
+/** The byline leads with where it came from, `snyvi · 2` (desk, panel),
+ *  and ends with when, pinned right where no ellipsis reaches it. Lately is
+ *  every desk's, so the desk is what tells two rows apart; who sent it is
+ *  named only when it is not Claude Code, which every agent row was --
+ *  a friend, another agent. snyvi's own lines say snyvi, in the accent. */
+const CLAUDE = /^claude[ -]?code$/i;
 function byline(r) {
   const { esc } = c, d = r.data || {};
-  const who = r.kind === "snyvi" ? `<b class="cn-snyvi">snyvi</b>` : r.who ? `<b>${esc(r.who)}</b>` : d.project ? `<b>${esc(d.project)}</b>` : "";
-  const where = r.from ? `${esc(r.from.name)}${r.from.slot ? ` · panel ${+r.from.slot}` : ""}` : d.desk_name ? esc(d.desk_name) : r.who && d.project && d.project !== r.who ? esc(d.project) : "";
-  return [who, where, c.relShort(r.at)].filter(Boolean).join(" · ");
+  const who = r.kind === "snyvi" ? `<b class="cn-snyvi">snyvi</b>` : r.who && !CLAUDE.test(r.who) ? `<b>${esc(r.who)}</b>` : "";
+  const where = r.from ? `${esc(r.from.name)}${r.from.slot ? ` · ${+r.from.slot}` : ""}` : esc(d.desk_name || d.project || "");
+  const w = [who, where].filter(Boolean).join(" · ") || (r.who ? esc(r.who) : "");
+  return `<span class="cn-w">${w}</span><span class="cn-at">${c.relShort(r.at)}</span>`;
 }
 function rowIco(r) {
   if (["line", "reply", "tick"].includes(r.kind) || (r.kind === "doc" && r.data?.origin === "peer")) return c.who(r.who);
   return c.glyph(r.kind === "aside" || r.kind === "snyvi" ? "aside" : r.kind === "answered" || r.kind === "offered" ? "checks" : "doc", 12);
 }
 
-/** Lately's rows, newest first, snyvi's own among them; a burst of
- *  documents from one sender is one row. */
+/** Lately's rows, newest first, snyvi's own among them; one row per
+ *  document. A plan sent five times was five rows, as "2 documents" and "3
+ *  documents" with the same title in each, because a send from another desk
+ *  fell between them: so the sends of one document -- one sender, one desk,
+ *  one title -- are one row wherever they fall, at the newest's place, and
+ *  it counts its versions. */
 function rows() {
   const all = L.rows.concat(ownRows()).sort((a, b) => b.at - a.at || (b.id > a.id ? 1 : -1));
-  const docish = x => x.kind === "doc" || x.kind === "version";
-  const out = [];
+  const out = [], by = new Map();
   for (const r of all) {
-    const g = out[out.length - 1], last = g && (g.group ? g.group[g.group.length - 1] : g);
-    const same = g && docish(r) && docish(g) && r.who === g.who && r.from?.id === g.from?.id && r.from?.slot === g.from?.slot && last.at - r.at <= GROUP_S;
-    if (!same) out.push(r);
-    else if (g.group) g.group.push(r);
-    else out[out.length - 1] = { ...g, group: [g, r] };
+    if (r.kind !== "doc" && r.kind !== "version") { out.push(r); continue; }
+    const k = `${r.who}\n${r.from?.id ?? r.data?.project ?? ""}\n${r.text}`, g = by.get(k);
+    if (g) { g.group.push(r); continue; }
+    const row = { ...r, group: [r] };
+    by.set(k, row); out.push(row);
   }
   return out;
 }
 
+/** A row: its byline, then its title -- two lines at most, the whole of it
+ *  in the tip -- and a document's versions beside it. The reader's own
+ *  answers are one dimmed line, which a click opens in place. */
 function rowHtml(r) {
-  const { esc } = c, gone = L.gone.get(String(r.id));
-  if (gone) return `<li class="cn-row mine cn-gone" role="status"><span class="cn-b"><span class="cn-t">${esc(gone.err || "Removed")}</span></span><button type="button" class="cn-undo" data-a="cn-back" data-r="${esc(String(r.id))}">${gone.err ? "Retry" : "Undo"}</button></li>`;
+  const { esc } = c, id = esc(String(r.id)), gone = L.gone.get(String(r.id));
+  if (gone) return `<li class="cn-row mine cn-gone" role="status"><span class="cn-b"><span class="cn-t">${esc(gone.err || "Removed")}</span></span><button type="button" class="cn-undo" data-a="cn-back" data-r="${id}">${gone.err ? "Retry" : "Undo"}</button></li>`;
   const unseen = r.group ? r.group.some(x => !x.seen) : !r.seen;
-  const mine = r.kind === "answered" || r.kind === "offered";
-  const [text, to] = rowText(r);
-  const t = r.group
-    ? `<span class="cn-t">${r.group.length} documents</span><ul class="cn-sub">${r.group.map(x => `<li><button type="button" class="cn-t" data-a="cn-go" data-r="${x.id}">${esc(x.text)}</button></li>`).join("")}</ul>`
-    : to ? `<button type="button" class="cn-t" data-a="cn-go" data-r="${esc(String(r.id))}">${esc(text)}</button>` : `<span class="cn-t">${esc(text)}</span>`;
+  const mine = r.kind === "answered" || r.kind === "offered", open = mine && L.expanded.has(String(r.id));
+  const [text, to] = rowText(r), n = r.group ? r.group.length : 1;
+  const tx = `<span class="cn-tx" data-tip-cut>${code(text)}</span>`, tip = `data-tip="${esc(text)}" data-tip-overflow`;
+  const t = to ? `<button type="button" class="cn-t" data-a="cn-go" data-r="${id}" ${tip}>${tx}</button>`
+    : mine ? `<button type="button" class="cn-t" data-a="cn-expand" data-r="${id}" aria-expanded="${open}">${tx}</button>`
+    : `<span class="cn-t" ${tip}>${tx}</span>`;
   const ids = r.group ? r.group.map(x => x.id).join(",") : r.id;
-  return `<li class="cn-row${unseen && !mine ? " new" : ""}${mine ? " mine" : ""}" data-part="corner.lately.${r.kind}"><span class="cn-ico">${rowIco(r)}</span><span class="cn-b">` +
-    `<span class="cn-by">${byline(r)}</span>${t}</span>` +
+  return `<li class="cn-row${unseen && !mine ? " new" : ""}${mine ? " mine" : ""}${open ? " open" : ""}" data-part="corner.lately.${r.kind}"><span class="cn-ico">${rowIco(r)}</span><span class="cn-b">` +
+    `<span class="cn-bl">${byline(r)}</span><span class="cn-tl">${t}${n > 1 ? `<span class="cn-n">${n} versions</span>` : ""}</span></span>` +
     `<button type="button" class="cn-rx" data-a="cn-x" data-r="${esc(String(ids))}" aria-label="Remove" data-tip="Remove" data-tip-sub="Undo brings it back, and so does Removed on Home">${c.glyph("x", 10)}</button></li>`;
 }
 
@@ -548,7 +616,7 @@ function latelyHtml(large = false, skip = null) {
   if (large) {
     const rest = all.length - HOME_ROWS;
     return `<section class="cn-lately cn-large" data-part="corner.lately" aria-label="Lately">` + (all.length ? list(all.slice(0, HOME_ROWS)) : body) +
-      (rest > 0 || L.more ? `<button type="button" class="cn-fold" data-a="cn-open" data-tip="All of Lately" data-tip-sub="In the corner's tray" data-key="ctrl+alt+y">${rest > 0 && !L.more ? `${rest} more` : "All of Lately"}</button>` : "") + `</section>`;
+      (rest > 0 || L.more ? `<button type="button" class="cn-fold" data-a="cn-lately" data-tip="All of Lately" data-tip-sub="In the sidebar">${rest > 0 && !L.more ? `${rest} more` : "All of Lately"}</button>` : "") + `</section>`;
   }
   const all_ = dot() ? `<button type="button" class="cn-all" data-a="cn-seen">Mark all seen</button>` : "";
   return `<section class="cn-lately" data-part="corner.lately" aria-label="Lately">` +
@@ -562,20 +630,21 @@ function cardHtml(desk) {
   if (!k) return "";
   const { esc } = c, first = L.cardDrawn !== k;
   L.cardDrawn = k;
-  const more = k.more ? `<button type="button" class="cn-more" data-a="cn-open">+${k.more} more</button>` : "";
+  // What waits on the reader is On you's; anything else came, and is Lately's.
+  const more = k.more ? `<button type="button" class="cn-more" data-a="${k.kind === "turn" || k.kind === "offer" ? "cn-open" : "cn-lately"}">+${k.more} more</button>` : "";
   let body = "";
   if (k.kind === "turn") body = `<ul class="cn-list">${turnRow(k.turn)}</ul>`;
   else if (k.kind === "offer") body = `<ul class="cn-list">${offerRow(L.offers.find(o => o.id === k.offer.id) || k.offer)}</ul>`;
   else if (k.kind === "aside") {
     const r = k.row, [, to] = rowText(r);
     const face = !desk && c.peek ? `<span class="cn-peek" aria-hidden="true">${c.peek(r.kind === "snyvi" ? "glad" : "rest")}</span>` : "";
-    body = face + `<p class="cn-from">${byline(r)}</p><p class="cn-text">${esc(r.text)}</p>` +
+    body = face + `<p class="cn-from cn-bl">${byline(r)}</p><p class="cn-text">${code(r.text)}</p>` +
       `<div class="cn-acts">${to ? `<button type="button" class="tn-opt cn-opt rec" data-a="cn-go" data-r="${esc(String(r.id))}">${r.kind === "snyvi" ? "Read more" : r.doc ? "Open" : "Go to its panel"}</button>` : ""}<button type="button" class="tn-opt cn-opt" data-a="cn-later">Later</button></div>`;
   } else {
     // A document, a version, a friend's word: who, what, and its way there.
     body = `<p class="cn-from oy-from">${k.from || ""}</p><p class="cn-title oy-title" data-tip="${esc(k.title || "")}" data-tip-overflow>${esc(k.title || "")}</p>` +
       (k.text ? `<p class="cn-text">${esc(k.text)}</p>` : "") +
-      `<div class="cn-acts">${k.go ? `<button type="button" class="tn-opt cn-opt rec" data-a="cn-card-go">${esc(k.label || "Open")}</button>` : ""}<button type="button" class="tn-opt cn-opt" data-a="cn-later" data-tip="Later" data-tip-sub="It stays in the tray, under Lately">Later</button></div>` +
+      `<div class="cn-acts">${k.go ? `<button type="button" class="tn-opt cn-opt rec" data-a="cn-card-go">${esc(k.label || "Open")}</button>` : ""}<button type="button" class="tn-opt cn-opt" data-a="cn-later" data-tip="Later" data-tip-sub="It stays in Lately, in the sidebar">Later</button></div>` +
       (k.where ? `<p class="cn-where">${k.where}</p>` : "");
   }
   // A document's card keeps the name it had on a desk (`oy-doc`).
@@ -592,6 +661,8 @@ function act(a, b) {
   const k = b.dataset.k, r = b.dataset.r;
   const go = {
     "cn-open": () => toggle(),
+    "cn-lately": () => { settle(); if (L.open && !c.onDesk()) closeTray(false); c.openLately?.(); },
+    "cn-expand": () => { const k = String(r); L.expanded.has(k) ? L.expanded.delete(k) : L.expanded.add(k); redraw(); },
     "cn-later": () => settle(),
     "cn-card-go": () => { const card = L.card; settle(); card?.go?.(); },
     "cn-go": () => { const row = findRow(r); if (row) { settle(); follow(row); } },
@@ -620,6 +691,7 @@ const findRow = id => L.rows.concat(ownRows()).find(x => String(x.id) === String
 function follow(r) {
   const [, to] = rowText(r);
   if (L.open && !c.onDesk()) closeTray(false);
+  if (c.root.dataset.pop === "lately") c.unpop?.();
   if (to === "doc" && r.doc) c.showDoc(r.doc);
   else if (to === "desk" && r.from && c.capability) c.showDesk(r.from.id, true, r.from.slot || 0);
   else if (to === "desk" && r.data?.desk && c.capability) c.showDesk(r.data.desk, true, 0);

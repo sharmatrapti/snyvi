@@ -428,6 +428,10 @@ pub(crate) async fn pane_seen(
         Err(no) => return *no,
     };
     let desk = placed.desk_id;
+    let mut b = b;
+    if !b.merged.trim().is_empty() {
+        b.mine = merged_by_reader(&app, desk, &id, &b).await;
+    }
     match app
         .store
         .clocked(|c, now| thread::seen(c, desk, &id, &b, now))
@@ -443,6 +447,40 @@ pub(crate) async fn pane_seen(
         Ok(None) => Json(json!({ "thread": null })).into_response(),
         Err(e) => err(e),
     }
+}
+
+/// Whether the merge the mod saw was the reader's own: who merged it, as
+/// the mod's gh said or the daemon's own asks, is who gh is signed in as
+/// here. Not knowing is not the reader's: the notes then land for their
+/// check rather than tick (#167). Off the lock and the runtime.
+async fn merged_by_reader(app: &Arc<App>, desk: i64, pane: &str, b: &Seen) -> bool {
+    let Ok(Some(root)) = app.store.desk(desk).map(|d| d.map(|d| d.root)) else {
+        return false;
+    };
+    let pr = match thread::pr_number(&b.pr) {
+        Some(n) => n,
+        None => app
+            .store
+            .clocked(|c, _| thread::of_pane(c, desk, pane))
+            .ok()
+            .flatten()
+            .map(|t| t.pr)
+            .unwrap_or_default(),
+    };
+    let said = b.merged_by.trim().to_string();
+    tokio::task::spawn_blocking(move || {
+        let dir = std::path::Path::new(&root);
+        let by = if said.is_empty() {
+            crate::gh::view(dir, &pr)
+                .map(|p| p.merged_by)
+                .unwrap_or_default()
+        } else {
+            said
+        };
+        !by.is_empty() && crate::gh::viewer(dir).is_some_and(|me| me.eq_ignore_ascii_case(&by))
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// The band's line above the mod's prompt: the pane's thread and what is
@@ -723,19 +761,42 @@ pub(crate) async fn pane_note(
 /// How long an answered hand-over stays on the rail after its answer.
 const ANSWERED_SHOWN: i64 = 24 * 3600;
 
-/// How often one thread's branch is looked for in main.
+/// How often one thread's PR, or its branch's merge, is looked for.
 const MERGE_LOOK: Duration = Duration::from_secs(300);
 
-/// A thread whose PR was merged on GitHub, or from another checkout, was
-/// never told: the mod sees only what its own panel's gh does, so its notes
-/// fell back to "planned" with the work out (audit 7c0fc42885: #107, #108,
-/// #110). Before the rail reads its threads, git is asked -- each thread at
-/// most every MERGE_LOOK, off the store's lock and the runtime -- and a merge
-/// it finds ships the thread without ticking its notes (`thread::landed`).
-async fn merges_unseen(app: &Arc<App>, desk: i64) {
+/// What one sweep learned of one thread, off the lock.
+#[derive(Default)]
+struct Looked {
+    id: i64,
+    /// The branch its own worktree has out, when that differs from the row.
+    branch: Option<String>,
+    /// Its PR, found by its branch, when it had none.
+    found: Option<String>,
+    pr: Option<crate::gh::Pr>,
+    viewer: Option<String>,
+    /// git's guess at a merge, when GitHub could not be asked.
+    git: Option<(String, i64)>,
+}
+
+/// A thread's PR, read from GitHub, not guessed (#167). Each thread at most
+/// every MERGE_LOOK, off the store's lock and the runtime, before the rail
+/// reads its threads, so a PR merged on GitHub's page, from another
+/// checkout or with no panel open is heard as surely as one the panel's mod
+/// watched:
+///
+/// - with a PR: `gh pr view` says open, merged or closed, the checks, the
+///   merge and who made it; the reader's own merge ticks the thread's notes,
+///   anyone else's lands them for the reader's check (`thread::pr_facts`);
+/// - on a branch with no PR: the PR from that branch, if there is one now;
+/// - once, a thread from before 1.43 that counted as merged: its own
+///   worktree's branch and that branch's PR put right what a drifted branch
+///   had credited it with;
+/// - no gh, or no answer: git's guess at the branch's merge, which ships the
+///   thread and ticks nothing (`thread::landed`), as before.
+async fn merges_unseen(app: Arc<App>, desk: i64) {
     static LOOKED: std::sync::Mutex<Vec<(i64, std::time::Instant)>> =
         std::sync::Mutex::new(Vec::new());
-    let Ok(open) = app.store.clocked(|c, _| thread::unmerged(c, desk)) else {
+    let Ok(open) = app.store.clocked(|c, _| thread::sweep_due(c, desk)) else {
         return;
     };
     let due: Vec<_> = {
@@ -743,33 +804,85 @@ async fn merges_unseen(app: &Arc<App>, desk: i64) {
         looked.retain(|(_, at)| at.elapsed() < MERGE_LOOK);
         let due: Vec<_> = open
             .into_iter()
-            .filter(|(id, ..)| !looked.iter().any(|(l, _)| l == id))
+            .filter(|d| !looked.iter().any(|(l, _)| *l == d.id))
             .collect();
-        looked.extend(due.iter().map(|(id, ..)| (*id, std::time::Instant::now())));
+        looked.extend(due.iter().map(|d| (d.id, std::time::Instant::now())));
         due
     };
     if due.is_empty() {
         return;
     }
-    let found = tokio::task::spawn_blocking(move || {
-        due.into_iter()
-            .filter_map(|(id, at, b)| {
-                crate::git::merge_of(std::path::Path::new(&at), &b).map(|(m, t)| (id, m, t))
-            })
-            .collect::<Vec<_>>()
-    })
-    .await
-    .unwrap_or_default();
-    let mut moved = false;
-    for (id, m, t) in found {
-        moved |= app
-            .store
-            .clocked(|c, _| thread::landed(c, desk, id, &m, t))
-            .unwrap_or(false);
-    }
+    let found = tokio::task::spawn_blocking(move || due.into_iter().map(look).collect::<Vec<_>>())
+        .await
+        .unwrap_or_default();
+    let moved = app
+        .store
+        .clocked(|c, now| {
+            let mut moved = false;
+            for l in &found {
+                moved |= file_looked(c, desk, l, now)?;
+            }
+            Ok(moved)
+        })
+        .unwrap_or(false);
     if moved {
-        threads_moved(app, desk);
+        threads_moved(&app, desk);
     }
+}
+
+/// Ask GitHub, or git, about one thread. Blocking.
+fn look(d: thread::Due) -> Looked {
+    let dir = std::path::Path::new(&d.dir);
+    let mut l = Looked {
+        id: d.id,
+        ..Looked::default()
+    };
+    if d.pr_state.is_empty() && d.own {
+        l.branch = crate::git::branch_of(dir).filter(|b| *b != d.branch && thread::branch_ok(b));
+    }
+    let branch = l.branch.clone().unwrap_or_else(|| d.branch.clone());
+    let pr = if d.pr.is_empty() && !branch.is_empty() {
+        l.found = crate::gh::by_head(dir, &branch);
+        l.found.clone().unwrap_or_default()
+    } else {
+        d.pr.clone()
+    };
+    if !pr.is_empty() {
+        l.pr = crate::gh::view(dir, &pr);
+        if l.pr.as_ref().is_some_and(|p| p.state == "merged") {
+            l.viewer = crate::gh::viewer(dir);
+        }
+    }
+    if l.pr.is_none() && !d.merged && !branch.is_empty() {
+        l.git = crate::git::merge_of(dir, &branch);
+    }
+    l
+}
+
+/// What `look` learned, filed. Whether a thread changed.
+fn file_looked(c: &rusqlite::Connection, desk: i64, l: &Looked, now: i64) -> anyhow::Result<bool> {
+    let mut moved = thread::repair_branch(
+        c,
+        desk,
+        l.id,
+        l.branch.as_deref().unwrap_or(""),
+        l.found.as_deref().unwrap_or(""),
+    )?;
+    let Some(t) = thread::get(c, desk, l.id)? else {
+        return Ok(moved);
+    };
+    if let Some(p) = &l.pr {
+        let mine = !p.merged_by.is_empty()
+            && l.viewer
+                .as_deref()
+                .is_some_and(|me| me.eq_ignore_ascii_case(&p.merged_by));
+        moved |= thread::pr_facts(c, &t, &thread::PrFacts::from(p), mine, "", now)?;
+    } else if let Some((m, at)) = &l.git {
+        moved |= thread::landed(c, desk, l.id, m, *at)?;
+    } else if t.pr.is_empty() {
+        moved |= thread::no_pr(c, desk, l.id)?;
+    }
+    Ok(moved)
 }
 
 /// A line's work went out by another branch than its thread's -- a release
@@ -837,7 +950,9 @@ pub(crate) async fn desk_threads(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
-    merges_unseen(&app, id).await;
+    // GitHub can take seconds to answer: the rail is not held for it. What
+    // the sweep finds comes as the `desknotes` event, and the rail reads again.
+    tokio::spawn(merges_unseen(app.clone(), id));
     notes_landed(&app, id).await;
     let r = app.store.clocked(|c, now| {
         // What has waited three days is put away first (`thread::retire`).

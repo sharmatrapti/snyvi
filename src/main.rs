@@ -13,6 +13,7 @@ mod config;
 mod desk;
 mod desktop;
 mod frontmatter;
+mod gh;
 mod git;
 mod hook;
 mod lately;

@@ -121,10 +121,52 @@ function threadLine(d, pane, esc) {
   return (field ? `<li class="th-edit" data-t="${t.id}">${field}</li>` : "") + errLine(`t${t.id}`, esc);
 }
 
-/** What the turn's buttons say, by its kind. */
+/** What the turn's buttons send, by its kind; and what a button says when
+ *  that is not the word it sends. A merge card's "Merged" read as the PR's
+ *  status, beside a PR that was not merged (#168): the button says what the
+ *  reader did, and sends the word it always sent. */
 const ANSWERS = { try: ["Looks good", "Needs changes…"], merge: ["Merged"], key: ["Added"] };
+const SAYS = { merge: { Merged: "I merged it" } };
 /** Where a link goes, in the card's by-line, so Open ↗ needs no tip to say. */
 const hostOf = u => { try { return new URL(u).host.replace(/^www\./, ""); } catch { return ""; } };
+
+/** A turn's question at the rail's width (1.43): its head as a title line,
+ *  bold and one line, when the text has one -- up to a colon, a full stop
+ *  or a question mark in its first eighty characters -- and the rest under
+ *  it, at most two lines in the tray, a click opening it in place to the
+ *  whole. Text between backticks is code, as in a document. The four- and
+ *  seven-line walls the tray was are what this ends. */
+const qOpen = new Set();
+/** Whether the rows drawn now are the tray's: only there is a question cut
+ *  to its lines, so only there is it a thing to click (`trayHtml`). */
+let qClamp = false;
+const inlineCode = (t, esc) => esc(t).replace(/`([^`\n]+)`/g, "<code>$1</code>");
+/* A question's own first sentence is its title when it is short enough to
+ * read whole on one line; the rest is the body. A stop inside "e.g." or
+ * "(see 2.1)" is no sentence's end: the break is a stop, a space and a
+ * capital, and outside brackets. With no such break the text is all body,
+ * clamped, never a title cut mid-word that loses what it asked. */
+function qParts(text) {
+  const m = /^([^()]{6,56}?[:.?])\s+([A-Z`"“(][\s\S]*)$/.exec(text);
+  if (m && !/\b(?:e\.g|i\.e|etc|vs)\.$/i.test(m[1])) return [m[1].replace(/[:.]$/, ""), m[2]];
+  return text.length <= 48 ? [text, ""] : ["", text];
+}
+function qHtml(w, esc, text = w.text) {
+  const [head, body] = qParts(text || "");
+  const open = qOpen.has(w.id), more = qClamp && body;
+  const attrs = more ? ` data-a="tn-more" data-w="${w.id}" role="button" tabindex="0" aria-expanded="${open}"` : "";
+  return `<div class="tn-q${open ? " open" : ""}"${attrs}>` + (head ? `<b class="tn-qh">${inlineCode(head, esc)}</b>` : "") +
+    (body ? `<span class="tn-qb">${inlineCode(body, esc)}</span>` : "") + `</div>`;
+}
+/** The line under a turn: which panel and how long ago -- "panel 1 · 4m" --
+ *  with what kind of turn it is and who asked in its tip. The desk's own
+ *  name and the program said it again on every row and cut the age off. */
+function byHtml(w, d, esc, extra = "") {
+  const n = slotOf(d, w.pane);
+  const where = w.via === "dialog" ? `Claude asks in panel ${n || "?"}` : n ? `panel ${n}` : "panel closed";
+  const tip = `${w.kind === "decide" ? "A decision" : w.kind} · ${fromOf(d, w)}${w.by ? ` · ${w.by}` : ""}`;
+  return `<p class="tn-by"><span data-tip="${esc(tip)}">${esc(where)} · ${esc(ctx.relShort(w.created_at))}</span>${extra}</p>`;
+}
 
 /** A turn's card, or its group's (#110): questions asked together are one
  *  card, each still a turn of its own, answered and put away on its own. */
@@ -172,8 +214,8 @@ function groupCard(d, g, ms, esc) {
   const n = slotOf(d, ms[0].pane), v = views.get(ms[0].pane);
   const open = ms.filter(w => !w.answered_at).length;
   const rows = ms.map(w => w.answered_at
-    ? `<div class="tn-gq said"><p class="tn-q">${esc(w.text)}</p><p class="tn-by">You said <b>${esc(w.answer)}</b></p></div>`
-    : `<div class="tn-gq" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
+    ? `<div class="tn-gq said">${qHtml(w, esc)}<p class="tn-by">You said <b>${esc(w.answer)}</b></p></div>`
+    : `<div class="tn-gq" data-w="${w.id}">${qHtml(w, esc)}` +
       `<div class="tn-acts">${picks(w, esc)}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="this question; nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>${otherIn(w)}</div>` + errLine(`w${w.id}`, esc)).join("");
   const foot = open
     ? `<span class="tn-wait">${open} of ${ms.length} to answer</span>`
@@ -184,7 +226,7 @@ function groupCard(d, g, ms, esc) {
   // One ✕ for the card's open questions (B1): four questions answered in
   // the conversation were four ✕ to clear.
   const all = open ? `<button type="button" class="tn-x tn-gx" data-a="tn-gx" data-g="${g}" data-tip="Not now, all" data-tip-sub="every question still open on this card; nothing is deleted" aria-label="Not now: all ${open} open questions">${ico("x")}</button>` : "";
-  return `<li class="dk-turn grp${open ? "" : " said"}" data-g="${g}"><p class="tn-by">${ms.length} decisions · ${esc(fromOf(d, ms[0]))}</p>${all}${rows}` +
+  return `<li class="dk-turn grp${open ? "" : " said"}" data-g="${g}">${byHtml({ ...ms[0], kind: "decide" }, d, esc).replace('<p class="tn-by">', `<p class="tn-by">${ms.length} decisions · `)}${all}${rows}` +
     `<div class="tn-acts tn-gfoot">${foot}</div></li>`;
 }
 
@@ -196,16 +238,21 @@ function turnRow(d, w, esc) {
     ? picks(w, esc)
     : (ANSWERS[w.kind] || ["Done"]).map(o => o.endsWith("…")
       ? `<button type="button" class="tn-opt quiet" data-a="tn-change" data-w="${w.id}">${esc(o)}</button>`
-      : `<button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}">${esc(o)}</button>`).join("");
-  // The link is its host, in the by-line: an Open ↗ beside Looks good and
-  // Needs changes… wrapped the three onto two lines in the rail's width.
-  const link = /^https?:\/\//.test(w.link || "") ? `<button type="button" class="tn-host" data-a="tn-link" data-u="${esc(w.link)}" data-tip="Open ↗" data-tip-sub="${esc(w.link)}">${esc(hostOf(w.link) || "link")} ↗</button>` : "";
+      : `<button type="button" class="tn-opt" data-a="tn-pick" data-w="${w.id}" data-v="${esc(o)}">${esc(SAYS[w.kind]?.[o] || o)}</button>`).join("");
+  const web = /^https?:\/\//.test(w.link || "");
+  // A merge card leads with its PR: merging is done there, and the card's
+  // own button only says it was (#168). Its card settles by itself when the
+  // merge is seen.
+  const openPr = w.kind === "merge" && web ? `<button type="button" class="tn-opt rec" data-a="tn-link" data-u="${esc(w.link)}" data-tip="Open the PR ↗" data-tip-sub="${esc(w.link)}">Open PR ↗</button>` : "";
+  // Otherwise the link is its host, in the by-line: an Open ↗ beside Looks
+  // good and Needs changes… wrapped the three onto two lines in the rail.
+  const link = web && !openPr ? `<button type="button" class="tn-host" data-a="tn-link" data-u="${esc(w.link)}" data-tip="Open ↗" data-tip-sub="${esc(w.link)}">${esc(hostOf(w.link) || "link")} ↗</button>` : "";
   // A key is added on this desk's keys sheet: the card opens it (#114),
   // rather than leave the reader to find it with the card in the way.
   const add = w.kind === "key" ? `<button type="button" class="tn-opt rec" data-a="tn-key" data-tip="Add key…" data-tip-sub="This desk's keys: a panel started after has it">Add key…</button>` : "";
-  return `<li class="dk-turn" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
-    `<p class="tn-by">${esc(w.kind === "decide" ? "decide" : w.kind)} · ${esc(from)}${w.link ? ` · ${link || esc(w.link)}` : ""}</p>` +
-    `<div class="tn-acts">${add}${buttons}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
+  const rest = link ? ` · ${link}` : w.link && !openPr ? ` · ${esc(w.link)}` : "";
+  return `<li class="dk-turn" data-w="${w.id}">${qHtml(w, esc)}` + byHtml(w, d, esc, rest) +
+    `<div class="tn-acts">${add}${openPr}${buttons}<button type="button" class="tn-x" data-a="tn-x" data-w="${w.id}" data-tip="Not now" data-tip-sub="nothing is deleted" aria-label="Not now: ${esc(w.text)}">${ico("x")}</button></div>` +
     otherIn(w) + `</li>` + errLine(`w${w.id}`, esc);
 }
 
@@ -226,9 +273,9 @@ function runRow(d, w, n, from, esc) {
   const run = here
     ? `<button type="button" class="tn-opt" data-a="tn-run" data-w="${w.id}" data-tip="Run it in panel ${n}" data-tip-sub="Typed into its prompt as a ! command, after anything typed there. Its output goes to the agent">Run in panel ${n}</button>`
     : "";
-  return `<li class="dk-turn" data-w="${w.id}"><p class="tn-q">${esc(w.text)}</p>` +
+  return `<li class="dk-turn" data-w="${w.id}">${qHtml(w, esc)}` +
     `<code class="sg-cmd tn-cmd">${esc(w.cmd)}</code>` +
-    `<p class="tn-by">run · ${esc(from)}${here ? "" : " · Run needs that panel's Claude"}</p>` +
+    byHtml(w, d, esc, here ? "" : " · Run needs that panel's Claude") +
     `<div class="tn-acts">${run}` +
     `<button type="button" class="tn-opt${here ? " quiet" : ""}" data-a="tn-newpanel" data-w="${w.id}" data-tip="Run it in a new panel" data-tip-sub="A shell of its own: the agent does not see the output">New panel</button>` +
     `<button type="button" class="tn-opt quiet" data-a="tn-copy" data-w="${w.id}" data-c="${esc(w.cmd)}">Copy</button>` +
@@ -250,7 +297,7 @@ function saidRow(d, w, esc) {
   const now = sendsHere(v)
     ? `<button type="button" class="tn-opt" data-a="tn-send" data-w="${w.id}" data-tip="Send now" data-tip-sub="Types it into panel ${n} and presses Enter">Send now</button>`
     : `<span class="tn-wait">${n ? `goes with your next message to panel ${n}` : "goes to the next panel that asks"}</span>`;
-  return `<li class="dk-turn said"><p class="tn-q">${esc(w.text)}</p><p class="tn-by">You said <b>${esc(w.answer)}</b></p>` +
+  return `<li class="dk-turn said">${qHtml(w, esc)}<p class="tn-by">You said <b>${esc(w.answer)}</b></p>` +
     `<div class="tn-acts">${now}<button type="button" class="tn-x" data-a="tn-unsend" data-w="${w.id}" data-tip="Leave it for the next message" aria-label="Leave it for the next message">${ico("x")}</button></div></li>`;
 }
 
@@ -537,7 +584,7 @@ async function filedAct(a, b, d) {
   if (a.startsWith("cn-")) return !!ctx.corner?.()?.act(a, b);
   if (!a.startsWith("th-") && !a.startsWith("tn-") && !a.startsWith("sg-") && !a.startsWith("oy-") && a !== "fd-back") return false;
   if (a === "oy-open") { oyToggle(); return true; }
-  if (a === "oy-older") { oy.older = !oy.older; rail(); return true; }
+  if (a === "tn-more") { const id = +b.dataset.w; if (!qOpen.delete(id)) qOpen.add(id); rail(); return true; }
   if (a === "oy-pin") { oyPin(d); return true; }
   if (a === "tn-key") { addKeyOpen(d); return true; }
   const t = filed.threads.find(x => x.id === +b.dataset.t);
@@ -669,6 +716,17 @@ const THREAD_CSS = `
 .th-edit .th-in { margin: 0; }
 .th-in { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; padding: 3px 6px; border: 1px solid var(--accent); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); font: inherit; font-size: var(--fs-micro); }
 .tn-q, .sg-what { margin: 0; color: var(--fg); }
+.tn-q { overflow-wrap: anywhere; }
+.tn-qh, .tn-qb { display: block; }
+.tn-qh { font-weight: 600; }
+.tn-q code { padding: 0 3px; border-radius: var(--r-xs); background: var(--bg); font-family: var(--mono); font-size: .92em; }
+/* In the tray (10-onyou.js) a question is its title line and two lines of
+   the rest -- three with no title -- and a click opens it where it is. */
+.oy-tray .tn-q:not(.open) .tn-qh { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oy-tray .tn-q:not(.open) .tn-qb { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.oy-tray .tn-q:not(.open) .tn-qb:first-child { -webkit-line-clamp: 3; }
+.tn-q[data-a] { cursor: pointer; }
+.tn-q[data-a]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-xs); }
 .tn-by { margin: 2px 0 0; font-size: var(--fs-micro); color: var(--fg-3); }
 .tn-by b { font-weight: inherit; color: var(--fg-2); }
 .tn-host { padding: 0; border: 0; background: none; font: inherit; color: var(--fg-2); text-decoration: underline dotted; cursor: pointer; }

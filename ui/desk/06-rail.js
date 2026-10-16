@@ -29,6 +29,7 @@ const ICO = {
   done: '<path d="M2.5 5l1.5 1.5L7 3.5M2.5 11l1.5 1.5L7 9.5M9.5 5h4M9.5 11h4"/>',
   pin: '<path d="M6 2.5h4l-.6 3.8 2.1 2.2h-7l2.1-2.2zM8 8.5v5"/>',
   pic: '<rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.75" cy="6.25" r="1.1"/><path d="M2.5 11.5l3.5-3.5 2.5 2.5 2-2 3 3"/>',
+  tray: '<path d="M2.5 9.5h3l1 1.5h3l1-1.5h3"/><path d="M2.5 9.5l1.4-5a1 1 0 0 1 1-.7h6.2a1 1 0 0 1 1 .7l1.4 5v3a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/>',
 };
 const ico = k => `<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k]}</svg>`;
 /** The head's plus: drawn on the grid the page's own icon buttons use
@@ -443,13 +444,24 @@ function meta() {
   const since = !s ? "" : s.agent && s.agent_since ? `${s.agent.replace("_", " ")} ${ago(s.agent_since)}` : s.blocked && s.blocked_since ? `blocked ${ago(s.blocked_since)}` : s.running && s.since ? `up ${ago(s.since)}` : s.exit != null ? `exited ${s.exit}` : "not running";
   const cp = ctxPct(s), us = cp == null ? "" : usageSub();
   const here = v && (s.cwd || v.pane.cwd), away = here && here !== d.root ? ` data-tip-sub="In ${esc(tilde(here))}"` : "";
-  // When the rail is narrow the model's name gives way first; the figures,
-  // and the clock most of all, are what the line is read for.
-  const what = !v ? "" : v.pane.held && !s.running ? `<span class="dk-m">not started</span>`
-    : `<span class="dk-m">${s.model ? esc(s.model) : s.pid ? `pid ${s.pid}` : ""}</span>` +
-      (cp == null ? "" : `<span class="dk-sep">·</span><span class="${ctxCls(cp)}${ctxUsed(s) == null ? " none" : ""}" data-tip="${esc(ctxTip(s))}"${us ? ` data-tip-sub="${esc(us)}"` : ""}>${ctxFig(s)}</span>`) +
-      (since ? `<span class="dk-sep">·</span><span class="dk-since">${since}</span>` : "");
-  const low = `<span class="dk-pl">${v ? `<span class="dk-slot" data-tip="Panel ${v.pane.slot}"${away} data-key="ctrl+alt+${v.pane.slot}">[${v.pane.slot}]</span>` : ""}${what}</span>`;
+  // What the line is for is which model this panel is and how full its
+  // context is; a pid said nothing anyone acts on. So a Claude panel leads
+  // with its model and the figure, a Claude not yet answered says Claude,
+  // and a shell says shell. When the rail is narrow the clock gives way
+  // first, then the model's name -- its first word, then gone, into the
+  // slot's tip -- and the context figure never (`plFit`). The name cut to
+  // "O…" said nothing, and the line wrapped under it (#166).
+  const model = s && s.model ? s.model : s && s.agent_in ? "Claude" : s && s.running ? "shell" : "";
+  const fig = cp == null ? "" : `<span class="${ctxCls(cp)}${ctxUsed(s) == null ? " none" : ""}" data-tip="${esc(ctxTip(s))}"${us ? ` data-tip-sub="${esc(us)}"` : ""}>${ctxFig(s)}</span>`;
+  const slot = v ? `<span class="dk-slot" data-tip="Panel ${v.pane.slot}${model ? ` · ${esc(model)}` : ""}${s && s.pid ? ` · pid ${s.pid}` : ""}"${away} data-key="ctrl+alt+${v.pane.slot}">[${v.pane.slot}]</span>` : "";
+  const line = lv => `<span class="dk-pl">${slot}${!v ? "" : v.pane.held && !s.running ? `<span class="dk-m">not started</span>`
+    : [lv < 3 && model ? `<span class="dk-m">${esc(lv === 2 ? model.split(" ")[0] : model)}</span>` : "", fig, lv < 1 && since ? `<span class="dk-since">${since}</span>` : ""]
+      .filter(Boolean).map((x, i) => (i ? `<span class="dk-sep">·</span>` : "") + x).join("")}</span>`;
+  // Fitted again only when what could overflow changed -- the model, the
+  // figure coming or going, the clock a character wider -- or the rail's
+  // width did (`plWatch`), not on every tick.
+  const fitKey = `${v?.id}|${model}|${cp == null}|${since.length}`;
+  const low = line(plLevel);
   const url = repoOf(d), rn = url && repoName(url), on = rn && rn.path ? `${esc(rn.path)} on ${esc(rn.host)}` : "";
   const foot = on ? `<a class="dk-repo" href="${esc(url)}" target="_blank" rel="noopener" data-tip="${on}" data-tip-sub="${esc(url)}" aria-label="${on}">${REPO}</a>` : `<span class="dk-repo"></span>`;
   // The line ticks ("up 12s") on every frame that brings a status, and the
@@ -460,8 +472,38 @@ function meta() {
     if (low !== el.$low) { pl.outerHTML = low; el.$first = el.firstElementChild; el.$html = low + foot; }
   } else drawIn(el, low + foot);
   el.$low = low; el.$foot = foot;
+  if (fitKey !== plKey) { plKey = fitKey; plFit(el, line); }
+  plWatch(el);
   ctx.rail.classList.remove("empty");
   cards();
+}
+
+/** How much the panel line has given way: 0 none, 1 no clock, 2 the
+ *  model's first word, 3 no model -- the context figure always stays. */
+let plLevel = 0, plKey = "", plSeen = null;
+/** The panel line, given way only as far as it must to fit on one line,
+ *  `line(level)` drawn at each step and read once. */
+function plFit(el, line) {
+  const pl = el.querySelector(".dk-pl");
+  if (!pl) return;
+  const tmp = document.createElement("span");
+  for (plLevel = 0; plLevel < 3; plLevel++) {
+    tmp.innerHTML = line(plLevel);
+    pl.innerHTML = tmp.firstElementChild.innerHTML;
+    if (pl.scrollWidth <= pl.clientWidth + 1) break;
+  }
+  if (plLevel === 3) { tmp.innerHTML = line(3); pl.innerHTML = tmp.firstElementChild.innerHTML; }
+  el.$low = line(plLevel); el.$html = el.$low + el.$foot;
+}
+/** The rail's width changes the room, and nothing else redraws the line
+ *  for it: one observer, made once, on the foot. */
+function plWatch(el) {
+  if (plSeen?.el === el || typeof ResizeObserver === "undefined") return;
+  plSeen?.ro.disconnect();
+  let w = el.clientWidth;
+  const ro = new ResizeObserver(() => { if (el.clientWidth !== w) { w = el.clientWidth; plKey = ""; meta(); } });
+  ro.observe(el);
+  plSeen = { el, ro };
 }
 
 /** Write `html` into `el`, unless `el` already holds exactly that as this

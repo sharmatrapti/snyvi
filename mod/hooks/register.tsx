@@ -18,7 +18,7 @@ const band = atom({ plugin: 'snyvi', key: 'band' } as const, '')
 type Link = { url: string; token: string; pane: string }
 let link: Link | null = null
 /** The pane's thread, as the band last read it: what the CI timer watches. */
-let thread: { pr?: string; ci?: string; merged?: string; stage?: string } | null = null
+let thread: { pr?: string; ci?: string; merged?: string; pr_state?: string; stage?: string } | null = null
 let away = false
 
 async function connect($: EngineInterface): Promise<Link | null> {
@@ -138,17 +138,24 @@ export function ciOf(rollup: Array<{ conclusion?: string; status?: string; state
 let settledPr = ''
 
 /** What the watch should do with what gh said, given what the band last
- *  showed: the sighting to file (only when the checks or the merge differ
- *  from the thread), and whether to stop watching this PR. */
+ *  showed: the sighting to file (only when the checks, the PR's state or
+ *  the merge differ from the thread), and whether to stop watching this PR.
+ *  A merge says who made it: snyvi ticks the thread's notes only for the
+ *  reader's own (1.43, #167). */
 export function prSighting(
-  j: { state?: string; statusCheckRollup?: any[]; mergeCommit?: { oid?: string } },
-  t: { ci?: string; merged?: string },
+  j: { state?: string; statusCheckRollup?: any[]; mergeCommit?: { oid?: string }; mergedBy?: { login?: string } },
+  t: { ci?: string; merged?: string; pr_state?: string },
 ): { seen: Record<string, unknown> | null; settled: boolean } {
   const ci = ciOf(j.statusCheckRollup || [])
   const merged = j.state === 'MERGED' && j.mergeCommit?.oid ? j.mergeCommit.oid : ''
+  const state = ({ OPEN: 'open', MERGED: 'merged', CLOSED: 'closed' } as Record<string, string>)[j.state || ''] || ''
   const seen: Record<string, unknown> = {}
   if (ci && ci !== (t.ci || '')) seen.ci = ci
-  if (merged && merged !== (t.merged || '')) seen.merged = merged
+  if (state && state !== (t.pr_state || '')) seen.state = state
+  if (merged && merged !== (t.merged || '')) {
+    seen.merged = merged
+    if (j.mergedBy?.login) seen.merged_by = j.mergedBy.login
+  }
   return { seen: Object.keys(seen).length ? seen : null, settled: j.state === 'MERGED' || j.state === 'CLOSED' }
 }
 
@@ -156,7 +163,7 @@ async function watchPr($: EngineInterface) {
   if (!thread || !thread.pr || thread.merged || thread.pr === settledPr) return
   let out
   try {
-    out = await $.process.run(['gh', 'pr', 'view', thread.pr, '--json', 'state,statusCheckRollup,mergeCommit'])
+    out = await $.process.run(['gh', 'pr', 'view', thread.pr, '--json', 'state,statusCheckRollup,mergeCommit,mergedBy'])
   } catch {
     return
   }

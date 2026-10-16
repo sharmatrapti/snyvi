@@ -566,11 +566,11 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // 1.33: the conversation a document came from (`NewDoc::session`).
     (19, "ALTER TABLE docs ADD COLUMN session TEXT NOT NULL DEFAULT ''"),
     (20, desk::HELD_COLUMN),
-    // 1.36: a question quieted by its panel's next prompt, and the key a
-    // key turn waits for (`thread::ON_YOU_1_36`).
+    // 1.36: a question quieted by its prompt, a key turn's key (`thread::ON_YOU_1_36`).
     (21, thread::ON_YOU_1_36[0]),
     (21, thread::ON_YOU_1_36[1]),
     (22, desk::LOOP_COLUMNS_1_37), // 1.37: a line landed by a commit, and its reply
+    (23, thread::PR_STATE_1_43), // 1.43: where a thread's PR is, as GitHub says it
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
