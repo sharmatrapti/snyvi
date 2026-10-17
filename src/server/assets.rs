@@ -66,9 +66,13 @@ pub(crate) const PALETTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/pale
 pub(crate) const LOOK_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/look.js"));
 pub(crate) const NAV_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/nav.js"));
 
+/// Copy all (#165), fetched once the page is idle, as nav.js is: by the
+/// first click on it, it is here.
+pub(crate) const COPY_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/copy.js"));
+
 /// The aside card at the sidebar's foot, fetched when there is an aside to
 /// show: a reader no agent has spoken to never pays for it.
-pub(crate) const NOTE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/note.js"));
+pub(crate) const CORNER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/corner.js"));
 
 /// The tip every control names itself with (docs/DESIGN.md §8.1), fetched on
 /// the first pointer resting on one, or the first Tab.
@@ -88,6 +92,7 @@ pub(crate) const DIFF_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/diff.js
 
 /// /sidebars: arranging the sidebars and the widgets, fetched when it opens.
 pub(crate) const SIDEBARS_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/sidebars.js"));
+pub(crate) const GALLERY_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/gallery.js"));
 
 /// A folder's page and a file read from disk, fetched when one is opened.
 pub(crate) const BROWSE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/browse.js"));
@@ -106,8 +111,11 @@ pub(crate) const MERMAID_JS_GZ: &[u8] = include_bytes!("../../ui/mermaid.min.js.
 /// needs inline styles for the SVG it produces, and images may be data URIs.
 /// `blob:` is for a note's pictures: they come behind the desk's capability,
 /// which an `<img>` cannot send, so the page fetches them and shows its own
-/// object URL. Only the page itself can mint one.
-pub(crate) const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+/// object URL. Only the page itself can mint one. `media-src` adds one host,
+/// snyvi.com, for the Welcome tour's clips (ui/about.js `TOUR_CLIPS`): a
+/// `<video>` may play from there and nowhere else, and nothing may be sent
+/// there, `connect-src` staying the daemon's own.
+pub(crate) const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' https://snyvi.com; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 pub(crate) const FONTS: &[(&str, &[u8])] = &[
     ("inter.woff2", include_bytes!("../../ui/fonts/inter.woff2")),
@@ -153,6 +161,26 @@ pub(crate) const FONTS: &[(&str, &[u8])] = &[
         include_bytes!("../../ui/fonts/symbols-nerd.woff2"),
     ),
 ];
+
+/// The Welcome tour's pictures (ui/about.js `TOUR`), one per step in each
+/// side, light and dark. Real screens, cropped to the one thing the step
+/// says, and for two steps the frame after the press. Each step plays a clip
+/// from snyvi.com; these are what it is wherever the clip can't play, so
+/// they are compiled in: a first run offline, or a window that can't play
+/// H.264, still has the whole tour. About 500 KB, the reason the binary's
+/// budget went to 19 MB (src/bench.rs).
+macro_rules! tour {
+    ($($n:literal),* $(,)?) => {
+        &[$(
+            (concat!("tour-", $n, "-light.webp"), include_bytes!(concat!("../../ui/tour/tour-", $n, "-light.webp"))),
+            (concat!("tour-", $n, "-dark.webp"), include_bytes!(concat!("../../ui/tour/tour-", $n, "-dark.webp"))),
+        )*]
+    };
+}
+pub(crate) const TOUR: &[(&str, &[u8])] = tour!(
+    "promise", "desk", "connect", "ready", "plan", "waiting", "turn", "notes", "home", "focus",
+    "friend", "agents", "search",
+);
 
 /// Where the UI is read from.
 ///
@@ -320,8 +348,26 @@ pub(crate) fn shell(
         o.insert("waiting".into(), json!(waiting(app)));
         // Who is here, for the count beside the brand mark on the first paint.
         o.insert("online".into(), app.online());
-        // The aside showing at the foot of the sidebar, and the trail under it.
-        o.insert("notes".into(), json!(app.asides.list()));
+        // The newest asides, and whether the corner has anything to say:
+        // Lately's dot and how much waits on the reader across desks, fresh,
+        // so the first paint knows whether to fetch it (`ui/corner.js`). A
+        // count only: the rows are behind the desk gate (`lately`), and a
+        // tab, which has no desks, does not show it.
+        o.insert("notes".into(), json!(aside_list(app)));
+        let (unseen, on_you) = app
+            .store
+            .clocked(|c, now| {
+                Ok((
+                    crate::lately::unseen(c, now)?,
+                    crate::thread::waiting(c, now)?
+                        .iter()
+                        .filter(|t| !t.stale && t.via != "dialog")
+                        .count(),
+                ))
+            })
+            .unwrap_or_default();
+        o.insert("lately_unseen".into(), json!(unseen));
+        o.insert("on_you".into(), json!(on_you));
         // Whether there is a friend, so a menu offers Send to a friend… only
         // then; the menu asks again as it opens (`ui/menu.js`).
         o.insert("friends".into(), json!(friend_count(app)));
@@ -410,6 +456,9 @@ pub(crate) fn talk(app: &App, doc: &Doc) -> Talk {
 /// Send to… shows on the reader's own documents from one, and on a friend's
 /// from two, since the one there is is who sent it.
 pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> String {
+    // A document stored before 1.34 opens with its players as buttons too.
+    let body = render::lazy_players(body);
+    let body: &str = &body;
     let e = html_escape::encode_text;
     // What goes inside a quoted attribute: a friend names themselves and
     // their documents, and a `"` there must stay a character.
@@ -443,7 +492,8 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
             format!(" · {}", e(&doc.workflow_title))
         };
         format!(
-            "from {} · <span data-tip=\"Signed with the key you paired with\">verified</span>{filed}{on}{flow}",
+            "{}from {} · <span data-tip=\"Signed with the key you paired with\">verified</span>{filed}{on}{flow}",
+            friend_mark(who),
             e(who)
         )
     } else {
@@ -515,6 +565,30 @@ pub(crate) fn doc_html(doc: &Doc, body: &str, friends: usize, talk: &Talk) -> St
         "<div class=\"doc-acts\" style=\"display:flex;flex-wrap:wrap;gap:2px 18px;margin:6px 0 0;font-size:var(--fs-ui);color:var(--fg-3)\">{acts}</div>"
     );
     head(doc, body, &sub, &acts, talk)
+}
+
+/// A friend's initial in their own colour, before their name in the head of
+/// what they sent (#123): the sidebar, Waiting, Home and a desk's notes wear
+/// the same one (`ui/app/02-tree.js` `whoIco`), so a friend's reads as theirs
+/// wherever it is. Inline, as the rest of the head's look is.
+fn friend_mark(name: &str) -> String {
+    let initial: String = name
+        .trim()
+        .chars()
+        .next()
+        .map_or("?".into(), |c| c.to_uppercase().collect());
+    format!(
+        "<span class=\"r-who\" style=\"--h:{};display:inline-grid;vertical-align:-3px;margin-right:6px\" \
+         aria-hidden=\"true\">{}</span>",
+        friend_hue(name),
+        html_escape::encode_text(&initial)
+    )
+}
+
+/// The friend's colour, as a hue from their name: `whoIco`'s `hueOf`, the
+/// same sum over the same code points, so the page and the daemon agree.
+pub(crate) fn friend_hue(name: &str) -> u32 {
+    name.chars().fold(7, |h, c| (h * 31 + c as u32) % 360)
 }
 
 /// The head and the article around it: the title, the sub line, a friend's
@@ -714,7 +788,8 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("palette.js", PALETTE_JS, JS),
     ("look.js", LOOK_JS, JS),
     ("nav.js", NAV_JS, JS),
-    ("note.js", NOTE_JS, JS),
+    ("copy.js", COPY_JS, JS),
+    ("corner.js", CORNER_JS, JS),
     ("tip.js", TIP_JS, JS),
     ("home.js", HOME_JS, JS),
     ("peer.js", PEER_JS, JS),
@@ -723,6 +798,7 @@ pub(crate) const ASSETS: &[(&str, &str, &str)] = &[
     ("browse.js", BROWSE_JS, JS),
     ("paths.js", PATHS_JS, JS),
     ("sidebars.js", SIDEBARS_JS, JS),
+    ("gallery.js", GALLERY_JS, JS),
 ];
 
 /// `/assets/{name}`: one of `ASSETS`, or nothing.
@@ -846,6 +922,14 @@ pub(crate) async fn doc_file(
 pub(crate) async fn asset_font(Path(name): Path<String>) -> Response {
     match FONTS.iter().find(|(n, _)| *n == name) {
         Some((_, bytes)) => immutable("font/woff2", *bytes),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// `/assets/tour/{name}`: one of `TOUR`, or nothing.
+pub(crate) async fn asset_tour(Path(name): Path<String>) -> Response {
+    match TOUR.iter().find(|(n, _)| *n == name) {
+        Some((_, bytes)) => immutable("image/webp", *bytes),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }

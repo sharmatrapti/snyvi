@@ -1,6 +1,9 @@
 /* ui/app/10-boot.js: a part of app.js. build.rs joins ui/app/*.js in name order inside
  * one function scope (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
   // ---------- boot ----------
+  // A desktop notification's click asks for the corner's tray (`#onyou`,
+  // events.rs `notify_waiting`); the views below put their own address back.
+  const trayAsked = location.hash === "#onyou";
   // The sidebar's sections in the reader's order, before anything measures them.
   drawWidgets();
   if (state.view === "doc" && state.doc) {
@@ -25,3 +28,8 @@
   else { const recent = location.pathname === "/inbox" && location.search === "?recent"; showInbox(false, recent); history.replaceState({ inbox: true }, "", location.pathname === "/" ? "/" : recent ? "/inbox?recent" : "/inbox"); }
   connect();
   loadDesks();
+  // The corner, when the boot payload says it has something to show:
+  // something waiting on the reader (a tab has no desks). Lately unseen is
+  // the sidebar's dot now, which first paint draws (09-answers.js).
+  if (trayAsked) corner(m => setTimeout(() => m.open(), 300));
+  else if (capability && boot.on_you) corner(m => m.draw());

@@ -1,9 +1,13 @@
 /* ui/app/05-notes.js: a part of app.js. build.rs joins ui/app/*.js in name order inside
  * one function scope (src/strip.rs `source`); SNYVI_UI_DIR serves the same join. */
-  // ---------- the note: a line an agent leaves beside the work ----------
-  /* The card is ui/note.js, fetched the first time there is an aside to show.
-   * Until then the page keeps only the mark: `data-note` on the root, which
-   * makes the logo blink and the rail's aside dot glow. */
+  // ---------- the corner: where every message lives ----------
+  /* The pill in the bottom-right corner, its tray (On you and Lately) and
+   * the card that rises from outside are ui/corner.js (plan b0bca0a11f),
+   * fetched when there is something to show: the boot payload says Lately
+   * holds something unseen or something waits on the reader, an event says
+   * a message came, a desk opens, or Ctrl Alt Y asks for it. Until then the
+   * page keeps only the mark: `data-note` on the root, which makes the logo
+   * blink while an agent's aside waits. */
   /** A shortcut as this machine writes it (docs/DESIGN.md §3.4): glyphs on
    *  macOS, words everywhere else, key names title-cased. "mod" is ⌘ on a
    *  Mac and Ctrl elsewhere; "ctrl+alt+w" is ⌃⌥W or Ctrl Alt W. Every
@@ -18,78 +22,51 @@
     }).join(mac ? "" : " ");
   }
 
-  /** The asides on the card: the daemon keeps a closed one, flagged, for Undo. */
-  const liveNotes = () => state.notes.filter(n => !n.dismissed);
-  /* snyvi's own asides: five lines at five first moments, each once, each
-   * pointing into /start. Not a tour and not a checklist: it waits while an
-   * agent's aside is unread, says at most one thing in ten minutes (the
-   * daemon's own quiet for agents, aside.rs), and remembers what it said in
-   * this browser (`snyvi.seen.*`, which Reset clears). Kept on the card's
-   * list with ids `snyvi:*`, which note.js never tells the daemon about.
-   * Their words are note.js's (OWN there), the only file that shows them:
-   * first paint carries only their names. */
-  const OWN = new Set(["first-doc", "two-waiting", "second-desk", "two-desks", "blocked", "version"]);
-  const isOwn = n => String(n.id).startsWith("snyvi:");
-  // By when each was said, newest first, as the daemon's list is: an agent's
-  // aside after snyvi's line is the one the card shows, not a line behind it.
-  const withOwn = list => list.concat(state.notes.filter(isOwn)).sort((a, b) => (b.at || 0) - (a.at || 0));
-  /* Held, not dropped: a moment that comes while an agent's aside is unread,
-   * or inside the ten quiet minutes, waits in `snyvi.own.held` and is said
-   * when the way is clear -- once, as ever. The saying is note.js's (`says`,
-   * `sayHeld`), fetched on the moment: a moment already said costs nothing. */
-  const ownCtx = () => ({ store, state, own: OWN, isOwn, render: renderNote });
-  const snyviSays = key => { if (OWN.has(key) && !store.get(`snyvi.seen.${key}`)) noteUse().then(m => m.says(key, ownCtx()), () => {}); };
+  /* snyvi's own asides: four lines at four first moments, each once, each
+   * pointing into /start. Not a tour and not a checklist: their words, and
+   * the holding back while an agent's aside is unseen, are corner.js's
+   * (`says`); first paint carries only their names. */
+  const OWN = new Set(["first-doc", "two-waiting", "blocked", "version"]);
+  let cornerMod = null, cornerLoading = null;
+  /* The corner is the desk's while its rail is on screen: on the desk, and
+   * on a document opened from the desk's own list, which keeps that rail
+   * (08-desks.js `behindDesk`). Asking only for the desk view drew a card
+   * twice there, in the desk's corner and this page's (#171). */
+  const overDesk = () => (state.view === "desk" || state.deskBehind != null) && !!desk;
+  const cornerUse = () => (cornerLoading ||= import(`/assets/corner.js${boot.v ? `?v=${boot.v}` : ""}`)
+    .then(m => (cornerMod ||= m.init({ root, store, esc, relShort, capability, deskApi, sayErr, toast, who: whoIco, glyph, peek: mascotPeek, showDoc: id => showDoc(id, true, false, overDesk()), showDesk, showHome, showStart,
+      view: () => state.view, onDesk: overDesk, friends: () => state.friends,
+      deskRedraw: () => desk?.arranged?.(), deskTray: () => desk?.openTray?.(), homeRedraw: () => homeMod?.redraw?.(),
+      openLately: () => openLately($(root.dataset.side === "0" ? "#rail-lately" : "#btn-lately")), unpop: () => closePop(false),
+      hop: () => { const m = $(".brand-mark"); if (m && !quiet()) { m.classList.remove("hop"); void m.offsetWidth; m.classList.add("hop"); } } })))
+    .catch(e => { cornerLoading = null; throw e; }));
+  const corner = f => cornerUse().then(f, () => {});
+  const snyviSays = key => { if (OWN.has(key) && !store.get(`snyvi.seen.${key}`)) corner(m => m.says(key)); };
   // A moment held when the last page closed is still owed.
-  if ((store.get("snyvi.own.held") || "[]") !== "[]") setTimeout(() => noteUse().then(m => m.sayHeld(ownCtx()), () => {}), 30e3);
-  let noteMod = null, noteLoading = null;
-  const noteUse = () => (noteLoading ||= import(`/assets/note.js${boot.v ? `?v=${boot.v}` : ""}`).catch(e => { noteLoading = null; throw e; }));
-  function renderNote() {
-    if (noteMod) return noteMod.render();
-    const n = liveNotes()[0];
-    if (n && !n.seen) root.dataset.note = n.lit ? "lit" : "new";
-    else delete root.dataset.note;
-    if (n) noteUse().then(m => {
-      noteMod ||= m.init({ root, $, state, liveNotes, esc, relShort, showDoc, showStart, showDesk: capability && showDesk, toast, keyHint, closeSay, undoClock,
-        holdUndo: offer, dropUndo: unoffer, peek: mascotPeek });
-      noteMod.render();
-    }, () => {});
+  if ((store.get("snyvi.own.held") || "[]") !== "[]") setTimeout(() => corner(m => m.sayHeld()), 30e3);
+  {
+    const a = (boot.notes || []).find(n => !n.dismissed);
+    if (a && !a.seen) root.dataset.note = a.lit ? "lit" : "new";
   }
-  renderNote();
-
-  // ---------- snyvi answers ----------
-  /** The note above is what an agent said, and its byline says who. This is
-   *  snyvi itself, and the rule that keeps it from being a gimmick is that it
-   *  only ever answers: nothing opens on its own, ever. A reader who comes
-   *  over to the face and rests there gets one short line back. */
-  const brandEl = $(".brand"), sayEl = $("#bm-say");
-  /** What it says, and when, is look.js's (`openSay`), fetched once the
-   *  page is idle: the lines, their weights, and the face each wears. */
-  let sayIn = 0, sayOut = 0;
-  function closeSay() {
-    sayEl.classList.remove("on");
-    brandEl.classList.remove("said");
-    delete root.dataset.say;
-    clearTimeout(sayOut);
-    sayOut = setTimeout(() => { if (!sayEl.classList.contains("on")) sayEl.hidden = true; }, 340);
-  }
-  brandEl.addEventListener("pointerenter", e => {
-    // A finger is not a reader leaning over. Nor is crossing the brand on the
-    // way to Search, so it waits for a moment's rest before it says anything.
-    if (e.pointerType === "touch") return;
-    clearTimeout(sayIn);
-    // While it speaks, its line is the label: the "Home" tip gives way.
-    sayIn = setTimeout(() => useLook().then(l => { if (brandEl.matches(":hover")) { brandEl.classList.add("said"); tipMod?.gone(brandEl); l.openSay({ root, sayEl, state, quiet }); } }, () => {}), 260);
+  // Ctrl+Alt+Y ("you") opens and closes the corner's tray on every page; a
+  // desk's corner hears it first, its panels' keys included (10-onyou.js).
+  document.addEventListener("keydown", e => {
+    if (e.code !== "KeyY" || !e.ctrlKey || !e.altKey || e.metaKey || e.shiftKey || e.getModifierState?.("AltGraph") || state.view === "desk") return;
+    e.preventDefault();
+    corner(m => m.toggle());
   });
-  brandEl.addEventListener("pointerleave", () => { clearTimeout(sayIn); closeSay(); });
-  // Following the brand through to the inbox takes the bubble with it.
-  brandEl.addEventListener("click", () => { clearTimeout(sayIn); closeSay(); });
+
+  // ---------- the mark ----------
+  /** The mark is the way Home, and hovering it says so: the "Home" tip, as
+   *  any control's. It used to answer with a line drawn by lot in place of
+   *  its own name, which hid the tip, and put "3 waiting" and "not
+   *  connected" in a draw beside "hi" (audit 67d008cb6f). Its faces stay:
+   *  the hop, the heart, sleep while the page cannot hear the daemon. */
   /** A desk's last open note ticked (desk.js): the milestone of docs/DESIGN.md
    *  §2.3, and a desk may carry no face, so it is the mark's -- glad, one
-   *  hop, for as long as a face's moment lasts. The hover line answers "all
-   *  done" for the next hour, and Home says the count. Rare by nature: it
-   *  is the end of a list, not of a line. */
+   *  hop, for as long as a face's moment lasts, and Home says the count.
+   *  Rare by nature: it is the end of a list, not of a line. */
   function markDone() {
-    state.doneAt = Date.now();
     if (quiet()) return;
     const mark = $(".brand-mark");
     root.dataset.done = "1";
@@ -226,8 +203,13 @@
     // the page's own shortcuts, where `p` pins the document and `Delete`
     // deletes it -- a query is not a command, and must never arrive as one.
     const from = findBar.hidden ? document.activeElement : null;
+    // A page's preview is framed where nothing of snyvi's can reach, which is
+    // the point of the frame (`applyPreview`): find looks in its source, and
+    // the redraw that brings the source up lays the search over it (#156).
+    if (state.preview === "html" && state.previewOn) togglePreview();
     findBar.hidden = false;
     const input = $("#find-input");
+    input.placeholder = state.preview === "html" ? "Find in the source" : "Find in document";
     input.focus(); input.select();
     try { find = await (findLoading ||= import(`/assets/find.js${boot.v ? `?v=${boot.v}` : ""}`)); }
     catch (e) { findLoading = null; findBar.hidden = true; toast("Could not open find", { sub: e }); return; }

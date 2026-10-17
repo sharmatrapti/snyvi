@@ -2,8 +2,8 @@
 //! function per subcommand. `main` only hands over to [`run`].
 
 use crate::{
-    agents, bench, client, config, desktop, hook, mcp, platform, plural, receive, reset, secrets,
-    server, setup, statusline, store, update, version, watch,
+    agents, bench, client, config, desktop, hook, mcp, platform, plural, receive, render, reset,
+    secrets, server, setup, statusline, store, update, version, watch,
 };
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -182,16 +182,60 @@ enum Cmd {
         #[command(subcommand)]
         cmd: WidgetCmd,
     },
+    /// A desk's gallery, for a script calling an image or video model: `snyvi gallery add out.png --caption "warm" --model flux --cost 0.04 --desk 3`.
+    Gallery {
+        #[command(subcommand)]
+        cmd: GalleryCmd,
+    },
     /// Show daemon status.
     Status,
     /// Say hello: the face, the version and the address. Not in the help; for whoever thought to ask.
     #[command(hide = true)]
     Hi,
+    /// Print the HTML the reader view would show for a Markdown file. Not in the help; snyvi.com's build renders the docs with it (site/build.mjs).
+    #[command(hide = true)]
+    Render { file: PathBuf },
     /// Measure render speed on synthetic documents, and a daemon of its own: binary size, cold start, send, first byte, resident memory.
     Bench {
         /// Exit non-zero if any case exceeds its budget (SNYVI_BENCH_FACTOR scales budgets for slow CI runners).
         #[arg(long)]
         check: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum GalleryCmd {
+    /// Add an output: a picture (png, jpg, gif, webp, avif) or a clip (mp4, webm, mov, m4v), copied in. Inside a snyvi panel it is that desk's, and its first add asks you with a card; otherwise give --desk.
+    Add {
+        /// The file. Leave it out, with --job, for a tile that says it is being made.
+        file: Option<PathBuf>,
+        /// Your id for this output: the same job again with the file fills its tile.
+        #[arg(long)]
+        job: Option<String>,
+        #[arg(long)]
+        caption: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        prompt: Option<String>,
+        /// In dollars.
+        #[arg(long)]
+        cost: Option<f64>,
+        /// A clip's first frame, as a picture.
+        #[arg(long)]
+        poster: Option<PathBuf>,
+        /// Why the job made nothing.
+        #[arg(long)]
+        failed: Option<String>,
+        /// The gallery's name (gallery).
+        #[arg(long)]
+        name: Option<String>,
+        /// On this desk, by its id, from anywhere.
+        #[arg(long)]
+        desk: Option<i64>,
+        /// The box's height, in lines of 20 px: 2 to 6 (4).
+        #[arg(long)]
+        lines: Option<u8>,
     },
 }
 
@@ -230,15 +274,29 @@ enum WidgetCmd {
         #[arg(long)]
         global: bool,
     },
-    /// Write a starter widget file in snyvi's widgets folder: a widget.json and a script that prints its body. It does not run until you Allow it in the window.
+    /// Write a starter widget file in snyvi's widgets folder: a widget.json and a script that prints its body. Inside a snyvi panel it is that desk's own; otherwise shared. It does not run until you Allow it in the window.
     New {
         name: String,
-        /// On the left, everywhere, run in its own folder (the default is a desk's, run in the desk's folder).
+        /// That desk's own, by its id, from anywhere.
+        #[arg(long, conflicts_with_all = ["global", "shared"])]
+        desk: Option<i64>,
+        /// Shared: on the desks you tick on /sidebars, even inside a panel.
+        #[arg(long, conflicts_with = "global")]
+        shared: bool,
+        /// On the left, everywhere, run in its own folder.
         #[arg(long)]
         global: bool,
     },
-    /// Run a widget file once, here, as snyvi would, and print what it would draw -- or why it refuses.
-    Check { name: String },
+    /// Run a widget file once, here, as snyvi would, and print what it would draw -- or why it refuses. A desk's own is found by --desk, or the panel's desk; --dir runs one from any folder, before it is proposed or added.
+    Check {
+        name: String,
+        /// The desk whose own widget it is.
+        #[arg(long, conflicts_with = "dir")]
+        desk: Option<i64>,
+        /// A folder with its widget.json, anywhere: a draft not yet in snyvi's widgets folder.
+        #[arg(long)]
+        dir: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -358,10 +416,25 @@ pub(crate) fn run() -> Result<()> {
         },
         Cmd::Key { name } => print_key(&paths, &name),
         Cmd::Widget { cmd } => widget_cmd(&paths, cmd),
+        Cmd::Gallery { cmd } => gallery_cmd(&paths, cmd),
         Cmd::Status => status(&paths),
         Cmd::Bench { check } => bench::run(check),
         Cmd::Hi => hi(),
+        Cmd::Render { file } => render_file(&file),
     }
+}
+
+/// `snyvi render FILE`: the reader view's HTML for a Markdown file, on
+/// stdout. snyvi.com's build renders the docs with it, so a page on the
+/// site reads as it does in the window.
+fn render_file(file: &std::path::Path) -> Result<()> {
+    let source =
+        std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
+    print!(
+        "{}",
+        render::Renderer::new().render_markdown_uncapped(&source, None, None)
+    );
+    Ok(())
 }
 
 /// `snyvi key NAME`: a desk key's value with no newline. `$(...)` would drop
@@ -472,6 +545,14 @@ fn send(
         .unwrap_or("")
         .to_string();
     println!("{url}");
+    // Where it went, beside the link and never in place of it: stdout stays
+    // the URL alone, which scripts read.
+    let said = |k: &str| resp.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    if said("existing") {
+        eprintln!("already in snyvi, unchanged");
+    } else if said("window") {
+        eprintln!("waiting in snyvi");
+    }
     if open {
         client::open_where_the_reader_is(&url);
     }
@@ -590,6 +671,7 @@ fn prune(paths: &config::Paths, days: u32, dry_run: bool) -> Result<()> {
             "{} desk {id}  {name}",
             if dry_run { "would delete" } else { "deleted" }
         );
+        prune_widgets(paths, *id, dry_run);
     }
     if !desks.is_empty() {
         println!(
@@ -603,6 +685,31 @@ fn prune(paths: &config::Paths, days: u32, dry_run: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// A pruned desk's own widgets, out of the runner's sight: moved, not
+/// deleted, to `widgets/.pruned/<desk>-<time>/`, where they can be moved
+/// back by hand.
+fn prune_widgets(paths: &config::Paths, desk: i64, dry_run: bool) {
+    use crate::widget::files;
+    let from = files::owned_dir(&paths.config_dir, desk);
+    if !from.is_dir() {
+        return;
+    }
+    let to = files::pruned_dir(&paths.config_dir).join(format!("{desk}-{}", crate::store::now()));
+    if dry_run {
+        println!("would move desk {desk}'s widgets to {}", to.display());
+        return;
+    }
+    match std::fs::create_dir_all(files::pruned_dir(&paths.config_dir))
+        .and_then(|_| std::fs::rename(&from, &to))
+    {
+        Ok(()) => println!("moved desk {desk}'s widgets to {}", to.display()),
+        Err(e) => eprintln!(
+            "snyvi: desk {desk}'s widgets stay in {}: {e}",
+            from.display()
+        ),
+    }
 }
 
 fn status(paths: &config::Paths) -> Result<()> {
@@ -686,8 +793,23 @@ fn restart_self(exe: &std::path::Path) -> Result<()> {
 /// back when it refuses; a starter written; one run checked.
 fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
     let (name, body, desk, global) = match cmd {
-        WidgetCmd::New { name, global } => return widget_new(paths, &name, global),
-        WidgetCmd::Check { name } => return widget_check(paths, &name),
+        WidgetCmd::New {
+            name,
+            desk,
+            shared,
+            global,
+        } => {
+            let owner = if global || shared {
+                0
+            } else {
+                desk.or_else(|| panel_desk(paths)).unwrap_or(0)
+            };
+            return widget_new(paths, &name, owner, global);
+        }
+        WidgetCmd::Check { name, desk, dir } => {
+            let owner = desk.or_else(|| panel_desk(paths)).unwrap_or(0);
+            return widget_check(paths, &name, owner, dir);
+        }
         WidgetCmd::Set {
             name,
             text,
@@ -724,7 +846,7 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
     let v = client::widget(paths, &name, body, desk, global)?;
     if v.get("waiting").and_then(serde_json::Value::as_bool) == Some(true) {
         eprintln!(
-            "snyvi: {name} waits for your yes on this desk's Your turn; it shows once you allow it"
+            "snyvi: {name} waits for your yes on this desk's On you list; it shows once you allow it"
         );
     } else if v.get("cleared").and_then(serde_json::Value::as_bool) == Some(false) {
         eprintln!("snyvi: there was no widget called {name} there");
@@ -732,16 +854,72 @@ fn widget_cmd(paths: &config::Paths, cmd: WidgetCmd) -> Result<()> {
     Ok(())
 }
 
-/// `snyvi widget new`: a starter folder, never over one that is there.
-fn widget_new(paths: &config::Paths, name: &str, global: bool) -> Result<()> {
+/// `snyvi gallery add`: the paths made absolute here, since the daemon
+/// reads them from wherever it runs.
+fn gallery_cmd(paths: &config::Paths, cmd: GalleryCmd) -> Result<()> {
+    let GalleryCmd::Add {
+        file,
+        job,
+        caption,
+        model,
+        prompt,
+        cost,
+        poster,
+        failed,
+        name,
+        desk,
+        lines,
+    } = cmd;
+    let abs = |p: Option<PathBuf>| -> Result<String> {
+        Ok(match p {
+            None => String::new(),
+            Some(p) => std::path::absolute(&p)?.to_string_lossy().to_string(),
+        })
+    };
+    let body = serde_json::json!({
+        "file": abs(file)?, "job": job, "caption": caption, "model": model, "prompt": prompt,
+        "cost": cost, "poster": abs(poster)?, "failed": failed, "name": name, "lines": lines,
+    });
+    let v = client::gallery(paths, body, desk)?;
+    if v.get("waiting").and_then(serde_json::Value::as_bool) == Some(true) {
+        eprintln!(
+            "snyvi: kept as output #{}; the gallery waits for your yes on this desk's On you list",
+            v["id"]
+        );
+    } else {
+        println!("{}", v["id"]);
+    }
+    Ok(())
+}
+
+/// The desk of the snyvi panel this runs in, read from the database (read
+/// only: it is the daemon's), or None outside one.
+fn panel_desk(paths: &config::Paths) -> Option<i64> {
+    let pane = std::env::var("SNYVI_SESSION")
+        .ok()
+        .filter(|p| crate::pane::valid_id(p))?;
+    rusqlite::Connection::open_with_flags(
+        &paths.db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .ok()?
+    .query_row("SELECT desk_id FROM panes WHERE id = ?1", [pane], |r| {
+        r.get(0)
+    })
+    .ok()
+}
+
+/// `snyvi widget new`: a starter folder, never over one that is there: a
+/// desk's own (`owner`), or shared or global (0).
+fn widget_new(paths: &config::Paths, name: &str, owner: i64, global: bool) -> Result<()> {
     use crate::widget::files;
     if !crate::widget::name_ok(name) {
         anyhow::bail!("a widget's name is lowercase letters, digits and dashes, at most 32");
     }
-    let dir = files::dir(&paths.config_dir).join(name);
-    if dir.exists() {
-        anyhow::bail!("{} is there already", dir.display());
+    if let Some(why) = files::taken(&paths.config_dir, owner, name) {
+        anyhow::bail!("{why}");
     }
+    let dir = files::folder_of(&paths.config_dir, owner, name);
     let (json, script, body) = files::starter(
         name,
         if global {
@@ -759,6 +937,9 @@ fn widget_new(paths: &config::Paths, name: &str, global: bool) -> Result<()> {
         std::fs::set_permissions(dir.join(script), std::fs::Permissions::from_mode(0o755))?;
     }
     println!("{}", dir.display());
+    if owner != 0 {
+        println!("It is desk {owner}'s own: it runs on that desk alone.");
+    }
     println!("Edit {script}, try it with `snyvi widget check {name}`, then Allow it in the window: it waits in its seat, and on /sidebars.");
     Ok(())
 }
@@ -767,9 +948,27 @@ fn widget_new(paths: &config::Paths, name: &str, global: bool) -> Result<()> {
 /// run, with what it would be given; then the body it would draw, or why
 /// it would not. Run here and now, in this shell's environment -- so a
 /// command that works here and not in snyvi is a PATH to look at.
-fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
+fn widget_check(
+    paths: &config::Paths,
+    name: &str,
+    desk: i64,
+    dir: Option<std::path::PathBuf>,
+) -> Result<()> {
     use crate::widget::{self, files};
-    let folder = files::dir(&paths.config_dir).join(name);
+    // A draft by its folder (an agent's, before propose_widget); else the
+    // desk's own when it has one by the name, the shared one if not.
+    // A draft has no owner: nothing is allowed until it is proposed.
+    let (folder, owner) = match dir {
+        Some(d) => (std::path::absolute(&d).unwrap_or(d), None),
+        None => {
+            let owned = files::folder_of(&paths.config_dir, desk, name);
+            let owner = if desk != 0 && owned.is_dir() { desk } else { 0 };
+            (
+                files::folder_of(&paths.config_dir, owner, name),
+                Some(owner),
+            )
+        }
+    };
     let spec =
         files::read(&folder, name).map_err(|why| anyhow::anyhow!("{}: {why}", folder.display()))?;
     let hash = files::hash(&folder).map_err(|why| anyhow::anyhow!(why))?;
@@ -864,16 +1063,20 @@ fn widget_check(paths: &config::Paths, name: &str) -> Result<()> {
     }
     // Read only: the daemon owns the database, and opening it as the store
     // does would tidy what the daemon is in the middle of.
-    let allowed = rusqlite::Connection::open_with_flags(
-        &paths.db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .ok()
-    .and_then(|c| widget::prefs(&c, name).ok())
-    .is_some_and(|p| p.trusted_hash == hash);
+    let allowed = owner.is_some_and(|owner| {
+        rusqlite::Connection::open_with_flags(
+            &paths.db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .ok()
+        .and_then(|c| widget::prefs(&c, owner, name).ok())
+        .is_some_and(|p| p.trusted_hash == hash)
+    });
     eprintln!(
         "{}",
-        if allowed {
+        if owner.is_none() {
+            "A draft: propose it (propose_widget) for the reader to add."
+        } else if allowed {
             "Allowed as it is: snyvi runs it while it is in view."
         } else {
             "Not allowed as it is: Allow it in the window, in its seat or on /sidebars."

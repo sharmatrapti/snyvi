@@ -67,6 +67,19 @@ else
 fi
 t "the last line says it updates itself" has "$out" "updates itself from now on"
 
+# ---------- a fresh install asks before it connects Claude Code ----------
+# With no terminal to ask in -- this container has none -- nothing is
+# written to ~/.claude; the window offers Connect instead (R9).
+keep_home=$HOME
+fresh_home
+mkdir -p "$HOME/.claude"
+out=/tmp/asked.out
+sh /src/install.sh </dev/null > "$out" 2>&1
+t "a fresh install with no tty leaves Claude Code as it was" sh -c "[ ! -e '$HOME/.claude/settings.json' ] && grep -q 'window will offer to connect it' '$out'"
+"$HOME/.local/bin/snyvi" stop > /dev/null 2>&1
+HOME=$keep_home
+export HOME
+
 # ---------- an update over a running daemon ----------
 echo "# a plan" > /tmp/plan.md
 "$B" send /tmp/plan.md > /dev/null 2>&1

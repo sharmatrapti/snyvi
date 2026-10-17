@@ -5,6 +5,8 @@ fn db() -> Connection {
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
     conn.execute_batch(crate::desk::SCHEMA).unwrap();
     conn.execute_batch(crate::desk::POS_COLUMN).unwrap();
+    conn.execute_batch(crate::desk::HELD_COLUMN).unwrap();
+    conn.execute_batch(crate::links::COLUMN_1_43).unwrap();
     conn.execute_batch(SCHEMA).unwrap();
     for c in COLUMNS_1_30 {
         conn.execute_batch(c).unwrap();
@@ -13,7 +15,7 @@ fn db() -> Connection {
 }
 
 fn pane_on(conn: &mut Connection, desk: i64) -> String {
-    match crate::desk::open_pane(conn, desk, "/w", "", 0).unwrap() {
+    match crate::desk::open_pane(conn, desk, "/w", "", false, 0).unwrap() {
         crate::desk::Opened::Pane(p) => p.id,
         o => panic!("no pane: {o:?}"),
     }
@@ -90,6 +92,19 @@ fn the_panels_that_follow_a_desk_are_the_ones_without_their_own() {
     let p2 = pane_on(&mut conn, d);
     set_pane(&conn, &p2, Some(work.id)).unwrap();
     assert_eq!(following(&conn, d).unwrap(), vec![p1]);
+}
+
+#[test]
+fn a_new_account_is_named_by_the_first_free_number() {
+    let conn = db();
+    assert_eq!(next_label(&list(&conn).unwrap()), "Account 2");
+    add(&conn, "Account 2", 1).unwrap();
+    let three = add(&conn, "Account 3", 2).unwrap();
+    add(&conn, "Work", 3).unwrap();
+    assert_eq!(next_label(&list(&conn).unwrap()), "Account 4");
+    let mut conn = conn;
+    remove(&mut conn, three.id).unwrap();
+    assert_eq!(next_label(&list(&conn).unwrap()), "Account 3");
 }
 
 #[test]

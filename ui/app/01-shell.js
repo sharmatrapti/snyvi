@@ -5,7 +5,7 @@
   const boot = JSON.parse($("#boot").textContent || "{}");
   const root = document.documentElement;
   const main = $("#main"), docEl = $("#doc"), treeEl = $("#tree"), tocEl = $("#toc"), metaEl = $("#meta"), rail = $("#rail");
-  const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row"), queueEl = $("#queue"), queueBar = $("#queue-bar");
+  const treesEl = $("#trees"), browseEl = $("#browse-nav"), inboxRowEl = $("#inbox-row"), queueBar = $("#queue-bar");
 
   const state = {
     tree: boot.tree || [],          // one row per project; what it holds is fetched when it is expanded
@@ -18,7 +18,7 @@
     versions: [],               // ids of every snapshot of the open document, newest first
 
     folder: boot.folder || null,   // where "Open in file manager" would open, if anywhere
-    queue: boot.queue || [],    // the oldest of what arrived and has not been opened, in order
+    queue: boot.queue || [],    // what arrived and has not been opened, newest first
     waiting: boot.waiting != null ? boot.waiting : (boot.queue || []).length,   // how many in all
     cache: new Map(),           // id -> {doc, html, previous}
     split: (() => { try { return localStorage.getItem("snyvi.split") === "1"; } catch { return false; } })(),
@@ -32,7 +32,6 @@
     previewOn: false,
     previewKey: null,           // what previewOn belongs to, so a toggle survives a re-render
     online: boot.online || {},  // agent name -> how many of it hold a stream on the daemon now
-    notes: boot.notes || [],    // the last few lines agents left, newest first
     desks: null,                // what /api/desks said, for a window; a tab never has any
     deskId: null,               // the desk on screen, or null for the list of them
   };

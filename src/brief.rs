@@ -71,6 +71,8 @@ pub struct Work<'a> {
 const THREADS_SHOWN: usize = 3;
 /// How many of the reader's turns it names.
 const TURNS_SHOWN: usize = 3;
+/// An older turn's line in the brief: enough to know it again by.
+const OLDER_CHARS: usize = 50;
 
 #[cfg(test)]
 pub fn brief(
@@ -136,6 +138,7 @@ pub fn brief_of(
         .iter()
         .filter(|n| !n.done && n.suggested_by.is_empty())
         .collect();
+    lines.extend(loose_ends(&open));
     if !open.is_empty() {
         let named: Vec<String> = open
             .iter()
@@ -202,6 +205,44 @@ pub fn brief_of(
         ));
     }
     capped(lines)
+}
+
+/// What the loop left open, ahead of the list: lines whose work landed on
+/// main and wait for the user's check, and lines the user said are still
+/// broken, with their words. Any panel can close these, not only the one
+/// that started them; a reopened line is the first thing to fix.
+fn loose_ends(open: &[&DeskNote]) -> Vec<String> {
+    let mut lines = Vec::new();
+    let reopened: Vec<String> = open
+        .iter()
+        .filter(|n| n.stage == crate::desk::REOPENED)
+        .map(|n| {
+            let said = if n.reply_by.is_empty() && !n.reply.is_empty() {
+                format!(": \"{}\"", cut(&n.reply, LINE_CHARS))
+            } else {
+                String::new()
+            };
+            format!("#{} {}{said}", n.id, cut(&n.text, LINE_CHARS))
+        })
+        .collect();
+    if !reopened.is_empty() {
+        lines.push(format!(
+            "The user checked these and says they are still broken: {}. Ask before picking one up.",
+            reopened.join("; ")
+        ));
+    }
+    let landed: Vec<String> = open
+        .iter()
+        .filter(|n| !n.landed_commit.is_empty())
+        .map(|n| format!("#{} (in {})", n.id, n.landed_commit))
+        .collect();
+    if !landed.is_empty() {
+        lines.push(format!(
+            "Landed on main and waiting for the user's check, not yours to tick: {}.",
+            landed.join(", ")
+        ));
+    }
+    lines
 }
 
 /// The pane in `slot`, by id; empty when there is none.
@@ -271,16 +312,46 @@ fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) ->
     if !moving.is_empty() {
         lines.push(format!("Threads on this desk: {}.", moving.join("; ")));
     }
+    // What is fresh, said; what went quiet -- its panel closed, or asked over
+    // half an hour ago -- said shorter, so a new Claude knows it is there
+    // without taking a four-day-old key as its next step (audit e0a854b732).
+    // Each by its id: one that is done, or that this Claude repeats, is its
+    // to remove, with why (#174) -- a count it could do nothing with left
+    // a released release on the reader for hours.
     let on_user: Vec<String> = waiting
         .iter()
+        .filter(|w| !w.stale)
         .take(TURNS_SHOWN)
-        .map(|w| format!("{}: {}", w.kind, cut(&w.text, LINE_CHARS)))
+        .map(|w| format!("#{} {}: {}", w.id, w.kind, cut(&w.text, LINE_CHARS)))
         .collect();
-    if !on_user.is_empty() {
-        lines.push(format!(
-            "On the user (their Your turn in snyvi): {}.",
+    let older: Vec<String> = waiting
+        .iter()
+        .filter(|w| w.stale)
+        .take(TURNS_SHOWN)
+        .map(|w| format!("#{} {}: {}", w.id, w.kind, cut(&w.text, OLDER_CHARS)))
+        .collect();
+    let n_older = waiting.iter().filter(|w| w.stale).count();
+    let older = match n_older {
+        0 => String::new(),
+        n if n > older.len() => format!("{n} older ({}; …)", older.join("; ")),
+        _ => format!("older: {}", older.join("; ")),
+    };
+    match (on_user.is_empty(), older.is_empty()) {
+        (true, true) => {}
+        (false, true) => lines.push(format!(
+            "On the user (their On you list in snyvi): {}.",
             on_user.join("; ")
-        ));
+        )),
+        (false, false) => lines.push(format!(
+            "On the user (their On you list in snyvi): {}; and {older}.",
+            on_user.join("; ")
+        )),
+        (true, false) => lines.push(format!(
+            "On the user's On you list in snyvi, from panels since closed or asked over half an hour ago: {older}."
+        )),
+    }
+    if n_older > 0 {
+        lines.push("One you can see is done (a tag, a merge), remove_card with why.".to_string());
     }
     lines
 }
@@ -288,20 +359,40 @@ fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) ->
 /// The reader's answers, as a panel is told them: first in the changes,
 /// because an answer matters more than a filed document.
 pub fn answer_lines(answers: &[Turn]) -> Vec<String> {
-    answers
+    let mut lines: Vec<String> = answers
         .iter()
+        .filter(|t| t.answered_at != 0)
         .map(|t| {
             let q = cut(&t.text, LINE_CHARS);
             let a = cut(&t.answer, LINE_CHARS);
             match t.kind.as_str() {
                 "decide" => format!("You answered \"{q}\": {a}."),
                 "try" => format!("You tried \"{q}\": {}.", a.to_lowercase()),
+                // Settled by what snyvi saw, not by a click (`thread::settle_merge`).
+                "merge" if t.answered_in == "snyvi" && a.ends_with("seen by snyvi)") => {
+                    format!("snyvi saw the merge for \"{q}\": {a}.")
+                }
                 "merge" => format!("You merged: \"{q}\"."),
                 "key" => format!("You added the key: \"{q}\"."),
+                "do" => format!("You did: \"{q}\"."),
                 _ => format!("You answered \"{q}\": {a}."),
             }
         })
-        .collect()
+        .collect();
+    // Questions this panel asked that are still open as its prompt comes
+    // (`thread::quiet_asks`): the message may be their answer.
+    let open: Vec<String> = answers
+        .iter()
+        .filter(|t| t.answered_at == 0)
+        .map(|t| format!("\"{}\"", cut(&t.text, LINE_CHARS)))
+        .collect();
+    if !open.is_empty() {
+        lines.push(format!(
+            "Still open on the user's On you list, from you: {}. If their message answers them, call settle_asks; if not, leave them, they wait there.",
+            open.join("; ")
+        ));
+    }
+    lines
 }
 
 /// The header the changes start with, and the answers alone under it: what a
@@ -585,6 +676,7 @@ mod tests {
             parked: None,
             keys: Vec::new(),
             account: 0,
+            links: Vec::new(),
             panes: (1..=panes as i64)
                 .map(|slot| Pane {
                     id: format!("{slot:032}"),
@@ -596,9 +688,27 @@ mod tests {
                     resume: String::new(),
                     name: String::new(),
                     account: None,
+                    held: false,
                 })
                 .collect(),
         }
+    }
+
+    /// The loop's loose ends lead: a reopened line with the user's words,
+    /// then what landed on main and waits for their check.
+    #[test]
+    fn the_brief_leads_with_what_landed_and_what_was_reopened() {
+        let mut back = note(131, "icons are not aligning", false);
+        back.stage = crate::desk::REOPENED.into();
+        back.reply = "still off in the folded rail".into();
+        let mut out = note(129, "fold the rail", false);
+        out.landed_commit = "6d732b2".into();
+        let open = [&back, &out];
+        let got = loose_ends(&open);
+        assert_eq!(got.len(), 2);
+        assert!(got[0].contains("#131 icons are not aligning: \"still off in the folded rail\""));
+        assert!(got[1].contains("#129 (in 6d732b2)"));
+        assert!(loose_ends(&[&note(3, "plain", false)]).is_empty());
     }
 
     fn note(id: i64, text: &str, done: bool) -> DeskNote {
@@ -918,12 +1028,21 @@ mod tests {
             kind: "decide".into(),
             text: "Search box after how many docs?".into(),
             answer: "After 10".into(),
+            answered_at: 150,
             ..Turn::default()
         };
         let tried = Turn {
             kind: "try".into(),
             text: "Try it on 7871".into(),
             answer: "Needs changes: the box jumps".into(),
+            answered_at: 150,
+            ..Turn::default()
+        };
+        let did = Turn {
+            kind: "do".into(),
+            text: "Add OpenRouter credits".into(),
+            answer: "Done".into(),
+            answered_at: 150,
             ..Turn::default()
         };
         let parked = Thread {
@@ -962,7 +1081,7 @@ mod tests {
             since: 100,
             now: 200,
             panes: &[],
-            answers: &[answered, tried],
+            answers: &[answered, tried, did],
             threads: &[parked, merged, own],
             opened: &[],
         });
@@ -972,6 +1091,7 @@ mod tests {
                 CHANGES_HEAD,
                 "You answered \"Search box after how many docs?\": After 10.",
                 "You tried \"Try it on 7871\": needs changes: the box jumps.",
+                "You did: \"Add OpenRouter credits\".",
                 "Thread \"Home + friends\" is parked (by you; next: rebase first).",
                 "PR #57 merged as 7e1c0a2 (thread \"Relay\").",
             ]
@@ -1011,7 +1131,7 @@ mod tests {
         assert!(b.contains(
             "Threads on this desk: Home + friends (building, #87 #91, claude/asides; this panel's)."
         ));
-        assert!(b.contains("On the user (their Your turn in snyvi): try: Try it on 7871."));
+        assert!(b.contains("On the user (their On you list in snyvi): #0 try: Try it on 7871."));
         assert!(!b.contains("Old"));
     }
 }

@@ -102,6 +102,7 @@
   --side-w: 264px;
   --rail-w: 232px;
   --head-h: 52px;   /* the document's head: the brand row's height, so the panes' tops agree */
+  --foot-h: 47px;   /* the sidebar's foot, and a desk's rail foot beside it: one band, rules level (#163) */
   --measure: 70ch;
 
   /* The scales (docs/DESIGN.md §6.2, §7.1). Components read these, never a
@@ -119,10 +120,13 @@
      popovers, cards, dialogs, toasts · counts and pills. */
   --r-xs: 4px; --r-sm: 6px; --r-md: 10px; --r-pill: 999px;
   /* Layers, named. A local 0-5 inside one component is allowed. Toasts sit
-     above dialogs, so an answer is never hidden by the dialog that asked. */
-  --z-sticky: 10; --z-rail: 20; --z-dialog: 30; --z-pop: 40; --z-tip: 50; --z-toast: 60; --z-over: 70;
+     above dialogs, so an answer is never hidden by the dialog that asked.
+     Tips sit above toasts: a tip from a button in the On you corner, which
+     is at the toast's level, was drawn under the card it explains (#114). */
+  --z-sticky: 10; --z-rail: 20; --z-dialog: 30; --z-pop: 40; --z-toast: 60; --z-tip: 65; --z-over: 70;
   /* Motion: instant for what happens a hundred times a day, quick by
-     default, move for what travels; the spring is the mascot's alone.
+     default, move for what travels; the spring is the mascot's, and the
+     desk's cards' (ui/desk/15-cards.js), which land like things with weight.
      Exits take the in-curve and about a fifth less time. */
   --dur-instant: 80ms; --dur-quick: 140ms; --dur-move: 220ms; --dur-moment: 700ms;
   --ease-out: cubic-bezier(.2,.7,.2,1); --ease-in: cubic-bezier(.4,0,1,1); --ease-spring: cubic-bezier(.3,1.6,.5,1);
@@ -231,6 +235,11 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: .15em; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-xs); }
+/* A popover opened with the pointer takes the focus without a ring: WebKit
+   draws one for any focus a script moves, and on On you's tray and Lately's
+   first row it read as an error (audit 98b9d67a7d). The first key brings
+   it back (.ring-quiet comes off). */
+.ring-quiet:focus-visible, .ring-quiet :focus-visible { outline: none; }
 ::selection { background: var(--accent-bg); }
 
 /* ---------- layout ---------- */
@@ -315,6 +324,21 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #main.scrolled #chrome .over-t { opacity: 1; transform: none; }
 #chrome .over-x { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
 #chrome .over-x:hover { background: var(--rule-2); color: var(--fg); }
+/* Width, beside the way back: only where it does something, a page of
+   prose. Elsewhere it keeps its room unseen, so the way back never moves. */
+#chrome :is(.over-w, .over-c) { flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--fg-3); transition: background var(--t), color var(--t); }
+#chrome .over-w { visibility: hidden; }
+:root:has(#doc article.kind-markdown) #chrome .over-w { visibility: visible; }
+#chrome :is(.over-w, .over-c):hover { background: var(--rule-2); color: var(--fg); }
+#chrome .over-w.on { color: var(--accent); }
+/* Copy all (#165), beside Width: on every page with text to copy. On a
+   picture, a film, a song or a binary its place is kept and empty, so the
+   bar does not move from one page to the next. Its answer is a ✓ in the
+   same box (.did): the word "Copied" would widen it and push the title. */
+#chrome .over-c > svg { grid-area: 1 / 1; }
+#chrome .over-c .c-ok, #chrome .over-c.did .c-ic { visibility: hidden; }
+#chrome .over-c.did .c-ok { visibility: visible; color: var(--ok); }
+:root:has(#doc article:is(.kind-image, .kind-video, .kind-audio, .kind-binary)) #chrome .over-c, :root:has(#doc article.sk-body) #chrome .over-c { visibility: hidden; }
 /* A desk draws its own head, with the desk's name in it, and the pane does
    not scroll: there the bar is only its buttons, laid over the desk's
    header, which makes room for them (desk.js, .dk-head). */
@@ -340,7 +364,7 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
    hears it, since #pop is inside #trees. */
 #rail-nav, #pop[hidden] { display: none; }
 :root[data-side="0"] #rail-nav { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 1; min-height: 0; padding: 6px 0; }
-:root[data-side="0"] :is(.brand-name, .bm-say, #live, #btn-search, #side > #note, #side .gutter, #trees > :not(#pop)) { display: none; }
+:root[data-side="0"] :is(.brand-name, #live, #btn-search, #btn-lately, #side .gutter, #trees > :not(#pop)) { display: none; }
 :root[data-side="0"] .side-head { flex-direction: column; gap: 10px; padding: 14px 0 4px; }
 :root[data-side="0"] #btn-side-hide { margin: 0; }
 /* The mark in a box the size of the rail's icons, so it sits on their
@@ -351,20 +375,35 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 :root[data-side="0"] .side-foot { padding: 8px; justify-content: center; }
 #rail-nav .icon { position: relative; flex: none; }
 #rail-nav .icon.on { color: var(--accent); background: var(--accent-bg); }
+/* `on` is an icon whose section is open in the popover. The agents' LED is
+   `on` for a different reason -- someone is connected -- and its light says
+   so: a tinted square round it read as a section open. */
+#rail-live.on:not(:hover) { color: var(--fg-3); background: none; }
 /* On a desk, the Desks icon is where you are, as the current row is. */
 :root[data-view="desk"] #rail-nav [data-pop="desks"]:not(.on) { color: var(--fg); background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
 .badge { position: absolute; top: -4px; right: -6px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--r-pill);
   font: 600 var(--fs-micro)/15px var(--sans); text-align: center; color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 2px var(--bg-side); }
 .badge:empty { display: none; }
 .badge.blk { color: var(--warn); background: color-mix(in srgb, var(--warn) 18%, var(--bg-side)); }
-/* Agents connected are live, not unread: the LED says so, and the figure
-   beside it is plain, so it can't be read as a second Inbox count. */
-.badge.live { color: var(--fg-2); background: none; box-shadow: none; }
+/* A plain count -- agents connected, a desk's panels and open notes on its
+   folded rail -- is the same pill in grey: live or many, not unread, so it
+   can't be read as a second Inbox count. The agents' count was `.live`,
+   which is the brand row's chip, so it wore that chip's LED and padding: a
+   second dot, and a figure off the corner (#130). Solid, so the icon's line
+   does not show through it. */
+.badge.q { color: var(--fg-2); background: color-mix(in srgb, var(--fg) 10%, var(--bg-side)); }
+/* Lately's button: a dot in the accent while something in it is unseen
+   (corner.js sets data-lately), never a number. It is a log of what already
+   rose as a card, so it sits in the foot beside the theme, not first in the
+   head where Search belongs; folded, it is the rail's last icon, held down
+   by the foot it would sit beside. */
+.lt-btn { position: relative; }
+:root[data-side="0"] #rail-lately { margin-top: auto; }
+#side .lt-dot { display: none; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg-side); opacity: 1; }
+:root[data-lately] #side .lt-dot { display: block; }
+.lt-btn[aria-expanded="true"] { color: var(--accent); background: var(--accent-bg); }
 #rail-nav i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: .6; }
 #rail-live.on i { opacity: 1; background: var(--ok); box-shadow: var(--led-glow); }
-:root[data-note] #rail-note i { opacity: 1; background: var(--accent); }
-#rail-note { display: none; }
-#side:has(#note:not([hidden])) #rail-note { display: inline-grid; }
 @media (max-width: 760px) {
   #btn-side-hide { display: none; }
   :root[data-pop] #scrim { display: block; }
@@ -384,6 +423,10 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 #main { grid-area: main; }
 #rail { grid-area: rail; }
 #main { min-width: 0; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
+/* Off a desk the corner (On you) sits over #main's bottom right, so the
+   page's end leaves it its height (corner.js --oy-h): it never covers the
+   last row, and growing the end moves nothing above it. */
+:root:not([data-view="desk"]) #main::after { content: ""; display: block; height: var(--oy-h, 0px); }
 /* Parts the OS would draw, drawn once, snyvi's way (docs/DESIGN.md §8.2).
    Every scrolling list in the chrome has the same thin bar -- there when a
    list is longer than its place, and no wider than it needs to be -- and the
@@ -418,11 +461,15 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
 .side-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 12px 10px 16px; }
 .brand { font-weight: 600; letter-spacing: -.01em; color: var(--fg); display: inline-flex; align-items: center; gap: 8px; }
 .brand:hover { text-decoration: none; }
+/* On Home, the mark is the current row: the accent tint behind it, as a row's. */
+.brand.active { border-radius: var(--r-sm); background: var(--accent-bg); }
+:root:not([data-side="0"]) .brand.active { margin: -3px auto -3px -6px; padding: 3px 6px; }
+.brand.active .brand-name { color: var(--accent); }
 /* snyvi itself, the face from icons/icon-small.svg, and the one mascot on
-   screen: the note at the foot of the sidebar is its voice. Calm and awake
-   most of the time; a waiting note perks it up (the nub pulses, it blinks,
-   it hops once when the note arrives); a reader resting on the note gets a
-   smile and a heart. It falls asleep while the page has no daemon to hear --
+   screen: an agent's aside is its voice. Calm and awake most of the time; a
+   waiting aside perks it up (the nub pulses, it blinks, it hops once when
+   the aside arrives, off a desk); a reader resting on one gets a smile and
+   a heart. It falls asleep while the page has no daemon to hear --
    it stopped, or an upgrade replaced it. */
 .brand-mark { width: 20px; height: 20px; display: inline-block; flex: none; }
 .brand-mark svg { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -452,37 +499,6 @@ html[data-link="off"] .brand-mark .bm-open, html[data-link="off"] .brand-mark .b
 html[data-link="off"] .brand-mark .bm-shut { display: inline; }
 
 /* ---------- snyvi answers ---------- */
-/* The note at the foot of the sidebar is what an agent said, and it carries a
-   byline to say who. This is snyvi speaking for itself, so it has no byline
-   and no card: a short line in a bubble under the face, and a face to match.
-   It never opens on its own -- only for a reader who comes over and rests
-   there -- and never over a note still waiting to be read.
-   These rules follow the ones above on purpose: `html[data-say]` and
-   `html[data-note]` weigh the same, so the later block is the one that wins
-   while snyvi is talking, and the waiting-note blink stops for the moment. */
-.brand-mark .bm-love, .brand-mark .bm-wink { display: none; }
-.brand-mark .bm-love path { fill: var(--heart); }
-.brand-mark .bm-wink { fill: none; stroke: var(--mascot-ink); stroke-width: 2.2; stroke-linecap: round; }
-html[data-say] .brand-mark .bm-open { animation: none; }
-html[data-say] .brand-mark svg { animation: bm-nod .5s ease 1; transform-origin: 50% 100%; }
-html[data-say="glad"] .brand-mark .bm-open { display: none; }
-html[data-say="glad"] .brand-mark .bm-glad { display: inline; }
-html[data-say="wink"] .brand-mark .bm-l { display: none; }
-html[data-say="wink"] .brand-mark .bm-wink { display: inline; }
-html[data-say="love"] .brand-mark .bm-open { display: none; }
-html[data-say="love"] .brand-mark .bm-love { display: inline; }
-html[data-say="love"] .brand-mark .bm-heart { opacity: 1; transform: scale(1); }
-@keyframes bm-nod { 0%, 100% { transform: none; } 40% { transform: translateY(-2px) scale(1.04, .97); } }
-/* It says it where its own name is written. A bubble under the face was a
-   card hanging over the sidebar, covering the first rows of the tree to say
-   two words; this covers nothing, moves nothing, and costs no space at all --
-   the word "snyvi" steps aside for the length of the answer and comes back.
-   The logo speaking in place of its own name is also the right shape for the
-   thing it is: snyvi only ever answers, so it only ever borrows its own line.
-   Short lines only, then: it has the width between the mark and the count. */
-.brand { position: relative; }
-.brand-name { transition: opacity var(--dur-quick) ease; }
-html[data-say] .brand-name { opacity: 0; }
 /* How many agents hold a stream on the daemon now, and the way to the connect
    page. It was a row of its own, "Agents live", which spent a line of the
    sidebar on a number read rarely; it is a pill at the foot, beside the
@@ -499,7 +515,7 @@ html[data-say] .brand-name { opacity: 0; }
 .live:not(.on)::before { background: none; box-shadow: inset 0 0 0 1.5px currentColor; }
 /* The update pill's look is about.js's, which draws it (1.7.2). */
 /* The page cannot hear the daemon; a stale count is worse than none. */
-html[data-link="off"] .live { visibility: hidden; }
+html[data-link="off"] :is(.live, #rail-live .badge) { visibility: hidden; }
 .icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-sm); color: var(--fg-3); transition: background var(--t), color var(--t); }
 .icon:hover { background: var(--rule); color: var(--fg); }
 .icon.on { color: var(--accent); background: var(--accent-bg); }
@@ -511,7 +527,7 @@ html[data-link="off"] .live { visibility: hidden; }
 .icon .aa { font-size: var(--fs-ui); font-weight: 600; letter-spacing: -.02em; font-family: var(--body); }
 :root[data-font="mono"] .icon .aa { font-size: var(--fs-micro); letter-spacing: -.06em; }
 
-.side-foot { display: flex; align-items: center; gap: 4px; padding: 8px 12px 10px; margin-top: auto; border-top: 1px solid var(--rule); }
+.side-foot { display: flex; align-items: center; gap: 4px; height: var(--foot-h); flex: none; padding: 8px 12px 10px; margin-top: auto; border-top: 1px solid var(--rule); }
 .side-foot { position: relative; }
 /* The version, quiet at the foot's end: a click is About, and an update
    waiting puts its dot on it. Gone when the sidebar is folded; the rule stays. */
@@ -601,6 +617,9 @@ html[data-link="off"] .live { visibility: hidden; }
    section label's edge, the name at 32px, and -- on a row that folds -- the
    heads' chevron right after the name. */
 .sec-head { display: flex; align-items: center; gap: var(--sp-2); height: var(--row-h); margin-top: var(--sp-7); padding-right: 2px; }
+/* In the sidebar a head ends where its rows do, inside their 8px: its + and
+   All stand in the rows' ✕ column, and its count on the rows' edge (#131). */
+#trees .sec-head { padding-right: 8px; }
 .sec-fold { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: var(--sp-2); padding: 0 8px; font: inherit; font-size: var(--fs-micro); font-weight: 600; letter-spacing: .01em; color: var(--fg-3); background: none; border-radius: var(--r-sm); text-align: left; transition: color var(--t); }
 button.sec-fold { cursor: pointer; }
 button.sec-fold:hover { color: var(--fg-2); }
@@ -639,20 +658,42 @@ button.sec-fold:hover { color: var(--fg-2); }
 .sec.folded > .sec-body { display: none; }
 .sec-n.ok { color: var(--ok); }
 .sec-n.bad { color: var(--danger); }
-/* A widget's seat (docs/WIDGETS.md): who wrote it and when, a failed run's
-   line, and the body in a fixed room -- `--lines` of 20 px -- so a new body
-   never moves what is under it. A longer one is cut, and opens where it is
+/* A widget's seat (docs/WIDGETS.md): a failed run's line, and the body in
+   a fixed room -- `--lines` of 20 px -- so a new body never moves what is
+   under it. Who writes it is its name's tip (app.js `patchSeat`). A longer one is cut, and opens where it is
    on a click (that is the reader moving the page, not the widget). Past its
    time the whole seat steps back. */
-.wg-by { margin: 0; padding: 0 8px; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wg-ask { display: flex; align-items: center; gap: 8px; margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-2); }
+.sec.wg, .wg > .sec-body { position: relative; }
+.wg-ask, .wg-err { position: absolute; inset: 0 0 auto; z-index: 1; margin: 0; padding: 2px 8px; background: var(--bg-side); }
+.wg-ask { display: flex; align-items: center; gap: 8px; white-space: nowrap; font-size: var(--fs-micro); line-height: 16px; color: var(--fg-2); }
+.wg-ask > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wg-allow { flex: none; padding: 2px 8px; border: 1px solid var(--accent); border-radius: var(--r-sm); color: var(--accent); font-size: var(--fs-micro); font-weight: 600; }
 .wg-allow:hover:not(:disabled) { background: var(--accent-bg); }
-.wg-ask.wg-stop { flex-wrap: wrap; color: var(--warn); }
+.wg-ask.wg-stop { color: var(--warn); }
 .wg-ask.wg-stop .wg-allow { color: var(--accent); }
-.wg-err { margin: 2px 8px 0; font-size: var(--fs-micro); line-height: 16px; color: var(--warn); overflow-wrap: anywhere; }
-.wg-body { height: calc(var(--lines, 3) * 20px); overflow: hidden; padding: 2px 8px 0; font-size: var(--fs-small); line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; cursor: default; }
-.wg-body.open { height: auto; }
+/* A failed run (#112): why, in two lines that open whole, and the button
+   that tells the agent. A cut body or line says so with its "more", over a
+   fade on its last line, and keeps its room: the click opens it. */
+.wg-err { display: flex; align-items: flex-start; gap: 8px; font-size: var(--fs-micro); line-height: 16px; color: var(--warn); overflow-wrap: anywhere; }
+.wg-err:has(> .open) { position: static; }
+.wg-why { position: relative; flex: 1; min-width: 0; max-height: 16px; overflow: hidden; }
+.wg-body { position: relative; height: calc(var(--lines, 3) * 20px); overflow: hidden; padding: 2px 8px 0; font-size: var(--fs-small); line-height: 20px; color: var(--fg-2); overflow-wrap: anywhere; cursor: default; }
+.wg-body.open, .wg-why.open { height: auto; max-height: none; }
+/* A gallery's outputs (src/widget/gallery.rs): one row of tiles in the
+   box's room, each its size before it loads, so nothing moves. The columns
+   share the rail's width, and the row is one tile high: what does not fit
+   wraps out of sight whole, never cut at the edge, and `clip` keeps a
+   click or a Tab from scrolling it back. */
+.gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--gal) * .7), 1fr)); grid-auto-rows: var(--gal); gap: 4px; height: var(--gal); overflow: clip; }
+.gal-t { position: relative; display: grid; place-items: center; padding: 0; border-radius: var(--r-xs); overflow: hidden; background: var(--rule-2); color: var(--fg-3); font-size: var(--fs-micro); line-height: 1.2; cursor: pointer; }
+.gal-t img { width: 100%; height: 100%; object-fit: cover; }
+.gal-t:hover { box-shadow: inset 0 0 0 1px var(--accent); }
+.gal-v.on { position: absolute; color: #fff; text-shadow: 0 0 3px #000; }
+.gal-x { color: var(--danger); font-weight: 600; }
+.wg-more { display: none; position: absolute; right: 0; bottom: 0; padding-left: 24px; background: linear-gradient(90deg, transparent, var(--bg-side) 20px); color: var(--accent); }
+.wg-body > .wg-more { right: 8px; }
+.cut > .wg-more, .open > .wg-more { display: block; }
+.open > .wg-more { position: static; width: fit-content; margin-left: auto; padding: 0; background: none; }
 .wg-body > :first-child { margin-top: 0; }
 .wg-body :is(p, ul, ol, pre, h1, h2, h3, h4, blockquote) { margin: 0; font-size: inherit; line-height: inherit; }
 .wg-body :is(ul, ol) { padding-left: 16px; }
@@ -672,14 +713,14 @@ button.sec-fold:hover { color: var(--fg-2); }
 /* Their layers are the column's own business: nothing they stack over
    leaves #trees, so nothing outside it is covered. Not on the rail, where
    #pop has to stand over the page. */
-:root:not([data-side="0"]) #trees { isolation: isolate; }
+:root:not([data-side="0"]):not([data-pop]) #trees { isolation: isolate; }
 #trees > :is(#inbox-row, #desk-nav, #browse-nav, #widgets-nav) { display: flow-root; background: var(--bg-side); }
 #trees > #inbox-row { position: sticky; top: 0; z-index: 1; }
 #trees > :is(#desk-nav, #browse-nav, #widgets-nav) { position: relative; z-index: 2; }
 #widgets-nav > .sec { display: flow-root; }
 :is(#trees > :is(#desk-nav, #browse-nav), #widgets-nav > .sec) > .sec-head { position: sticky; top: 0; z-index: 1; background: var(--bg-side); }
 .s-chev { width: 5px; height: 5px; margin-left: 4px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-1.5px) rotate(45deg); opacity: 0; transition: transform var(--t), opacity var(--t); }
-:root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .s-row, #queue, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
+:root:not([data-side="0"]) :is(#trees.fold-inbox :is(#inbox-row .s-row, #tree), #trees.fold-desks .t-desks, #trees.fold-folders .b-body) { display: none; }
 .s-body { list-style: none; margin: 0; padding: 0; }
 .s-empty { padding: 5px 8px 5px 8px; font-size: var(--fs-small); color: var(--fg-3); }
 
@@ -703,19 +744,9 @@ button.sec-fold:hover { color: var(--fg-2); }
 summary > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); }
 summary:is(:hover, :focus-visible) > .s-chev, details:not([open]) > summary > .s-chev { opacity: 1; }
 details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
-/* The Inbox's two rows. Waiting folds the waiting list in place, with a
-   row's chevron, kept at rest while it is folded; at nought it stays, quiet,
-   so the Inbox never changes height. Its count and icon are the accent while
-   something waits. Its list says "Waiting" itself only in the rail's
-   popover, where the row is not over it. */
-.t-wait { width: 100%; text-align: left; }
-.t-wait > .s-chev { flex: none; margin-left: -2px; color: var(--fg-3); }
-.t-wait:is(:hover, :focus-visible) > .s-chev, .t-wait[aria-expanded="false"] > .s-chev { opacity: 1; }
-.t-wait[aria-expanded="false"] > .s-chev { transform: rotate(-45deg); }
-.t-wait:not(.new) { color: var(--fg-2); }
-.t-wait.new > .r-ico, .t-wait.new > .n { color: var(--accent); font-weight: 600; }
-#trees:not(.wait-open) > #queue { display: none; }
-#trees > #queue .t-queue > .t-label { display: none; }
+/* Recent, while anything is unread: its icon and count in the accent, the
+   count where the time stands, so the row is the same width and height. */
+.t-inbox.new > :is(.r-ico, .n) { color: var(--accent); font-weight: 600; }
 /* All, at the Inbox head's right edge: the whole library, and its size. */
 .sec-all { flex: none; display: flex; align-items: baseline; gap: 5px; height: 22px; padding: 0 6px; border-radius: var(--r-sm); font-size: var(--fs-micro); font-weight: 600; line-height: 22px; color: var(--fg-3); transition: background var(--t), color var(--t); }
 .sec-all .n { font-weight: 400; font-variant-numeric: tabular-nums; }
@@ -732,31 +763,21 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-doc a.active { background: var(--accent-bg); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
 /* No mark in front of a row: its icon is the mark. A read row's glyph is
    quiet, and centred on the line rather than sat on its baseline; a row
-   waiting to be read has it in the accent, with its title in ink -- the
-   same in the queue and in the tree, gone once the document is opened from
-   either -- and the open row is lit whole. */
+   waiting to be read has it in the accent, with its title in ink -- gone
+   once the document is opened -- and the open row is lit whole. */
 :is(.t-doc a, .b-file a) > .r-ico { align-self: center; opacity: .75; }
 :is(.t-doc a.new, .t-doc a.active, .b-file a.active) > .r-ico { color: var(--accent); opacity: 1; }
 .t-doc a.new .title { color: var(--fg); font-weight: 600; }
-.t-queue { margin: 0 0 6px; }
-.t-queue .t-label { display: flex; align-items: center; padding-top: 2px; }
-/* The count as a figure in the accent, not a filled pill: the bar over the
-   page is the one that interrupts, and this only says how many. */
-.t-queue .t-label .n { margin-left: auto; color: var(--accent); font-weight: 600; padding: 0 6px; line-height: 16px; letter-spacing: 0; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
-.t-queue ul { list-style: none; margin: 2px 0 0; padding: 0; }
-.t-queue .t-more { margin-left: 8px; }
-.t-queue .t-more a { display: inline-block; font-size: var(--fs-micro); color: var(--fg-2); padding: 3px 6px; border-radius: var(--r-sm); }
-.t-queue .t-more a:hover { background: var(--rule); color: var(--fg-2); text-decoration: none; }
 .t-doc .title { overflow: hidden; text-overflow: ellipsis; }
 /* What moved in the sidebar, said once. An arrival's row, or one an undo put
    back, is lit the way a heading is where a jump landed -- the same wash, so
-   the eye learns one sign. A row that was read or deleted closes where it
-   was, 140 ms, before the list moves up into its place. Both start at a
+   the eye learns one sign. A removed row's ghost closes where it was,
+   140 ms, before the list moves up into its place. Both start at a
    negative delay when the tree is rebuilt under them (see `moment` in
    app.js), so a rebuild never plays them again. */
 .wash { animation: land 700ms ease-out; border-radius: var(--r-sm); }   /* on the row itself, where its moment is; /start's Show me too */
 @media (prefers-reduced-motion: reduce) { .wash, .prose .flash { outline: 2px solid var(--focus); outline-offset: 1px; } }
-.t-doc.leaving, .t-queue.leaving .t-label { animation: leave var(--dur-quick) var(--ease-out) forwards; overflow: hidden; pointer-events: none; }
+.t-doc.leaving { animation: leave var(--dur-quick) var(--ease-out) forwards; overflow: hidden; pointer-events: none; }
 /* A row leaving fades where it stands; its place goes when it does. Never
    an animated height: that is layout, every frame (docs/DESIGN.md §7.2). */
 @keyframes leave { to { opacity: 0; } }
@@ -777,10 +798,8 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-ghost > .t-undo { margin-left: auto; align-self: center; padding: 2px 7px; }
 :is(.t-ghost, .t-back)::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: 1px; height: 2px; border-radius: 1px; background: var(--accent); opacity: .6; transform-origin: left; transform: scaleX(var(--undo-left, 1)); transition: transform var(--dur-instant) linear; }
 .t-gone.leaving { animation-delay: var(--t, 0ms); }
-/* What stands around a ghost only for its sake -- the same document's row in
-   Waiting, a project that left with its last document -- is there to be read
-   past, not used, and closes when the ghost does. */
-.t-doc.held > a { opacity: .45; pointer-events: none; }
+/* A project that left with its last document stands around its ghost only
+   for its sake, and closes when the ghost does. */
 .t-proj.leaving > summary { animation: leave var(--dur-quick) var(--ease-out) forwards; overflow: hidden; pointer-events: none; }
 .t-doc .k { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-2); font-family: var(--mono); flex: none; font-variant-numeric: tabular-nums; }
 .t-doc .pin { color: var(--fg-2); flex: none; display: inline-flex; align-self: center; }
@@ -820,10 +839,15 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 /* desks: the row, the flat list under it, the + on a folder, and the folder
    menu -- the only ways a desk is reached. The desk view itself is styled by
    ui/desk.js, which is not on the wire until a desk is opened. */
-/* A desk's row ends in one column, drawn on every row: a 10px box for the
+/* A desk's row ends in one column, drawn on every row: a 22px box for the
    mark -- a green dot running, an amber ! waiting, nothing idle -- and the
    count, right-aligned. Both were laid out only when there was something to
-   show, so the dot on one row sat where the count did on the next. */
+   show, so the dot on one row sat where the count did on the next. 22px is
+   a project row's desk glyph's slot, so the sidebar's marks are one column
+   under the Inbox and the Desks alike, and the ✕ slot beside it is the
+   column the section heads' + and All stand in (#131). The mark is the
+   end's last, whatever order the row writes them in, so a count never
+   pushes it out of its column. */
 /* A desk row on its way to another place: the line is where it lands, and
  * nothing else moves until it does. */
 .t-drop { position: fixed; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; z-index: var(--z-pop); }
@@ -833,10 +857,12 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 .t-desks .end { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
 .t-desks .ctx { font-size: var(--fs-micro); color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .t-desks .ctx.hot { color: var(--warn); font-weight: 600; }
-.t-desks .dot { flex: none; display: grid; place-items: center; width: 10px; height: 10px; }
+.t-desks .dot { flex: none; order: 1; display: grid; place-items: center; width: 22px; height: 10px; }
 .t-desks .dot.on::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.t-desks .dot.run::before { content: ""; width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--fg-3); }
 .t-desks .dot.blk { width: auto; color: var(--warn); font-size: var(--fs-micro); font-weight: 600; line-height: 1; white-space: nowrap; }
-.t-desks .k { min-width: 2ch; text-align: right; font-size: var(--fs-micro); font-family: var(--mono); color: var(--fg-2); flex: none; font-variant-numeric: tabular-nums; }
+.t-desks .k { display: inline-flex; align-items: center; gap: 2px; font-size: var(--fs-micro); font-family: var(--mono); color: var(--fg-2); flex: none; font-variant-numeric: tabular-nums; }
+.t-desks .k-ico { flex: none; opacity: .8; }
 /* A row's ✕ -- delete a document, close a desk -- takes the place of what is
    at the row's end on hover. Armed, a desk's says Close? */
 /* Hidden by clipping rather than by `display: none`, which is what it was:
@@ -863,14 +889,16 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
 :is(.t-doc, .t-desk) > a { --row: var(--rule); }
 :is(.t-doc, .t-desk) > a.active { --row: var(--accent-bg); }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x) { position: absolute; top: 50%; translate: 0 -50%; right: 6px; width: auto; margin: 0; padding: 2px 4px; opacity: 0; pointer-events: none; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
-.t-desk > a > .ren { right: 26px; }
+.t-desk > a > .ren { right: 30px; }
 :is(.t-doc, .t-desk) > a:is(:hover, :focus-visible, :has(:focus-visible)) > :is(.ren, .row-x), .arming > a > .row-x { opacity: 1; pointer-events: auto; }
 :is(.t-doc, .t-desk) > a > :is(.ren, .row-x):hover { background: linear-gradient(var(--rule-2) 0 0), linear-gradient(var(--row) 0 0), var(--bg-side); }
 .t-doc > a:is(:hover, :has(:focus-visible)) :is(.k, .pin), .arming > a :is(.end, .k), .t-desk > a:has(> [data-armed]) > .ren { visibility: hidden; }
 /* A desk's ✕ has a slot of its own at the row's end, as a project's does:
    hovering shows it and hides nothing, so the dot and the count beside it
-   stay where they are. Armed, "Close?" lays over the end as before. */
-.t-desk > a > .row-x { position: static; translate: none; flex: none; width: 22px; height: 22px; padding: 0; margin: 0 -4px 0 0; display: grid; place-items: center; background: none; }
+   stay where they are. Armed, "Close?" lays over the end as before. Inside
+   the row's padding, where a project's ✕ is: 4px past it, it was a column of
+   its own. */
+.t-desk > a > .row-x { position: static; translate: none; flex: none; width: 22px; height: 22px; padding: 0; margin: 0; display: grid; place-items: center; background: none; }
 .t-desk > a > .row-x[data-armed] { position: absolute; right: 6px; width: auto; height: auto; padding: 2px 4px; background: linear-gradient(var(--row) 0 0), var(--bg-side); }
 /* A row lights the moment the pointer is on it, and only lets go slowly. */
 :is(.s-row, .t-proj > summary, .b-root > summary, .t-desk > a, .t-doc a):hover { transition-duration: 0s; }
@@ -901,6 +929,18 @@ details:not([open]) > summary > .s-chev { transform: rotate(-45deg); }
    only: the list keeps its order and every row its place. */
 .t-proj.quiet > summary > .nm { color: var(--fg-2); }
 .t-proj > summary.new > .r-ico { color: var(--accent); }
+/* A friend where a row's icon stands: the first letter of their name in a
+   circle the icon's size, so the column stays one column (02-tree.js
+   `whoIco`). */
+/* Not the accent, which is "where you are" and "unread" (audit 67d008cb6f),
+   and no longer grey either (#123): the friend's own colour, from their name
+   (`whoIco`), at one lightness so every friend's reads on every theme. */
+.r-who { flex: none; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: oklch(54% .12 var(--h, 250)); color: #fff; font-size: var(--fs-micro); font-weight: 650; line-height: 1; }
+.t-doc .r-who { width: 14px; height: 14px; letter-spacing: -.04em; }
+/* How many subfolder projects a project holds, after its chevron, as a
+   section's count is; they hang under it, one step in (03-queue.js `nest`). */
+.t-subs { flex: none; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; color: var(--fg-3); }
+.t-sub { list-style: none; margin-left: 14px; }
 /* An idle desk's name steps back, so the live ones -- the dot, "needs you"
    -- are what the eye finds. The desk on screen keeps its ink. */
 .t-desk > a:not(.active):not(:has(.dot)) > .title { color: var(--fg-2); }
@@ -929,9 +969,9 @@ summary:is(:hover, :focus-within) > .b-new, .b-new:focus-visible { opacity: 1; }
    saying so, and the way to it. Its ✕ follows it rather than splitting the
    slack with it. */
 .b-new.has { opacity: 1; color: var(--fg-3); }
-/* …in the Desks rows' colours while its desk is doing something: a panel
-   running, or one waiting on the reader. Idle, it stays quiet, so it does
-   not read as a second desk row. */
+/* …green while an agent at its desk is working, amber while a panel waits
+   on the reader (02-tree.js `deskState`). Otherwise quiet, a shell open
+   included, so it does not read as a second desk row. */
 .b-new.has.on { color: var(--ok); }
 .b-new.has.blk { color: var(--warn); }
 /* A project with no desk yet keeps the slot, empty until the row is hovered,
@@ -1147,17 +1187,19 @@ pre.code .ln::before { counter-increment: ln; content: counter(ln); display: inl
    it reads as part of the page and not the chrome. Sticky like the find bar,
    so a reader deep in a long page still sees the count. */
 #queue-bar[hidden] { display: none; }
-#queue-bar { position: sticky; top: var(--head-h); z-index: 5; height: 0; margin: 0 auto; max-width: calc(var(--measure) + 96px); padding: 0 48px; box-sizing: border-box; font-size: var(--fs-ui); }
-/* Its height is nothing, so a bar that appears mid-read lays over the page's
-   top margin rather than pushing the text down under the reader; the find
-   bar makes room for it instead. The 10 px gap is the card's own offset:
-   padding on the bar would give it a height and push the page down, and a
-   margin on the card would collapse through the bar and do the same. */
-#queue-bar:not([hidden]) ~ #find { padding-top: 58px; }
-/* On a desk the head is the desk's own row, and the bar lays over its
-   middle, between the name and the buttons, as it did before the head. */
-:root[data-view="desk"] #queue-bar { top: 0; }
-#queue-bar .qb { position: relative; top: 10px; display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 5px 5px 5px 9px; animation: rise var(--dur-quick) var(--ease-out); }
+#queue-bar { position: sticky; top: var(--head-h); z-index: calc(var(--z-sticky) + 1); height: 0; margin: 0 auto; max-width: calc(var(--measure) + 144px); padding: 0 72px; box-sizing: border-box; font-size: var(--fs-ui); }
+/* Its height is nothing, so a bar that appears mid-read pushes no text down
+   under the reader. And the card rises into the bar's own row above it, in
+   the room the title takes once the page scrolls: laid over the page, it
+   hid the page's title, then the lines under it, which no reader new to
+   snyvi knew to scroll past. The title gives way while it is up; the way
+   back and Width at the row's ends keep theirs (72 px of side room clears
+   ‹ › and Width with ✕ on a narrow page). The offset is the card's own: padding on the bar
+   would give it a height and push the page down. */
+#main:has(#queue-bar:not([hidden])) #chrome .over-t { visibility: hidden; }
+/* Narrow, the rail's own button joins them at the right: room for three. */
+@media (max-width: 1100px) { #queue-bar { padding-right: 112px; } }
+#queue-bar .qb { position: relative; top: calc(8px - var(--head-h)); display: flex; align-items: center; gap: 10px; min-width: 0; background: var(--bg-raise); border: 1px solid var(--rule); box-shadow: var(--shadow); border-radius: var(--r-md); padding: 5px 5px 5px 9px; animation: rise var(--dur-quick) var(--ease-out); }
 /* snyvi at the front of the bar, holding what came: the toast's head, the
    size of the count's line, leaning in to the text it is holding up. Its
    feeling comes and goes with the count (app.js, `qbFeel`); at rest the
@@ -1253,26 +1295,10 @@ pre.code .inv { color: var(--del-fg); }
 .inbox-head { margin-bottom: 28px; }
 .inbox-head h1 { font-size: var(--fs-h2); letter-spacing: -.02em; font-weight: 650; margin: 0 0 4px; }
 .inbox-head p { color: var(--fg-3); margin: 0; font-size: var(--fs-body-s); }
-.inbox { list-style: none; margin: 0; padding: 0; }
-.inbox li a { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title time" "sub sub"; gap: 2px 16px; padding: 12px 14px; margin: 0 -14px; border-radius: var(--r-md); color: inherit; border-bottom: 1px solid var(--rule); transition: background var(--t); }
-.inbox li a:hover { background: var(--bg-side); text-decoration: none; }
-.inbox .title { grid-area: title; font-weight: 600; font-size: var(--fs-body-s); letter-spacing: -.005em; }
-.inbox .time { grid-area: time; font-size: var(--fs-small); color: var(--fg-3); font-variant-numeric: tabular-nums; }
-.inbox .sub { grid-area: sub; font-size: var(--fs-small); color: var(--fg-3); }
-.inbox .sub b { font-weight: 500; color: var(--fg-2); }
-.inbox a.new .title::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin: 0 9px 2px 0; vertical-align: middle; }
-.inbox-sec { display: flex; align-items: center; gap: 10px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; margin: 32px 0 4px; }
-.inbox-sec .n { background: var(--accent); color: var(--on-accent); border-radius: var(--r-pill); padding: 0 7px; line-height: 17px; font-variant-numeric: tabular-nums; font-size: var(--fs-micro); }
-.inbox-sec button { margin-left: auto; font-weight: 500; font-size: var(--fs-small); color: var(--fg-2); padding: 3px 8px; border-radius: var(--r-sm); }
-.inbox-sec button + button { margin-left: 0; }
-/* Removed · Show, at the foot of the Inbox, and the rows it opens. */
-.inbox-sec button:hover { background: var(--rule); color: var(--fg); }
-.inbox.waiting { margin-bottom: 8px; }
-.empty-state { margin: 20vh auto 0; max-width: 46ch; text-align: center; color: var(--fg-2); }
-.empty-state h1 { font-size: var(--fs-h3); font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; color: var(--fg); }
-.empty-state p { margin: 0 0 18px; font-size: var(--fs-body-s); }
-.empty-state .hero .mk { display: block; width: 44px; height: 44px; margin: 0 auto 16px; }
-.empty-state pre { text-align: left; font-family: var(--mono); font-size: var(--fs-ui); background: var(--code-bg); padding: 12px 16px; border-radius: var(--r-sm); display: inline-block; margin: 0; }
+/* The Inbox's list and its empty state are home.js's, which draws them
+   (`inboxHtml`): off first paint since 1.32, as the page waits for that
+   chunk before it draws its rows anyway. The folder list (browse.js)
+   carries the rows it shares with it. */
 
 /* ---------- rail ---------- */
 /* Two things live in the rail and they scroll apart. The contents can be
@@ -1372,25 +1398,11 @@ pre.code .ln::before { cursor: pointer; }
 .mk-love, .mk-puff, .mk-cheek { fill: var(--heart); }
 .mk-shine { fill: var(--mascot-shine); }   /* the peek's alone: at 72 px the eyes keep their light */
 
-/* A face moves only for what happens a few times a day (docs/DESIGN.md
-   §7.2): something arriving, the queue emptying, a small failure. The
-   answers to clicks -- rest, glad, wink -- change the face and keep still. */
-[data-feel="love"] .mk { animation: mk-hop .62s var(--ease-spring) 1; }
-[data-feel="whoa"] .mk { animation: mk-pop .5s cubic-bezier(.2,1.8,.4,1) 1; }
-[data-feel="oops"] .mk { animation: mk-shake .46s ease-in-out 1; }
-/* The antenna is the part with no face on it, so it carries the rest of the
-   feeling: it swings behind a hop and droops when the answer is a no. */
-[data-feel="love"] .mk-nub { animation: mk-swing .62s cubic-bezier(.3,1.5,.5,1) 1; }
-[data-feel="oops"] .mk-nub { transform: translateY(1.4px) rotate(-14deg); }
-.mk-puff { transform-box: view-box; transform-origin: 26px 8px; animation: mk-puff 1.5s cubic-bezier(.3,.7,.4,1) var(--dur-move) 1 both; }
-@keyframes mk-hop { 0% { transform: none; } 32% { transform: translateY(-4px) scale(1.06, .94); } 62% { transform: translateY(0) scale(.95, 1.05); } 82% { transform: translateY(-1px); } 100% { transform: none; } }
-@keyframes mk-pop { 0% { transform: scale(.62); } 55% { transform: scale(1.12); } 100% { transform: none; } }
-@keyframes mk-shake { 0%, 100% { transform: none; } 20% { transform: rotate(-7deg); } 50% { transform: rotate(6deg); } 80% { transform: rotate(-3deg); } }
-@keyframes mk-swing { 0%, 100% { transform: none; } 30% { transform: rotate(-20deg); } 65% { transform: rotate(12deg); } }
-@keyframes mk-puff { from { opacity: 0; transform: translate(0, 2px) scale(.4); } 35% { opacity: 1; } to { opacity: 0; transform: translate(3px, -11px) scale(1); } }
+/* How a face moves for a feeling is look.js's, fetched once the page is
+   idle: off first paint since 1.32. */
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .toast, .mk, .mk-nub, .mk-puff { animation: none; }
+  .toast { animation: none; }
 }
 
 /* ---------- palette / help ---------- */
@@ -1441,11 +1453,11 @@ pre.code .lc { display: block; content-visibility: auto; contain-intrinsic-block
 .b-empty:hover { background: var(--rule); color: var(--fg-2); }
 
 /* ---------- where the mascot never is, and the quiet switch ----------
-   On a desk the panels are the work: no face in a toast or the queue bar
+   On a desk the panels are the work: no face in a toast (and no queue bar)
    there (docs/DESIGN.md §2.3). The quiet switch (§2.5, ⌘K and the mark's
    menu) keeps every face at rest and nothing of it moving: no hops, blinks,
-   hearts, hover lines or peek; a waiting aside is the nub, lit. */
-:root[data-view="desk"] :is(.toast .who, #queue-bar .qb-who) { display: none; }
+   hearts or peek; a waiting aside is the nub, lit. */
+:root[data-view="desk"] .toast .who { display: none; }
 
 /* Working: the one mark for a process under way (docs/DESIGN.md §7.4) --
    three dots, the light walking along them, beside a word that says what.
@@ -1458,7 +1470,7 @@ pre.code .lc { display: block; content-visibility: auto; contain-intrinsic-block
 @keyframes dots { 30% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .dots i:nth-child(-n+2) { opacity: 1; } }
 :root[data-mascot="quiet"] :is(.mk, .mk *, .brand-mark *, .note-bg) { animation: none !important; transition: none !important; }
-:root[data-mascot="quiet"] :is(.bm-say, .note-bg, .uc-bg, .mk-puff, .brand-mark .bm-heart) { display: none !important; }
+:root[data-mascot="quiet"] :is(.note-bg, .uc-bg, .mk-puff, .brand-mark .bm-heart) { display: none !important; }
 /* The last one waiting read: love, on the mark, once (app.js renderQueue). */
 html[data-cleared] .brand-mark .bm-open { display: none; }
 html[data-cleared] .brand-mark .bm-glad { display: inline; }

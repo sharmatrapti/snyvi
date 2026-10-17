@@ -69,6 +69,23 @@ pub const KIND_COLUMNS: [&str; 2] = [
 pub const SENT_BY_COLUMN: &str =
     "ALTER TABLE desk_notes ADD COLUMN sent_by TEXT NOT NULL DEFAULT ''";
 
+/// 1.37: the loop between a line and the agents on it. A commit on main
+/// that names the line lands it (`land_notes`): its hash and time, until the
+/// reader checks it (`check_note`). The agent's one line about it, said with
+/// a tick or a mark, or the reader's own words when they reopen it, with who
+/// said it -- empty for the reader -- and when. Version 22 of
+/// `store::MIGRATIONS`, one batch, on the same terms as `POS_COLUMN`.
+pub const LOOP_COLUMNS_1_37: &str =
+    "ALTER TABLE desk_notes ADD COLUMN landed_commit TEXT NOT NULL DEFAULT '';
+ALTER TABLE desk_notes ADD COLUMN landed_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE desk_notes ADD COLUMN reply TEXT NOT NULL DEFAULT '';
+ALTER TABLE desk_notes ADD COLUMN reply_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE desk_notes ADD COLUMN reply_at INTEGER NOT NULL DEFAULT 0;";
+
+/// 1.35: a panel made to wait for the reader's first Start (`Pane::held`).
+/// Version 20 of `store::MIGRATIONS`, on the same terms as `POS_COLUMN`.
+pub const HELD_COLUMN: &str = "ALTER TABLE panes ADD COLUMN held INTEGER NOT NULL DEFAULT 0";
+
 /// 1.16: the studio is retired, and a studio desk is a terminal desk on the
 /// same folder (its root was always the folder), with its panels, notes,
 /// keys and documents. Version 4 of `store::MIGRATIONS`. Nothing on disk is
@@ -182,6 +199,9 @@ pub struct Desk {
     /// The Claude account its panels start as, or 0 for `/login`
     /// (`crate::accounts`).
     pub account: i64,
+    /// The places its work lives on the web, pinned by its agents, the
+    /// hidden ones too, for their Undo (`crate::links`).
+    pub links: Vec<crate::links::Link>,
     pub panes: Vec<Pane>,
 }
 
@@ -351,6 +371,23 @@ pub struct DeskNote {
     pub tellable: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub told: bool,
+    /// The commit on main that names this line, found by git
+    /// (`git::notes_named`), and when it was made: the work is out and the
+    /// line reads "check it" until the reader says it works or is still
+    /// broken. Never a tick on its own: a typo in a subject is not a yes.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub landed_commit: String,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub landed_at: i64,
+    /// One line about the work, under the line's text: what an agent said
+    /// with its tick or its mark (`Tick::say`, `Mark::say`), or the reader's
+    /// own words when they said it is still broken -- `reply_by` empty then.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub reply: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub reply_by: String,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub reply_at: i64,
 }
 
 fn is_zero(n: &i64) -> bool {
@@ -362,12 +399,27 @@ fn is_zero(n: &i64) -> bool {
 /// Done is the tick, not a stage.
 pub const STAGES: [&str; 3] = ["read", "planned", "working"];
 
+/// The stage a line is at once the reader said its work is still broken
+/// (`check_note`): theirs, not an agent's, so it is not in `STAGES`, and an
+/// agent's next mark replaces it.
+pub const REOPENED: &str = "reopened";
+
+/// How long the line an agent says about a line may be: one line under it.
+pub const REPLY_CHARS: usize = 160;
+
+/// A reply as it is kept: one line, at most `REPLY_CHARS`.
+pub fn reply_of(say: &str) -> String {
+    clip_to(say, REPLY_CHARS)
+}
+
 /// What an agent says with a stage: `mark_note`.
 #[derive(Clone, Debug, Default)]
 pub struct Mark {
     /// One of `STAGES`.
     pub stage: String,
     pub by: String,
+    /// Its one line about the line, or empty to leave the last one.
+    pub say: String,
     /// The plan's id: needed with `planned`, and checked by `doc_ok`.
     pub doc: String,
     /// The pane it was said from, and that pane's conversation.
@@ -423,6 +475,13 @@ pub struct Pane {
     /// Its own Claude account, or `None` to start as its desk's
     /// (`crate::accounts::effective`).
     pub account: Option<i64>,
+    /// Made to wait for the reader: a new project desk's first panel, holding
+    /// `claude` until they press Start. Kept here rather than in the page so
+    /// a reload, a second window or a daemon restart still finds it waiting,
+    /// where a pane with no process would otherwise start itself (`resume()`
+    /// in the desk view). Cleared by the first start, whatever it runs.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub held: bool,
 }
 
 /// Where a document came from, when it came from a pane: the desk and the
@@ -483,7 +542,7 @@ pub fn list(conn: &Connection) -> Result<Vec<Desk>> {
         .query_map([], row_to_desk)?
         .collect::<rusqlite::Result<_>>()?;
     let mut stmt = conn.prepare(
-        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session, name, account FROM panes ORDER BY desk_id, slot",
+        "SELECT desk_id, id, slot, cwd, cmd, created_at, agent_session, name, account, held FROM panes ORDER BY desk_id, slot",
     )?;
     let panes: Vec<(i64, Pane)> = stmt
         .query_map([], |r| Ok((r.get(0)?, row_to_pane(r, 1)?)))?
@@ -526,7 +585,7 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Desk>> {
         return Ok(None);
     };
     let mut stmt = conn.prepare(
-        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account FROM panes WHERE desk_id = ?1 ORDER BY slot",
+        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account, held FROM panes WHERE desk_id = ?1 ORDER BY slot",
     )?;
     desk.panes = stmt
         .query_map(params![id], |r| row_to_pane(r, 0))?
@@ -570,6 +629,7 @@ pub fn create(conn: &Connection, root: &str, name: Option<&str>, now: i64) -> Re
         parked: None,
         keys: Vec::new(),
         account: 0,
+        links: Vec::new(),
         panes: Vec::new(),
     })
 }
@@ -893,6 +953,7 @@ pub fn open_pane(
     desk_id: i64,
     cwd: &str,
     cmd: &str,
+    held: bool,
     now: i64,
 ) -> Result<Opened> {
     let tx = conn.transaction()?;
@@ -916,8 +977,8 @@ pub fn open_pane(
     };
     let id = pane_id()?;
     tx.execute(
-        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, created_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-        params![id, desk_id, slot, cwd, cmd, now],
+        "INSERT INTO panes(id, desk_id, slot, cwd, cmd, created_at, held) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, desk_id, slot, cwd, cmd, now, held],
     )?;
     tx.commit()?;
     Ok(Opened::Pane(Pane {
@@ -930,6 +991,7 @@ pub fn open_pane(
         resume: String::new(),
         name: String::new(),
         account: None,
+        held,
     }))
 }
 
@@ -1053,7 +1115,7 @@ pub fn restore_pane(conn: &mut Connection, id: &str) -> Result<Restored> {
     )?;
     tx.execute("DELETE FROM panes_closed WHERE id = ?1", params![id])?;
     let pane = tx.query_row(
-        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account FROM panes WHERE id = ?1",
+        "SELECT id, slot, cwd, cmd, created_at, agent_session, name, account, held FROM panes WHERE id = ?1",
         params![id],
         |r| row_to_pane(r, 0),
     )?;
@@ -1114,16 +1176,16 @@ pub fn rename_pane(conn: &Connection, id: &str, name: &str) -> Result<bool> {
 pub fn pane(conn: &Connection, id: &str) -> Result<Option<Placed>> {
     Ok(conn
         .query_row(
-            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, p.name, p.account, d.id, d.name, d.root, d.account
+            "SELECT p.id, p.slot, p.cwd, p.cmd, p.created_at, p.agent_session, p.name, p.account, p.held, d.id, d.name, d.root, d.account
              FROM panes p JOIN desks d ON d.id = p.desk_id WHERE p.id = ?1",
             params![id],
             |r| {
                 Ok(Placed {
                     pane: row_to_pane(r, 0)?,
-                    desk_id: r.get(8)?,
-                    desk_name: r.get(9)?,
-                    root: r.get(10)?,
-                    desk_account: r.get(11)?,
+                    desk_id: r.get(9)?,
+                    desk_name: r.get(10)?,
+                    root: r.get(11)?,
+                    desk_account: r.get(12)?,
                 })
             },
         )
@@ -1136,6 +1198,16 @@ pub fn set_cmd(conn: &Connection, id: &str, cmd: &str) -> Result<bool> {
     Ok(conn.execute(
         "UPDATE panes SET cmd = ?2 WHERE id = ?1",
         params![id, cmd.trim()],
+    )? > 0)
+}
+
+/// A panel that waited for the reader (`Pane::held`) no longer does: its
+/// first start, whatever it runs, and before the process is spawned, so a
+/// start that fails leaves it stopped and asking, not held.
+pub fn unhold(conn: &Connection, id: &str) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE panes SET held = 0 WHERE id = ?1 AND held <> 0",
+        params![id],
     )? > 0)
 }
 
@@ -1268,7 +1340,8 @@ pub fn notes(conn: &Connection, desk_id: i64) -> Result<Vec<DeskNote>> {
     let mut stmt = conn.prepare(
         "SELECT id, text, done_at, created_at, done_by, done_commit, done_doc, done_evidence, suggested_by, images,
                 stage, stage_by, stage_doc, stage_at, stage_pane, stage_session, done_pane, sent_by, thread_id,
-                (sent_peer != 0 AND sent_frame != ''), told_at FROM desk_notes
+                (sent_peer != 0 AND sent_frame != ''), told_at,
+                landed_commit, landed_at, reply, reply_by, reply_at FROM desk_notes
          WHERE desk_id = ?1 AND removed_at = 0
          ORDER BY CASE WHEN done_at != 0 THEN 2 WHEN suggested_by != '' THEN 1 ELSE 0 END, done_at, id",
     )?;
@@ -1398,6 +1471,8 @@ pub struct Tick {
     pub evidence: String,
     /// The pane it was said from.
     pub pane: String,
+    /// Its one line about what changed, or empty to leave the last one.
+    pub say: String,
 }
 
 /// A commit hash as `git log` prints one, short or full: 7 to 40 hex digits
@@ -1454,9 +1529,12 @@ pub fn tick_note(conn: &Connection, desk_id: i64, id: i64, tick: &Tick, now: i64
     // A suggestion is not the reader's list yet, so it is not the agent's to
     // tick: it is kept, or not, first.
     Ok(conn.execute(
-        "UPDATE desk_notes SET done_at = ?3, done_by = ?4, done_commit = ?5, done_doc = ?6, done_evidence = ?7, done_pane = ?8
+        "UPDATE desk_notes SET done_at = ?3, done_by = ?4, done_commit = ?5, done_doc = ?6, done_evidence = ?7, done_pane = ?8,
+                reply = CASE WHEN ?9 != '' THEN ?9 ELSE reply END,
+                reply_by = CASE WHEN ?9 != '' THEN ?4 ELSE reply_by END,
+                reply_at = CASE WHEN ?9 != '' THEN ?3 ELSE reply_at END
          WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
-        params![desk_id, id, now, by, commit, doc, evidence, tick.pane],
+        params![desk_id, id, now, by, commit, doc, evidence, tick.pane, reply_of(&tick.say)],
     )? > 0)
 }
 
@@ -1484,7 +1562,10 @@ pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64
     let working = mark.stage == "working";
     Ok(conn.execute(
         "UPDATE desk_notes SET stage = ?3, stage_by = ?4, stage_doc = CASE WHEN ?5 != '' THEN ?5 ELSE stage_doc END,
-                stage_at = ?6, stage_pane = ?7, stage_session = ?8
+                stage_at = ?6, stage_pane = ?7, stage_session = ?8,
+                reply = CASE WHEN ?9 != '' THEN ?9 ELSE reply END,
+                reply_by = CASE WHEN ?9 != '' THEN ?4 ELSE reply_by END,
+                reply_at = CASE WHEN ?9 != '' THEN ?6 ELSE reply_at END
          WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
         params![
             desk_id,
@@ -1494,7 +1575,8 @@ pub fn mark_note(conn: &Connection, desk_id: i64, id: i64, mark: &Mark, now: i64
             doc,
             now,
             if working { mark.pane.as_str() } else { "" },
-            if working { mark.session.as_str() } else { "" }
+            if working { mark.session.as_str() } else { "" },
+            reply_of(&mark.say)
         ],
     )? > 0)
 }
@@ -1511,6 +1593,75 @@ pub fn settle_stage(n: &mut DeskNote, live: bool) {
         }
         .into();
     }
+}
+
+/// The lines git may land (`land_notes`), with the time a commit has to be
+/// newer than: open lines the reader kept, that an agent has picked up -- a
+/// stage, or a thread -- and that nothing has landed yet. A line no agent
+/// touched never jumps to "check it" on a stray "#12" in a subject. A line
+/// the reader reopened takes only a commit made after they did, or the
+/// commit they just said did not fix it would land it again at once.
+pub fn landable(conn: &Connection, desk_id: i64) -> Result<Vec<(i64, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, CASE WHEN stage = ?2 THEN stage_at ELSE created_at END FROM desk_notes
+         WHERE desk_id = ?1 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''
+           AND landed_commit = '' AND (stage != '' OR thread_id != 0)",
+    )?;
+    let rows = stmt
+        .query_map(params![desk_id, REOPENED], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// Land lines git found named on main: `(line, commit, its time)`. Each
+/// reads "check it" with the commit, and waits for the reader. Only a line
+/// still open and not landed; how many changed.
+pub fn land_notes(conn: &Connection, desk_id: i64, found: &[(i64, String, i64)]) -> Result<usize> {
+    let mut n = 0;
+    for (id, commit, at) in found {
+        let commit = commit.trim().to_ascii_lowercase();
+        if !commit_ok(&commit) {
+            continue;
+        }
+        n += conn.execute(
+            "UPDATE desk_notes SET landed_commit = ?3, landed_at = ?4
+             WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = '' AND landed_commit = ''",
+            params![desk_id, id, commit, at],
+        )?;
+    }
+    Ok(n)
+}
+
+/// The reader's check of a line whose work is out. It works: the line is
+/// ticked, theirs, and keeps the commit it landed with. It is still broken:
+/// the landing is cleared and the line is reopened, out of its thread -- a
+/// shipped thread would go on saying "check it" -- with the reader's words,
+/// when they gave some, as its reply; the next agent's brief leads with it.
+/// The plan stays. False when the line is not open on this desk.
+pub fn check_note(
+    conn: &Connection,
+    desk_id: i64,
+    id: i64,
+    works: bool,
+    say: &str,
+    now: i64,
+) -> Result<bool> {
+    if works {
+        return Ok(conn.execute(
+            "UPDATE desk_notes SET done_at = ?3, done_by = '', done_commit = landed_commit, done_doc = '', done_evidence = '', done_pane = ''
+             WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+            params![desk_id, id, now],
+        )? > 0);
+    }
+    Ok(conn.execute(
+        "UPDATE desk_notes SET landed_commit = '', landed_at = 0, thread_id = 0,
+                stage = ?4, stage_by = '', stage_at = ?3, stage_pane = '', stage_session = '',
+                reply = CASE WHEN ?5 != '' THEN ?5 ELSE reply END,
+                reply_by = CASE WHEN ?5 != '' THEN '' ELSE reply_by END,
+                reply_at = CASE WHEN ?5 != '' THEN ?3 ELSE reply_at END
+         WHERE desk_id = ?1 AND id = ?2 AND removed_at = 0 AND done_at = 0 AND suggested_by = ''",
+        params![desk_id, id, now, REOPENED, reply_of(say)],
+    )? > 0)
 }
 
 /// How many suggestions a desk holds waiting for the reader. A few, so an
@@ -1756,6 +1907,11 @@ fn row_to_note(r: &rusqlite::Row) -> rusqlite::Result<DeskNote> {
         thread: r.get(18)?,
         tellable: r.get::<_, i64>(19)? != 0,
         told: r.get::<_, i64>(20)? != 0,
+        landed_commit: r.get(21)?,
+        landed_at: r.get(22)?,
+        reply: r.get(23)?,
+        reply_by: r.get(24)?,
+        reply_at: r.get(25)?,
     })
 }
 
@@ -1858,7 +2014,7 @@ fn pane_id() -> Result<String> {
 }
 
 const DESK_COLS: &str =
-    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane, account";
+    "id, name, root, col, row, created_at, full_slot, left_off, left_off_at, left_off_by, left_off_about, visited_at, parked_at, parked_next, left_off_pane, account, links";
 
 fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
     let text: String = r.get(7)?;
@@ -1891,6 +2047,7 @@ fn row_to_desk(r: &rusqlite::Row) -> rusqlite::Result<Desk> {
         },
         keys: Vec::new(),
         account: r.get(15)?,
+        links: crate::links::from_column(&r.get::<_, String>(16)?),
         panes: Vec::new(),
     })
 }
@@ -1911,6 +2068,7 @@ fn row_to_pane(r: &rusqlite::Row, at: usize) -> rusqlite::Result<Pane> {
         resume,
         name: r.get(at + 6)?,
         account: r.get(at + 7)?,
+        held: r.get(at + 8)?,
     })
 }
 

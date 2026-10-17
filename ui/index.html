@@ -13,7 +13,7 @@
 <div id="app">
   <aside id="side" tabindex="-1" data-part="side">
     <div class="side-head" data-tauri-drag-region="deep" data-part="side.head">
-      <a class="brand" href="/" data-nav="home" data-tip="Home" data-key="h"><span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><rect class="bm-nub" x="14" y="0.5" width="4" height="5" rx="2"/><path class="bm-heart" d="M16 3c-2.6-1.6-3.3-3.4-2-4.3.8-.5 1.6-.1 2 .6.4-.7 1.2-1.1 2-.6 1.3.9.6 2.7-2 4.3z"/><rect class="bm-body" x="1" y="4" width="30" height="27" rx="9"/><g class="bm-open"><ellipse class="bm-l" cx="11" cy="16.5" rx="2.6" ry="3.3"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3"/></g><path class="bm-shut" d="M8.6 17q2.4 1.8 4.8 0M18.6 17q2.4 1.8 4.8 0"/><path class="bm-glad" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="bm-wink" d="M8.6 17.8q2.4-3 4.8 0"/><g class="bm-love"><path transform="translate(11 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/><path transform="translate(21 16.5) scale(.85)" d="M0 3.2c-3.4-2-4.3-4.4-2.6-5.6 1-.7 2.1-.1 2.6.8.5-.9 1.6-1.5 2.6-.8 1.7 1.2.8 3.6-2.6 5.6z"/></g><path class="bm-mouth" d="M13.5 23q2.5 2.2 5 0"/></svg></span><span class="brand-name">snyvi</span><span class="bm-say" id="bm-say" hidden aria-hidden="true"></span></a>
+      <a class="brand" href="/" data-nav="home" data-tip="Home" data-key="h"><span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><rect class="bm-nub" x="14" y="0.5" width="4" height="5" rx="2"/><path class="bm-heart" d="M16 3c-2.6-1.6-3.3-3.4-2-4.3.8-.5 1.6-.1 2 .6.4-.7 1.2-1.1 2-.6 1.3.9.6 2.7-2 4.3z"/><rect class="bm-body" x="1" y="4" width="30" height="27" rx="9"/><g class="bm-open"><ellipse class="bm-l" cx="11" cy="16.5" rx="2.6" ry="3.3"/><ellipse cx="21" cy="16.5" rx="2.6" ry="3.3"/></g><path class="bm-shut" d="M8.6 17q2.4 1.8 4.8 0M18.6 17q2.4 1.8 4.8 0"/><path class="bm-glad" d="M8.6 17.8q2.4-3 4.8 0M18.6 17.8q2.4-3 4.8 0"/><path class="bm-mouth" d="M13.5 23q2.5 2.2 5 0"/></svg></span><span class="brand-name">snyvi</span></a>
       <button class="upd" id="upd" type="button" aria-live="polite" hidden></button>
       <button class="icon" id="btn-search" data-tip="Search" data-key="mod+k" aria-label="Search">
         <svg viewBox="0 0 20 20" width="16" height="16"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13 13l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -24,24 +24,22 @@
     </div>
     <nav id="rail-nav" aria-label="Sidebar" aria-orientation="vertical">
       <button class="icon" id="rail-search" data-ico="search" data-tip="Search" data-key="mod+k" aria-label="Search"></button>
-      <button class="icon" data-pop="inbox" data-ico="inbox" data-tip="Inbox" data-key="i" data-tip-sub="letter keys: Ctrl B turns them on" aria-label="Inbox"><b class="badge"></b></button>
-      <button class="icon" data-pop="tree" data-ico="project" data-tip="Projects" aria-label="Projects"></button>
+      <button class="icon" data-pop="inbox" data-ico="inbox" data-tip="Inbox" data-key="i" aria-label="Inbox"><b class="badge"></b></button>
+      <button class="icon" data-pop="tree" data-ico="project" data-tip="Projects" data-tip-sub="the Inbox's, newest first" aria-label="Projects"></button>
       <button class="icon" data-pop="desks" data-ico="desk" data-tip="Desks" aria-label="Desks"><b class="badge"></b></button>
       <button class="icon" data-pop="browse" data-ico="folder" data-tip="Folders" aria-label="Folders"></button>
       <button class="icon" data-pop="widgets" data-ico="widgets" data-tip="Widgets" aria-label="Widgets"></button>
       <a class="icon" id="rail-live" href="/connect" data-nav="connect" data-tip="No agent connected" aria-label="No agent connected"><i></i><b class="badge"></b></a>
-      <button class="icon" id="rail-note" data-pop="note" data-tip="An aside is waiting" aria-label="An aside is waiting"><i></i></button>
+      <button class="icon lt-btn" id="rail-lately" data-ico="clock" data-tip="Lately" data-tip-sub="What came: documents, asides, friends" aria-label="Lately" aria-expanded="false"><i class="lt-dot"></i></button>
     </nav>
     <div id="trees" data-part="side.tree">
       <div id="inbox-row"></div>
-      <nav id="queue" aria-label="Waiting to be read"></nav>
       <nav id="tree" aria-label="Projects"></nav>
       <nav id="desk-nav" aria-label="Desks"></nav>
       <nav id="browse-nav" aria-label="Folders"></nav>
       <nav id="widgets-nav" aria-label="Widgets"></nav>
       <div id="pop" hidden></div>
     </div>
-    <section id="note" hidden aria-label="An aside from snyvi" aria-live="polite"></section>
     <div class="side-foot" data-part="side.foot">
       <div class="foot-set">
         <div class="foot-rail" id="foot-rail" role="toolbar" aria-orientation="vertical" aria-label="Look and more">
@@ -56,12 +54,16 @@
           <button class="icon" id="btn-wrap" data-tip-live data-tip="Wrap long lines" data-key="z" aria-label="Wrap">
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h14M3 10h10a2.5 2.5 0 0 1 0 5H8M10 13l-2 2 2 2M3 15h2"/></svg>
           </button>
+          <button class="icon" id="btn-hover" data-tip-live data-tip="Focus follows the pointer" data-tip-sub="On desks, the panel your pointer rests on takes the keys" aria-label="Focus follows the pointer" aria-pressed="false">
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 3l11 6-4.6 1.4L8 15z"/><path d="M13 13.5l3 3" stroke-linecap="round"/></svg>
+          </button>
           <button class="icon" id="btn-help" data-tip="Keyboard shortcuts" data-key="?" aria-label="Keyboard shortcuts"><span class="qm">?</span></button>
           <button class="icon" id="btn-game" data-tip="Asteroids" aria-label="Asteroids">
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5c2.7 1.7 3.9 5 3.4 9L10 14.2 6.6 11.5c-.5-4 .7-7.3 3.4-9z"/><circle cx="10" cy="8.2" r="1.3"/><path d="M6.8 10.8 4.6 13.2l2.3.6M13.2 10.8l2.2 2.4-2.3.6M10 14.2v3.3"/></svg>
           </button>
         </div>
       </div>
+      <button class="icon lt-btn" id="btn-lately" data-ico="clock" data-tip="Lately" data-tip-sub="What came: documents, asides, friends" aria-label="Lately" aria-expanded="false"><i class="lt-dot"></i></button>
       <a class="live" id="live" href="/connect" data-nav="connect" data-tip="No agent connected" aria-label="No agent connected">0</a>
       <button class="foot-ver" id="foot-ver" type="button" data-tip="About snyvi" aria-label="About snyvi" hidden></button>
     </div>
@@ -70,7 +72,7 @@
   <main id="main" data-part="main">
     <div id="chrome" data-tauri-drag-region="deep" data-part="main.head">
       <span class="nv"><button type="button" class="nv-b" data-step="-1" data-tip="Back" data-key="alt+←" aria-label="Back" aria-disabled="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg></button><button type="button" class="nv-b" data-step="1" data-tip="Forward" data-key="alt+→" aria-label="Forward" aria-disabled="true"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button></span>
-      <div class="over" hidden><span class="over-t"></span><button class="over-x" data-tip="Back to the panels" data-key="ctrl+`" aria-label="Back to the panels"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></div>
+      <div class="over" hidden><span class="over-t"></span><button class="over-w" id="btn-wide-top" data-tip="Width" data-tip-sub="the whole page, or the reading column" data-key="w" aria-label="Width" aria-pressed="false"><svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 6L3 10l4 4M13 6l4 4-4 4M10 4v12"/></svg></button><button class="over-c" id="btn-copy-top" data-tip="Copy all" data-tip-sub="the source, and the page as drawn" data-key="y" aria-label="Copy all"><svg class="c-ic" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M13 4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13"/></svg><svg class="c-ok" viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5l4 4 8-9"/></svg></button><button class="over-x" data-tip="Back to the panels" data-key="ctrl+`" aria-label="Back to the panels"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg></button></div>
       <div class="chrome-r">
         <button class="icon" id="btn-rail" data-tip="Contents" data-key="t" aria-label="Show contents" aria-controls="rail">
           <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M12 4v12"/></svg>

@@ -51,6 +51,9 @@ pub enum Phase {
     Starting,
     /// The sign-in page is open, or its address is here to open.
     Waiting,
+    /// The token is read and being kept: too late to cancel, so a cancel
+    /// can never say Cancelled over an account that was added anyway.
+    Saving,
     Done,
     Failed,
     Cancelled,
@@ -213,12 +216,19 @@ impl SignIns {
                     me.update(id, |s| {
                         if s.url.is_none() {
                             s.url = Some(url);
+                        }
+                        if s.phase == Phase::Starting {
                             s.phase = Phase::Waiting;
                         }
                     });
                 }
                 if let Some(token) = said.token {
                     me.kill(id);
+                    // Cancelled while the token was on its way: dropped.
+                    if !me.claim(id) {
+                        let _ = child.wait();
+                        return;
+                    }
                     let ended = match keep.take().map(|k| k(token)) {
                         Some(Ok(account)) => (Phase::Done, Some(account), None),
                         Some(Err(e)) => (Phase::Failed, None, Some(format!("{e:#}"))),
@@ -270,8 +280,7 @@ impl SignIns {
                     Phase::Starting | Phase::Waiting => continue,
                     _ => return,
                 };
-                me.kill(id);
-                me.end(id, Phase::Failed, None, Some(why.into()));
+                me.give_up(id, why);
                 return;
             }
         });
@@ -296,21 +305,61 @@ impl SignIns {
     }
 
     /// End the sign-in that is open, if there is one; whether there was.
+    /// One whose token is already being kept is past cancelling.
     pub fn cancel(&self) -> bool {
-        let id = match self.current() {
-            Some(s) if matches!(s.phase, Phase::Starting | Phase::Waiting) => s.id,
-            _ => return false,
+        self.stop(None, Phase::Cancelled, None)
+    }
+
+    /// The clock's ending, held to the same rule as a cancel.
+    fn give_up(&self, id: u64, why: &str) -> bool {
+        self.stop(Some(id), Phase::Failed, Some(why.into()))
+    }
+
+    /// Kill and end a sign-in still Starting or Waiting, in one hold of the
+    /// lock `claim` takes.
+    fn stop(&self, id: Option<u64>, phase: Phase, error: Option<String>) -> bool {
+        let mut now = self.now.lock().unwrap();
+        let Some(live) = now.as_mut().filter(|l| {
+            id.is_none_or(|id| l.shown.id == id)
+                && matches!(l.shown.phase, Phase::Starting | Phase::Waiting)
+        }) else {
+            return false;
         };
-        self.kill(id);
-        self.end(id, Phase::Cancelled, None, None);
+        let _ = live.killer.kill();
+        live.input = None;
+        live.shown.phase = phase;
+        live.shown.error = error;
         true
     }
 
+    /// Change a sign-in that has not ended.
     fn update(&self, id: u64, f: impl FnOnce(&mut Shown)) {
         if let Some(live) = self.now.lock().unwrap().as_mut() {
-            if live.shown.id == id && matches!(live.shown.phase, Phase::Starting | Phase::Waiting) {
+            if live.shown.id == id
+                && matches!(
+                    live.shown.phase,
+                    Phase::Starting | Phase::Waiting | Phase::Saving
+                )
+            {
                 f(&mut live.shown);
             }
+        }
+    }
+
+    /// Take the sign-in from Starting or Waiting to Saving, under the one
+    /// lock a cancel takes too, so exactly one of them wins; whether this
+    /// did.
+    fn claim(&self, id: u64) -> bool {
+        let mut now = self.now.lock().unwrap();
+        match now.as_mut() {
+            Some(live)
+                if live.shown.id == id
+                    && matches!(live.shown.phase, Phase::Starting | Phase::Waiting) =>
+            {
+                live.shown.phase = Phase::Saving;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -464,6 +513,55 @@ mod tests {
             Said::default()
         );
         assert_eq!(said(&lines(&["see https://example.com/help"])).url, None);
+    }
+
+    /// Stands in for the hidden terminal's process.
+    #[derive(Debug)]
+    struct Nobody;
+    impl ChildKiller for Nobody {
+        fn kill(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(Nobody)
+        }
+    }
+
+    fn waiting(id: u64) -> SignIns {
+        let s = SignIns::default();
+        *s.now.lock().unwrap() = Some(Live {
+            shown: Shown {
+                id,
+                phase: Phase::Waiting,
+                renew: None,
+                label: "Account 2".into(),
+                url: None,
+                account: None,
+                error: None,
+            },
+            input: None,
+            killer: Box::new(Nobody),
+        });
+        s
+    }
+
+    /// A cancel and a token read at the same moment: one of them wins, and
+    /// the sheet never says Cancelled over an account that was added.
+    #[test]
+    fn a_cancel_and_a_token_cannot_both_win() {
+        let s = waiting(1);
+        assert!(s.claim(1), "the token is read first");
+        assert!(!s.cancel(), "too late to cancel");
+        s.end(1, Phase::Done, Some(5), None);
+        assert_eq!(s.current().unwrap().phase, Phase::Done);
+        assert_eq!(s.current().unwrap().account, Some(5));
+
+        let s = waiting(2);
+        assert!(s.cancel(), "cancelled first");
+        assert!(!s.claim(2), "so the token is dropped");
+        assert!(!s.give_up(2, "late"), "and the clock leaves it be");
+        s.end(2, Phase::Done, Some(5), None);
+        assert_eq!(s.current().unwrap().phase, Phase::Cancelled);
     }
 
     #[test]

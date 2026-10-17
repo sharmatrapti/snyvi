@@ -170,7 +170,7 @@
     catch (e) { palLoading = null; closeDialog(pal); toast("Could not open search", { sub: e }); return; }
     const { THEMES, slot, previewTheme, setTheme, loadThemes } = lk;
     palMod.open({ pal, input: $("#palette-input"), list: $("#palette-list"), state, capability, root, esc, rel, mascotHead, browsing, codePre,
-      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, toggleQuiet, checkUpdates, panel, showHome, showInbox, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, showSidebars, openHelp, peerCtx, places: deskPlaces });
+      openDialog, closeDialog, THEMES, slot, previewTheme, setTheme, loadThemes, toggleQuiet, checkUpdates, panel, showHome, showInbox, act, gotoLine, showDesk, showBrowse, showDoc, showConnect, showStart, showWelcome, showSidebars, openHelp, peerCtx, places: deskPlaces, openCorner: () => corner(m => m.open()) });
   }
   const closePalette = () => { if (palMod) palMod.close(); };
   const browsing = () => state.view === "browse" && state.browseRoot;
@@ -233,9 +233,24 @@
     on ? (root.dataset.wide = "1") : delete root.dataset.wide;
     store.set("snyvi.wide", on ? "1" : "0");
     pressed($("#btn-wide"), on);
+    pressed($("#btn-wide-top"), on);
   }
   $("#btn-wide").addEventListener("click", control("wide", toggleWide));
   pressed($("#btn-wide"), root.dataset.wide === "1");
+  // The same, where the reading is: in the page's own bar, beside the way
+  // back. The column under the theme's button is not where a reader looks
+  // for how wide the page is, and a first one never found it there.
+  $("#btn-wide-top").addEventListener("click", control("wide", toggleWide));
+  pressed($("#btn-wide-top"), root.dataset.wide === "1");
+
+  /** Copy all (#165) is ui/copy.js, fetched once the page is idle, with
+   *  nav.js (07-nav.js): by the first click it is here, and the click
+   *  reaches the clipboard with nothing awaited before it, which WebKit
+   *  asks. A click before it came waits for it. */
+  let copyMod = null;
+  const useCopy = () => import(`/assets/copy.js${boot.v ? `?v=${boot.v}` : ""}`).then(m => (copyMod = m.init({ state, rawUrl, toast, keyHint })));
+  const copyAll = btn => copyMod ? copyMod.copyAll(btn) : useCopy().then(m => m.copyAll(btn));
+  $("#btn-copy-top").addEventListener("click", e => copyAll(e.currentTarget));
 
   function toggleWrap() {
     const on = root.dataset.wrap !== "1";
@@ -245,6 +260,23 @@
   }
   $("#btn-wrap").addEventListener("click", control("wrap", toggleWrap));
   pressed($("#btn-wrap"), root.dataset.wrap === "1");
+
+  /* Focus follows the pointer (#161) is the whole app's, so it is here with
+   * the look and not in one desk's ⋯, where it read as that desk's. One key
+   * in this browser, as it always was; an open desk hears the change
+   * (`snyvi:hover-focus`, 14-hover.js). Never dimmed off a desk: it is a
+   * preference, set before a desk is ever opened. */
+  const HOVER = "snyvi.hover-focus", hoverBtn = $("#btn-hover");
+  const paintHover = () => { const on = store.get(HOVER) === "1"; pressed(hoverBtn, on); hoverBtn.dataset.tip = `Focus follows the pointer: ${on ? "on" : "off"}`; };
+  hoverBtn.addEventListener("click", () => {
+    const on = store.get(HOVER) !== "1";
+    store.set(HOVER, on ? "1" : "0");
+    dispatchEvent(new CustomEvent("snyvi:hover-focus", { detail: on }));
+    toast(on ? "Focus follows the pointer" : "Focus on click", { sub: on ? "rest the pointer on a panel to type in it" : "click a panel to type in it" });
+  });
+  addEventListener("snyvi:hover-focus", paintHover);
+  addEventListener("storage", e => { if (e.key === HOVER) paintHover(); });
+  paintHover();
 
   /** The terminal's text size, after Aa on a desk: the panels' text is the
    *  answer, and Aa's label, under the hand, names the size. */
@@ -334,7 +366,7 @@
    * window never pays for it. Open means loaded. The opener is taken now,
    * as the reader presses, not when the chunk lands. */
   const railNarrow = matchMedia("(max-width: 1100px)"), sideNarrow = matchMedia("(max-width: 760px)");
-  const sideEl = $("#side");
+  // `sideEl` is 03-queue.js's, the sidebar's order held under the pointer.
   function closeSheet() { return !!root.dataset.sheet && acts.closeSheet(); }
   const toggleSheet = (which, opener = document.activeElement) => root.dataset.sheet === which ? closeSheet() : useActs().then(m => m.openSheet(actsCtx, which, opener));
   $("#scrim").addEventListener("click", () => { closeSheet(); closePop(); });
@@ -365,10 +397,10 @@
    * the popover; #pop is inside #trees, so the clicks the tree delegates
    * still reach it. One at a time; Esc, a click outside it, a link followed
    * in it and `\` close it. The numbers on the icons are the ones the
-   * sections say: waiting, panels waiting on you, agents connected. */
+   * sections say: waiting, panels that need you, agents connected. */
   const railNav = $("#rail-nav");
   ICONS.search = '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.8-4.8"/>';
-  for (const b of railNav.querySelectorAll("[data-ico]")) b.insertAdjacentHTML("afterbegin", icon(b.dataset.ico));
+  for (const b of document.querySelectorAll("#side [data-ico]")) b.insertAdjacentHTML("afterbegin", icon(b.dataset.ico));
   /** A number on a rail icon; none at 0. Hoisted: the renderers call it at boot. */
   function badge(sel, n, cls = "") {
     const b = document.querySelector(`#rail-nav ${sel} .badge`);
@@ -383,6 +415,13 @@
     if (b) useActs().then(m => m.pop(actsCtx, b.dataset.pop, b));
     else if (e.target.closest("#rail-search")) openPalette();
   });
+  /* Lately is every desk's, so it is the sidebar's, which is every page's:
+   * one button in its head, and the same in the rail when it is folded. It
+   * opens in the rail's popover, as a section would, with the rows
+   * corner.js draws; opening it is looking, so the dot goes everywhere. */
+  const openLately = b => corner(m => { m.lately(); useActs().then(a => a.pop(actsCtx, "lately", b)); });
+  for (const b of document.querySelectorAll(".lt-btn")) b.addEventListener("click", () => openLately(b));
+  if (boot.lately_unseen) root.dataset.lately = "1";
   // A toolbar: the arrows walk it, Tab leaves it.
   railNav.addEventListener("keydown", e => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
@@ -438,6 +477,7 @@
     openFind, deleteCurrent, openNext, showInbox, showHome, rawUrl, mmd: () => mmd,
     noteBar: () => state.view === "home" && !!homeMod?.focusBar(),
     wide: () => control("wide", toggleWide)(), wrap: () => control("wrap", toggleWrap)(),
+    copyAll: () => copyAll($("#chrome .over:not([hidden]) #btn-copy-top")),
     rail: () => railNarrow.matches ? rail.classList.contains("empty") || toggleSheet("rail") : fold("rail"),
     side: () => closePop() || fold("side") };
 
@@ -445,6 +485,17 @@
     const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === "KeyB" && !inField) { e.preventDefault(); keys(!keysOn); return; }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); pal.hidden ? openPalette() : closePalette(); return; }
+    // Find, on the key every other app has it on (#156), letters awake or
+    // not, and over the browser's own bar, which searched the sidebar and the
+    // rail with the page. Not from a panel, where Ctrl+F, F3 and Ctrl+G are
+    // the program's; not over a PDF, whose viewer has a find of its own. In
+    // the bar it selects the query again, as a browser's does.
+    const mod = (e.metaKey || e.ctrlKey) && !e.altKey, inPanel = !!e.target.closest?.(".pn");
+    if (mod && !e.shiftKey && e.key.toLowerCase() === "f" && !inPanel && (!inField || e.target.id === "find-input")
+        && (state.view === "doc" || (browsing() && state.browsePath)) && !(state.preview === "pdf" && state.previewOn)) {
+      e.preventDefault(); openFind(); return;
+    }
+    if (!findBar.hidden && find && !inPanel && (e.key === "F3" || (mod && e.key.toLowerCase() === "g"))) { e.preventDefault(); find.step(e.shiftKey); return; }
     if (e.key === "Escape") {
       // Esc takes down whatever is over the page, one press for all of it;
       // only with nothing over it, and the hand in no field and no panel,

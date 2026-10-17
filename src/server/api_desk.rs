@@ -33,13 +33,15 @@ pub(crate) async fn home(
     } else {
         (serde_json::Value::Null, serde_json::Value::Null)
     };
-    // Your turn across desks, and the threads by stage (`crate::thread`):
-    // behind the same gate as the desks they are on.
+    // On you across desks, each marked fresh or stale, and the threads by
+    // stage (`crate::thread`): behind the same gate as the desks they are
+    // on. What has waited three days is put away first.
     let (turns, threads) = if gated {
         app.store
             .clocked(|c, now| {
+                crate::thread::retire(c, now)?;
                 Ok((
-                    crate::thread::waiting(c)?,
+                    crate::thread::waiting(c, now)?,
                     crate::thread::across_desks(c, now - THREADS_SHIPPED_SHOWN)?,
                 ))
             })
@@ -55,14 +57,39 @@ pub(crate) async fn home(
         "threads": threads,
         "queue": app.store.queue(5).unwrap_or_default(),
         // Arrived: the newest unread, so Home is still one read.
-        "arrived": app.store.newest_unread(ARRIVED).unwrap_or_default(),
+        "arrived": app.store.queue(ARRIVED).unwrap_or_default(),
         "waiting": waiting(&app),
         "update": update_json(&app),
         "agents": app.online(),
-        "quota": *app.quota.lock().unwrap_or_else(|e| e.into_inner()),
+        // Every account's windows, labelled; and, for a page that shows
+        // one figure, the account with the least left.
+        "quotas": home_quotas(&app),
+        "quota": app.usage.least(crate::store::now()).map(|(_, q)| q),
         "version": VERSION,
     }))
     .into_response()
+}
+
+/// Home's bars: one per account heard from, by the name the sheet gives it,
+/// your login first.
+fn home_quotas(app: &App) -> Vec<serde_json::Value> {
+    let names = app.store.claude_accounts().unwrap_or_default();
+    let all = app.usage.quotas();
+    all.as_object()
+        .into_iter()
+        .flatten()
+        .map(|(id, q)| {
+            let id: i64 = id.parse().unwrap_or_default();
+            let label = names
+                .iter()
+                .find(|a| a.id == id)
+                .map_or_else(|| "your login".to_string(), |a| a.label.clone());
+            let mut q = q.clone();
+            q["account"] = json!(id);
+            q["label"] = json!(label);
+            q
+        })
+        .collect()
 }
 
 /// How long a shipped thread stays on Home's Threads: a week.
@@ -104,10 +131,11 @@ pub(crate) fn home_desks(app: &App) -> (serde_json::Value, serde_json::Value) {
                 .take(HOME_NOTES)
                 .map(|n| json!({ "id": n.id, "text": n.text, "stage": n.stage, "stage_by": n.stage_by,
                     "stage_doc": n.stage_doc, "stage_panel": n.stage_panel,
+                    "landed_commit": n.landed_commit, "reply": n.reply, "reply_by": n.reply_by,
                     // Its dot breathes only while the agent is at it.
                     "stage_busy": n.stage == "working" && app.panes.status(&n.stage_pane).agent == "working" }))
                 .collect();
-            let last_doc = app.store.desk_docs(d.id, 1, false).unwrap_or_default().into_iter().next();
+            let last_doc = app.store.desk_last(d.id);
             let git = app.git.read(std::path::Path::new(&d.root), now);
             let ticks: Vec<&crate::desk::Done> = done.iter().filter(|t| t.desk_id == d.id).collect();
             let docs: Vec<&(i64, String, String, i64)> = sent.iter().filter(|x| x.0 == d.id).collect();
@@ -354,6 +382,10 @@ pub(crate) struct NewPaneBody {
     /// and nothing here starts anything: Phase 3 spawns, this phase records.
     #[serde(default)]
     pub(crate) cmd: Option<String>,
+    /// Wait for the reader's Start on every load (`desk::Pane::held`): a new
+    /// project desk's first panel, made by the window behind `refuse_desk`.
+    #[serde(default)]
+    pub(crate) held: bool,
 }
 
 /// Every desk, with its panes, and how many panes are open across them.
@@ -372,11 +404,13 @@ pub(crate) async fn desks(
             "home": dirs::home_dir(),
             "panes": panes,
             "per_desk": crate::desk::PER_DESK,
-            // The Claude accounts, for the keys sheet, a panel's "Run as"
-            // and its tip: names and dates, no token, which no answer carries.
-            "accounts": app.store.claude_accounts().unwrap_or_default().iter()
-                .map(super::api_accounts::shown)
-                .collect::<Vec<_>>(),
+            // The Claude accounts, for the keys sheet, a panel's head and
+            // its limit strip: names and dates, no token, which no answer
+            // carries. What each has left and whether its sign-in still
+            // works are by id, `0` being your login.
+            "accounts": super::api_accounts::listed(&app),
+            "quotas": app.usage.quotas(),
+            "broken": app.usage.broken(),
         }))
         .into_response(),
         (Err(e), _) | (_, Err(e)) => err(e),
@@ -503,6 +537,42 @@ pub(crate) async fn remove_desk_doc(
         return no;
     }
     desk_doc_off(&app, id, &doc, true)
+}
+
+/// The reader's ✕ on a card above the rail's foot (`hide`), or its Undo
+/// (`show`): the pane keeps the id on its `closed` list for the session,
+/// and the page hears it on the pane's own socket (1.43). Only a pane on
+/// this desk, and only an id a card could have.
+pub(crate) async fn desk_card_act(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, pane, card, act)): Path<(i64, String, String, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let shut = match act.as_str() {
+        "hide" => true,
+        "show" => false,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let ok = (1..=40).contains(&card.len())
+        && card
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if !ok || !crate::pane::valid_id(&pane) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match app.store.pane(&pane) {
+        Ok(Some(p)) if p.desk_id == id => {}
+        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    }
+    match app.panes.close_card(&pane, &card, shut) {
+        Some(changed) => Json(json!({ "ok": true, "changed": changed })).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// Undo, or Show's way back: the document is on the desk's list again.
@@ -632,6 +702,43 @@ pub(crate) async fn set_desk_note(
     }
 }
 
+#[derive(Deserialize, Default)]
+pub(crate) struct CheckBody {
+    /// It works, or it is still broken.
+    #[serde(default)]
+    pub(crate) works: bool,
+    /// What is still wrong, in the reader's words: the line's reply.
+    #[serde(default)]
+    pub(crate) say: String,
+}
+
+/// The reader's check of a line whose work is out (`desk::check_note`):
+/// Works ticks it, theirs; Still broken reopens it with what they said, for
+/// the next agent's brief. The page's, under the capability, as every write
+/// on the list is.
+pub(crate) async fn check_desk_note(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, note)): Path<(i64, i64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Json(b): Json<CheckBody>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    match app
+        .store
+        .clocked(|c, now| crate::desk::check_note(c, id, note, b.works, &b.say, now))
+    {
+        Ok(true) => {
+            notes_moved(&app, id);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
 /// Take a line off the list. The row is kept and `restore` puts it back: this
 /// path deletes nothing, which is why it does not ask twice the way closing a
 /// desk does.
@@ -666,6 +773,33 @@ pub(crate) async fn restore_desk_note(
     match app.store.restore_desk_note(id, note) {
         Ok(true) => {
             notes_moved(&app, id);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+/// The reader's ✕ on one of the desk's links (`crate::links`), and its
+/// Undo: `hide` true takes it out of the rail's foot, false brings it back.
+/// The link stays in the desk's row either way.
+pub(crate) async fn hide_desk_link(
+    State(app): S,
+    headers: HeaderMap,
+    Path((id, link, to)): Path<(i64, i64, String)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Some(no) = refuse_desk(&app, &headers, &q) {
+        return no;
+    }
+    let hidden = match to.as_str() {
+        "hide" => true,
+        "show" => false,
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    match app.store.hide_desk_link(id, link, hidden) {
+        Ok(true) => {
+            desks_moved(&app);
             Json(json!({ "ok": true })).into_response()
         }
         Ok(false) => StatusCode::NOT_FOUND.into_response(),
@@ -930,6 +1064,16 @@ pub(crate) async fn add_desk_key(
     };
     if let Err(e) = app.store.add_desk_key(desk_id, &name, b.provider.trim()) {
         return err(e);
+    }
+    // A key an agent handed over by name is in now: its turn is settled,
+    // and the agent hears it at its next prompt (audit e0a854b732, B5).
+    if let Ok(n) = app
+        .store
+        .clocked(|c, now| crate::thread::settle_key(c, desk_id, &name, now))
+    {
+        if n > 0 {
+            notes_moved(&app, id);
+        }
     }
     desks_moved(&app);
     Json(json!({ "ok": true, "kept": kept })).into_response()
@@ -1240,7 +1384,7 @@ pub(crate) async fn open_pane(
         return StatusCode::NOT_FOUND.into_response();
     };
     let cmd = b.cmd.unwrap_or_default();
-    match app.store.open_pane(desk.id, &desk.root, cmd.trim()) {
+    match app.store.open_pane(desk.id, &desk.root, cmd.trim(), b.held && !cmd.trim().is_empty()) {
         Ok(crate::desk::Opened::Pane(pane)) => {
             desks_moved(&app);
             (StatusCode::CREATED, Json(json!({ "pane": pane }))).into_response()
@@ -1362,6 +1506,11 @@ pub(crate) struct StartBody {
     /// would put its id over the one on offer.
     #[serde(default)]
     pub(crate) marked: bool,
+    /// Run `cmd` this once, and keep what `Start` re-runs as it was: the
+    /// held panel's *Ask Claude* button, whose question is asked once and
+    /// is not what the panel should run again on its next Start.
+    #[serde(default)]
+    pub(crate) once: bool,
     #[serde(default = "default_cols")]
     pub(crate) cols: u16,
     #[serde(default = "default_rows")]
@@ -1396,6 +1545,20 @@ pub(crate) async fn start_pane(
     let Ok(Some(placed)) = app.store.pane(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // A panel made to wait for the reader starts on their press only: the
+    // page's own start after a reload or a restart is refused, so an older
+    // page that does not know about the hold cannot start it either.
+    if placed.pane.held {
+        if b.marked {
+            return (
+                StatusCode::CONFLICT,
+                Json(json!({ "error": "this panel waits for Start", "held": true })),
+            )
+                .into_response();
+        }
+        let _ = app.store.unhold_pane(&id);
+        desks_moved(&app);
+    }
     let lapsed = b.resume && b.marked && !app.panes.marked(&id);
     let offer = b.marked && (lapsed || !b.resume) && app.panes.offered(&id);
     // A resume is a one-off: what `Start` re-runs stays what the reader typed.
@@ -1415,7 +1578,7 @@ pub(crate) async fn start_pane(
         placed.pane.resume.clone()
     } else {
         let cmd = b.cmd.unwrap_or_else(|| placed.pane.cmd.clone());
-        if cmd.trim() != placed.pane.cmd {
+        if cmd.trim() != placed.pane.cmd && !b.once {
             let _ = app.store.set_pane_cmd(&id, &cmd);
         }
         cmd
@@ -1427,6 +1590,58 @@ pub(crate) async fn start_pane(
     } else {
         placed.root.as_str()
     };
+    let PaneEnv {
+        env,
+        account,
+        account_missing,
+        outranked,
+    } = pane_env(&app, &placed).await;
+    let start = crate::pane::Start {
+        cwd,
+        root: &placed.root,
+        cmd: &cmd,
+        args: &[],
+        desk: &placed.desk_name,
+        slot: placed.pane.slot,
+        cols: b.cols,
+        rows: b.rows,
+        accent: &b.accent,
+        offer,
+        env: &env,
+        account,
+    };
+    match live.start(start, &app.panes) {
+        Ok(status) => {
+            let mut said = json!({ "status": status });
+            if account_missing {
+                said["account_missing"] = json!(true);
+            }
+            if !outranked.is_empty() {
+                said["outranked"] = json!(outranked);
+            }
+            Json(said).into_response()
+        }
+        Err(e) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// What a panel's process is started with besides its command: the desk's
+/// keys, the snyvi mod's folder, and the Claude account's token -- for the
+/// reader's Start (`start_pane`) and a pipeline's stage alike
+/// (`pipeline_run`), so a stage runs as its panel would.
+pub(crate) struct PaneEnv {
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) account: i64,
+    pub(crate) account_missing: bool,
+    /// What Claude Code takes over that token, by name only.
+    pub(crate) outranked: Vec<&'static str>,
+}
+
+pub(crate) async fn pane_env(app: &App, placed: &crate::desk::Placed) -> PaneEnv {
     // The desk's keys: names from the store, values from the keychain on a
     // blocking thread, into the child's environment and nowhere else. A key
     // whose value is nowhere is not set at all.
@@ -1450,7 +1665,7 @@ pub(crate) async fn start_pane(
     }
     // The snyvi mod, for a Claude Code started in this panel: its folder is
     // named here and nowhere else (`crate::claude_mod`).
-    if mod_on(&app) {
+    if mod_on(app) {
         env.push((
             "CLAUDE_CODE_PLUGIN_DIRS".into(),
             crate::claude_mod::plugin_dirs(&crate::claude_mod::dir(&app.paths)),
@@ -1484,7 +1699,7 @@ pub(crate) async fn start_pane(
     }
     // What Claude Code takes over that token, by name only: a desk key, or
     // the daemon's own environment, which a panel inherits.
-    let outranked: Vec<&str> = if account == crate::accounts::DEFAULT {
+    let outranked: Vec<&'static str> = if account == crate::accounts::DEFAULT {
         Vec::new()
     } else {
         crate::accounts::OUTRANKS
@@ -1492,35 +1707,11 @@ pub(crate) async fn start_pane(
             .filter(|n| env.iter().any(|(k, _)| k == n) || std::env::var_os(n).is_some())
             .collect()
     };
-    let start = crate::pane::Start {
-        cwd,
-        root: &placed.root,
-        cmd: &cmd,
-        desk: &placed.desk_name,
-        slot: placed.pane.slot,
-        cols: b.cols,
-        rows: b.rows,
-        accent: &b.accent,
-        offer,
-        env: &env,
+    PaneEnv {
+        env,
         account,
-    };
-    match live.start(start, &app.panes) {
-        Ok(status) => {
-            let mut said = json!({ "status": status });
-            if account_missing {
-                said["account_missing"] = json!(true);
-            }
-            if !outranked.is_empty() {
-                said["outranked"] = json!(outranked);
-            }
-            Json(said).into_response()
-        }
-        Err(e) => (
-            StatusCode::CONFLICT,
-            Json(json!({ "error": e.to_string() })),
-        )
-            .into_response(),
+        account_missing,
+        outranked,
     }
 }
 

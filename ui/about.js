@@ -27,7 +27,7 @@ let wired = false;
  *
  * - a 6 px dot on the mascot, which says there is something (`html[data-upd]`);
  *   its words are the mark's tip and a live line for a screen reader (#upd);
- * - the update card, laid over the foot of the sidebar above the aside card:
+ * - the update card, laid over the foot of the sidebar:
  *   *Update when quiet*, *Now* and *Later*; who a restart waits on, by name;
  *   a confirm in the card when *Now* would end a panel's work; the lines to
  *   run for an install snyvi does not update itself. Home draws the same card
@@ -47,7 +47,7 @@ const later = () => {
 };
 const since = t => { const m = Math.max(0, Math.round((Date.now() / 1000 - t) / 60)); return m < 1 ? "just now" : m < 60 ? `${m} m` : `${Math.round(m / 60)} h`; };
 /** Who a restart waits on, the way the rail names them. */
-const named = w => [w.desk && `${w.desk} · panel ${w.slot}`, w.agent === "needs_you" ? "waiting on you" : w.agent === "working" ? `Claude working${w.since ? ` ${since(w.since)}` : ""}` : "printing"].filter(Boolean).join(" · ");
+const named = w => [w.desk && `${w.desk} · panel ${w.slot}`, w.agent === "needs_you" ? "needs you" : w.agent === "working" ? `Claude working${w.since ? ` ${since(w.since)}` : ""}` : "printing"].filter(Boolean).join(" · ");
 
 /** What the update block says now: the dot's class, one line, and the card's
  *  state, or nothing. */
@@ -55,7 +55,7 @@ function said(u) {
   const { capability, plural, version } = uc;
   const r = u && u.restart, w = (r && r.waiting) || [], n = r && r.waiting_on ? r.waiting_on.length : 0;
   if (u && (u.restarting || (updWaiting && r && r.now))) return { dot: "waiting", line: `Restarting${u.ready ? ` to ${u.ready}` : ""}`, card: "restarting" };
-  if (r) return n ? { dot: "waiting", line: `Waiting on ${plural(n, "panel")}`, card: "waiting", w } : { dot: "waiting", line: "Waiting for a check…", card: "waiting", w };
+  if (r) return n ? { dot: "waiting", line: `Waits for ${plural(n, "busy panel")}`, card: "waiting", w } : { dot: "waiting", line: "Waiting for a check…", card: "waiting", w };
   if (!u || !u.show) return null;
   if (u.failed_recent) return { dot: "failed", line: `${u.failed} did not start · kept ${version || ""}`.trim(), card: "failed" };
   if (u.ready) return { dot: u.amber ? "amber" : "ready", line: capability ? `snyvi ${u.ready} is ready` : `Update ready · ${u.ready}`, card: "ready" };
@@ -79,7 +79,6 @@ function renderUpd() {
   // Updated: once per landing, kept for the page it was first shown on, as a
   // toast whose action is the release notes.
   const at = u && u.last_applied;
-  if (!s && at && Date.now() / 1000 - at < 3600 && uc.landed) uc.landed(version, at * 1000);
   if (!s && at && Date.now() / 1000 - at < 86400 && updFresh !== at) {
     let seen = null; try { seen = localStorage.getItem("snyvi.updated"); } catch {}
     updFresh = at;
@@ -172,8 +171,8 @@ async function act(what, btn, el) {
   if (what === "notes" || what === "about") return panel("about");
 }
 
-/** The card at the sidebar's foot: over the tree, above the aside card, so
- *  its coming and going moves nothing. The tree keeps room for both. */
+/** The card at the sidebar's foot: over the tree, so its coming and going
+ *  moves nothing. The tree keeps room for it. */
 function drawCard(s) {
   const side = document.getElementById("side");
   if (!side) return;
@@ -313,13 +312,14 @@ const HELP = `
   </section>
   <section>
     <h3>Read</h3>
-    <div class="hk"><span>Find in document</span><span class="keys"><kbd>/</kbd></span></div>
+    <div class="hk"><span>Find in document</span><span class="keys">${kb("mod", "F")}<i>/</i><kbd>/</kbd></span></div>
     <div class="hk"><span>Compare with previous version</span><span class="keys"><kbd>c</kbd></span></div>
     <div class="hk"><span>Split / inline diff</span><span class="keys"><kbd>s</kbd></span></div>
     <div class="hk"><span>Preview / source</span><span class="keys"><kbd>v</kbd></span></div>
     <div class="hk"><span>Maximise width</span><span class="keys"><kbd>w</kbd></span></div>
     <div class="hk"><span>Wrap long lines</span><span class="keys"><kbd>z</kbd></span></div>
     <div class="hk"><span>Open source</span><span class="keys"><kbd>o</kbd></span></div>
+    <div class="hk"><span>Copy all</span><span class="keys"><kbd>y</kbd></span></div>
   </section>
 </div>
 <div class="help-col" id="help-col-2">
@@ -416,6 +416,7 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 .welcome .w-mark .mk { width: 44px; height: 44px; }
 .welcome .doc-title { margin: 14px 0 12px; }
 .w-lede { font-size: 16px; line-height: 1.55; color: var(--fg-2); margin: 0 0 36px; }
+.w-lede b { color: var(--fg); font-weight: 600; }
 .w-q { font-size: var(--fs-h3); font-weight: 600; margin: 0 0 14px; }
 .w-or { margin: 26px 0 8px; font-size: var(--fs-ui); color: var(--fg-3); }
 .w-places { list-style: none; margin: 0; padding: 0; }
@@ -424,8 +425,88 @@ pre.cmd code { background: none; padding: 0; font-size: inherit; }
 .w-places b { font-weight: 600; font-size: 14.5px; }
 .w-places span { font-family: var(--mono); font-size: var(--fs-small); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .w-tab { font-size: var(--fs-body-s); color: var(--fg-2); }
+.w-btns { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.w-btns .btn { border-color: var(--rule-2); }
+.w-priv { margin: 16px 0 0; font-size: var(--fs-ui); color: var(--fg-3); }
+/* A first run's Welcome is the whole window: the sidebar has nothing to say
+   until there is a desk, and comes back with the view that has one. \\ still
+   brings its rail. */
+:root:not([data-side="0"]) #app:has(.w-first) { grid-template-columns: 0 minmax(0, 1fr) 0 !important; }
+:root:not([data-side="0"]) #app:has(.w-first) #side { display: none; }
+.w-tour { margin-top: 28px; }
+.w-more { font: inherit; font-size: var(--fs-ui); color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
+.w-more span { display: inline-block; margin-left: 4px; transition: transform var(--t); }
+.w-more[aria-expanded="true"] span { transform: rotate(90deg); }
+.w-tbox { margin-top: 14px; }
+/* The tour's picture plays once, on one clock: every part below runs for
+   --w-play and is staged by its keyframes' percentages. The pointer reaches
+   the thing at 40%, presses at 42%, and the view leans in from there; with
+   a second frame, the view leans in first and settles back as the result
+   fades in. The zoom's origin is the pointer's point, so the thing stays
+   under it. */
+.w-tpic { --w-play: 4200ms; position: relative; overflow: hidden; aspect-ratio: 16 / 9; margin: 0; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise); }
+.w-tz { position: absolute; inset: 0; transform-origin: var(--x) var(--y); animation: w-zoom var(--w-play) var(--ease-out) both; }
+.w-tpic.two .w-tz { animation-name: w-zoom2; }
+.w-tz img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.w-tz .w-tf2 { opacity: 0; animation: w-then var(--w-play) linear both; }
+.w-tptr { position: absolute; left: var(--x); top: var(--y); margin: -1px 0 0 -1px; animation: w-ptr var(--w-play) var(--ease-out) both; }
+.w-tpic.two .w-tptr { animation-name: w-ptr2; }
+.w-tptr svg { display: block; fill: var(--fg); stroke: var(--bg); stroke-width: 1.2; stroke-linejoin: round; filter: drop-shadow(0 1px 1px var(--scrim)); }
+.w-tclick { position: absolute; left: var(--x); top: var(--y); width: 30px; height: 30px; margin: -15px 0 0 -15px; border: 2px solid var(--accent); border-radius: 50%; opacity: 0; animation: w-click var(--w-play) var(--ease-out) both; }
+@keyframes w-ptr { 0% { left: var(--fx); top: var(--fy); opacity: 0; } 10% { left: var(--fx); top: var(--fy); opacity: 1; } 40% { left: var(--x); top: var(--y); transform: none; } 43% { transform: scale(.85); } 47%, 100% { left: var(--x); top: var(--y); transform: none; opacity: 1; } }
+@keyframes w-ptr2 { 0% { left: var(--fx); top: var(--fy); opacity: 0; } 10% { left: var(--fx); top: var(--fy); opacity: 1; } 40% { left: var(--x); top: var(--y); transform: none; } 43% { transform: scale(.85); } 47% { left: var(--x); top: var(--y); transform: none; opacity: 1; } 62%, 100% { left: var(--x); top: var(--y); opacity: 0; } }
+@keyframes w-click { 0%, 41% { opacity: 0; transform: scale(.4); } 43% { opacity: .8; transform: scale(.4); } 62%, 100% { opacity: 0; transform: scale(1.7); } }
+@keyframes w-zoom { 0%, 42% { transform: none; } 100% { transform: scale(1.1); } }
+@keyframes w-zoom2 { 0% { transform: none; } 40%, 52% { transform: scale(1.12); } 78%, 100% { transform: none; } }
+@keyframes w-then { 0%, 50% { opacity: 0; } 66%, 100% { opacity: 1; } }
+.w-tv { position: absolute; inset: 0; display: block; width: 100%; height: 100%; opacity: 0; background: var(--bg-raise); transition: opacity var(--dur-quick) var(--ease-out); }
+.w-tpic.wait .w-tz, .w-tpic.wait .w-tptr, .w-tpic.wait .w-tclick { visibility: hidden; animation-play-state: paused; }
+.w-tpic.vid { cursor: pointer; }
+.w-tpic.vid .w-tv { opacity: 1; }
+.w-tpic.vid .w-tptr, .w-tpic.vid .w-tclick, .w-tpic.calm .w-tptr, .w-tpic.calm .w-tclick { display: none; }
+@media (prefers-reduced-motion: reduce) { .w-tz, .w-tz .w-tf2, .w-tptr, .w-tclick { animation: none !important; } .w-tz .w-tf2 { opacity: 1; } .w-tptr, .w-tclick { display: none; } }
+/* The words come first and the clip under them. The bubble keeps one height
+   for every step (see tourStep), so Next stays where it was pressed and the
+   clip never moves. */
+.w-tstep { display: flex; gap: 14px; align-items: flex-start; margin: 0 0 14px; }
+.w-tstack { display: grid; }
+.w-tstack > * { grid-area: 1 / 1; min-width: 0; }
+.w-tghost { visibility: hidden; }
+.w-tface .mk { width: 44px; height: 44px; flex: none; }
+.w-tsay { position: relative; flex: 1; min-width: 0; padding: 14px 16px; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise); }
+.w-tsay::before { content: ""; position: absolute; left: -6px; top: 16px; width: 10px; height: 10px; background: var(--bg-raise); border-left: 1px solid var(--rule-2); border-bottom: 1px solid var(--rule-2); transform: rotate(45deg); }
+.w-tsay .w-tprob { margin: 0 0 6px; font-size: var(--fs-small); font-style: italic; color: var(--fg-3); }
+.w-tsay h3 { margin: 0 0 6px; font-size: var(--fs-body); font-weight: 600; }
+.w-tsay p { margin: 0; line-height: 1.5; color: var(--fg-2); }
+.w-tnav { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-top: 12px; }
+.w-tnav .btn { border-color: var(--rule-2); }
+.w-tcount { flex: 1; font-size: var(--fs-small); color: var(--fg-3); }
+.w-tall { font-size: var(--fs-ui); }
+.w-new { padding: 14px 16px; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise); max-width: 440px; }
+.w-new h3 { margin: 0 0 10px; font-size: 15px; }
+.w-new label { display: block; font-size: var(--fs-ui); color: var(--fg-2); margin: 10px 0 4px; }
+.w-new input { width: 100%; box-sizing: border-box; font: inherit; font-size: 14px; color: var(--fg); background: var(--bg); border: 1px solid var(--rule-2); border-radius: var(--r-sm); padding: 6px 8px; }
+.w-where { display: flex; gap: 10px; align-items: baseline; font: var(--fs-small) var(--mono); color: var(--fg-2); }
+.w-where span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-fine { margin: 10px 0 12px; font-size: var(--fs-ui); color: var(--fg-3); line-height: 1.45; }
+.w-new .w-btns { justify-content: flex-end; }
+.w-err { color: var(--danger); font-size: var(--fs-ui); margin: 8px 0 0; }
+.w-done { color: var(--ok); font-size: var(--fs-body-s); font-weight: 400; margin: 0 0 14px; }
+/* The desks just made, as one card: the newest first, its Open the page's
+   one accent button. Adding another is the quiet line under it. */
+.w-added { list-style: none; margin: 0 0 28px; padding: 0 16px; max-width: 440px; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise); }
+.w-added li { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--rule); }
+.w-added li:first-child { border-top: 0; }
+.w-added li > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.w-added b { font-weight: 600; }
+.w-added span { font: var(--fs-small) var(--mono); color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-again-q { font-size: var(--fs-body-s); font-weight: 500; color: var(--fg-2); margin: 0 0 4px; }
+.w-again .w-btns { gap: 2px; }
+.w-again .w-btns > button.text { margin-left: -8px; }
+.w-again .w-btns > button.text ~ button.text { margin-left: 0; }
+.w-dot { color: var(--fg-3); }
 .w-connect { margin-top: 10px; }
-.w-ask-box { padding: 12px 14px; border: 1px solid var(--rule-2); border-radius: 8px; background: var(--bg-raise); }
+.w-ask-box { padding: 12px 14px; border: 1px solid var(--rule-2); border-radius: var(--r-md); background: var(--bg-raise); }
 .w-ask-box p { margin: 0 0 10px; font-size: var(--fs-ui); line-height: 1.5; color: var(--fg-2); }
 .w-ask-act { display: flex; gap: 12px; align-items: center; }
 .w-said { margin: 0; font-size: var(--fs-ui); color: var(--fg-2); }
@@ -534,8 +615,8 @@ async function openAbout(d) {
   if (d.capability) {
     group("In panels");
     fact("Desk brief", switchRow(d, "/api/brief", "Desk brief", "A Claude starting in a panel is told about its desk", "Claude starts in a panel knowing nothing of its desk"));
-    fact("Asides", switchRow(d, "/api/asides", "Asides", "An agent may leave a line at the foot of the sidebar", "An agent's aside is refused; snyvi's own first lines still show"));
-    fact("Claude Code mod", switchRow(d, "/api/claude-mod", "Claude Code mod in panels", "A panel's Claude shows its thread above the prompt, puts its questions on Your turn, and takes /note", "Panels start Claude Code without the snyvi mod (it needs Claude Code 2.1.287 or later); a panel started before picks this up at its next start"));
+    fact("Asides", switchRow(d, "/api/asides", "Asides", "An agent may leave a line in the corner", "An agent's aside is refused; snyvi's own first lines still show"));
+    fact("Claude Code mod", switchRow(d, "/api/claude-mod", "Claude Code mod in panels", "A panel's Claude shows its thread above the prompt, puts its questions on On you, and takes /note", "Panels start Claude Code without the snyvi mod (it needs Claude Code 2.1.287 or later); a panel started before picks this up at its next start"));
   }
   group("This snyvi");
   const ver = document.createDocumentFragment();
@@ -584,7 +665,7 @@ function noReach(el, again) {
  *  desks, and no row. The desk brief: whether a Claude starting in a desk's
  *  panel is handed where it is, the open notes, what was done and where the
  *  work was left, as context before its first reply. Asides: whether an
- *  agent's line at the foot of the sidebar is taken at all -- the one
+ *  agent's line in the corner is taken at all -- the one
  *  consent for every agent at once, beside each aside's own ✕. */
 function switchRow(d, path, name, onSay, offSay) {
   const box = document.createElement("div"); box.className = "ab-swrow";
@@ -871,16 +952,218 @@ export function connectAsk(b, { api, done, sayErr, mascotHead }) {
  * first. The answer is a folder, from the desktop's own dialog or from the
  * projects snyvi already knows -- it never looks through folders itself.
  * Nothing about agents is here: that is asked inside the desk, if at all. */
-export function welcome({ cap, places, tilde, mascot, esc }) {
-  const ask = cap ? `<h2 class="w-q">What are you working on?</h2>` +
-    `<button type="button" class="w-btn w-pick" data-w="pick">Choose its folder…</button>` +
+export function welcome({ cap, places, tilde, mascot, esc, first }) {
+  const ask = cap ? `<h2 class="w-q">What are you working on?</h2><div class="w-ask">${askBtns()}</div>` +
     (places.length ? `<p class="w-or">Or one snyvi already knows:</p><ul class="w-places">${places.map((f, i) =>
       `<li><button type="button" data-w="place" data-i="${i}"><b>${esc(f.name)}</b><span>${esc(tilde(f.abs))}</span></button></li>`).join("")}</ul>` : "")
     : `<p class="w-tab">Desks live in the snyvi window: <code>snyvi app</code>.</p>`;
-  return `<div class="connect welcome"><div class="w-mark">${mascot}</div>` +
+  return `<div class="connect welcome${first ? " w-first" : ""}"><div class="w-mark">${mascot}</div>` +
     `<h1 class="doc-title">All your passion projects, in one calm place.</h1>` +
-    `<p class="w-lede">More projects than hours? Give each one a desk: its folder, its agents side by side, and everything they write kept.</p>` +
-    ask + `<p class="connect-foot"><a href="/start" data-nav="start">How snyvi works</a></p></div>`;
+    `<p class="w-lede">Agents make it easy to start. <b>snyvi helps you finish.</b> Give each project a desk: its folder, its agents side by side, and everything they write kept.</p>` +
+    ask + `<p class="w-priv">No account. Nothing leaves this machine. Nothing is ever deleted.</p>` +
+    `<div class="w-tour"><button type="button" class="w-more" data-w="w-tour" aria-expanded="false" aria-controls="w-tbox">How snyvi works <span aria-hidden="true">▸</span></button>` +
+    `<div id="w-tbox" class="w-tbox" hidden></div></div></div>`;
+}
+
+/* How snyvi works, told by the mascot, in place under the question: one
+ * step at a time, told as a story: first the problem anyone working with
+ * agents knows, then each step one part of it, said the way the reader
+ * would say it, and what snyvi does about it. The problem is told in
+ * words over snyvi at its calmest, Home, so the first thing seen is snyvi
+ * itself; each step after it is a few seconds of the real window doing
+ * that one thing. The clips are on snyvi.com, not in the binary: the
+ * twenty-four of them are about 5 MB against its 19. They are fetched
+ * only when the reader opens the tour, and they ask for nothing
+ * but themselves. Under each is its picture (ui/tour/, compiled in and
+ * served from /assets/tour/), which is the step wherever the clip can't
+ * play: offline, with motion turned off, or in a Linux window whose
+ * GStreamer has no H.264. Played that way, a drawn pointer goes to the
+ * thing and presses it, the view leans in, and where the press has a
+ * result -- Connect, a panel given the window -- the next frame fades in.
+ * Opened by the reader, never on its own; /start keeps the whole of it on
+ * one page. No keys here: the tour is what snyvi does, and ? has the keys.
+ *
+ * A step: the mascot's face, its frames, where the pointer goes and comes
+ * from (percent of the picture: x, y, from x, from y; only x, y where
+ * nothing is pressed, and the view leans in there), what the picture
+ * shows, the problem, the heading (snyvi's answer), what the mascot says,
+ * and its clip when that is not named for its first frame. */
+const TOUR = [
+  ["whoa", ["promise"], [45, 40], "Home: every project's place, the desk to pick up, what arrived and who is at work", "Agents make it easy to start. Then it gets lost.", "snyvi helps you finish", "It keeps every project, and everything its agents write and ask you, in one calm place. Here is how."],
+  ["glad", ["desk"], [4.7, 45.6, 40, 70], "Four panels on one desk, each a Claude Code session, one marked done", "Every project is a pile of terminal tabs.", "One desk for each project", "Its folder and its agents side by side, up to four real terminals. Each panel says if its agent is working, done, or waiting on you."],
+  ["wink", ["connect", "ready"], [12, 71, 60, 30], "Connect pressed on a new desk's Claude panel, which then says Claude is ready", "Your agent can't reach you outside its terminal.", "Connect your agent, once", "One press gives Claude Code a way to hand you pages and questions. <code>snyvi uninstall-claude</code> takes it back out."],
+  ["whoa", ["plan"], [7, 40.5, 50, 75], "A plan Claude wrote, open as a page, filed under its project ledger", "The plan your agent wrote scrolled away an hour ago.", "Nothing scrolls away", "Plans and reviews land as clean pages, filed under their project, with every earlier version kept."],
+  ["rest", ["waiting"], [69, 18.4, 40, 70], "A new document waiting at the top while another is being read", "Something new arrives just as you're reading.", "It waits its turn", "A new page never takes the one you're reading. It waits at the top, counted, until you get to it."],
+  ["rest", ["turn"], [54.6, 26.6, 20, 70], "On you: a decision and a command, asked by panel 2", "An agent has waited on you for twenty minutes, in a tab you weren't looking at.", "On you", "Whatever only you can do lands in one corner: a decision, a command, a key. Your answer goes back to the panel that asked."],
+  ["wink", ["notes"], [40, 54.7, 70, 85], "A desk's notes, one ticked off, and a small CI box under them", "The next ten things live in your head.", "Out of your head", "Each desk keeps its own notes. Its agents read them and tick one off with the commit that did it."],
+  ["glad", ["home"], [13.3, 61.7, 55, 90], "Home: where ledger was left off, its open notes and its working panels", "Back after a week: where was I?", "Just as you left it", "Home shows where every project was left and which agents are still at it. Each desk is exactly as it was."],
+  ["rest", ["desk", "focus"], [77, 8.9, 60, 50], "A desk of four panels, then one of them given the whole window", "One agent needs all of you; the rest is noise.", "Room to focus", "Give one panel the whole window. The others keep working, and say when they need you.", "focus"],
+  ["love", ["friend"], [75, 35.8, 40, 80], "Pairing with a friend, Maya, then sending her a plan", "Sharing a plan means pasting it into a chat.", "A friend's snyvi", "Pair once with a code said over a call. Send to… puts the page in their snyvi, sealed to their key."],
+  ["wink", ["agents"], [32, 26, 70, 75], "Agents: Claude Code running, Codex and Cursor set up", "Not everything you use is Claude Code.", "Any agent", "Codex, Cursor, Gemini, anything that speaks MCP: Agents shows each one and connects it."],
+  ["glad", ["search"], [15, 22, 60, 80], "Search across every document, matches marked", "That plan from last month is somewhere.", "Find anything", "Search everything any agent ever sent. No account, nothing leaves this machine, nothing is deleted. That's all of it."],
+];
+/** A frame, in the side the page is on now. */
+const tourDark = () => !!(window.snyviTheme && window.snyviTheme.isDark());
+const tourPic = (pic, dark) => `/assets/tour/tour-${pic}-${dark ? "dark" : "light"}.webp`;
+/** Where the clips are. The CSP's media-src names this host and no other
+ *  (src/server/assets.rs), so a clip is the one thing the tour can fetch. */
+const TOUR_CLIPS = "https://snyvi.com/tour/";
+const tourClip = (i, dark) => `${TOUR_CLIPS}tour-${TOUR[i][7] || TOUR[i][1][0]}-${dark ? "dark" : "light"}.mp4`;
+const tourCalm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+/** The pointer: an arrow in the page's own ink, outlined in its paper. */
+const TOUR_PTR = `<svg viewBox="0 0 12 18" width="16" height="24" aria-hidden="true"><path d="M1 1v14l3.6-3.4 2.3 5.3 2.2-1-2.3-5.2H12z"/></svg>`;
+/** One step: the picture playing, the face, what it says, and the way on.
+ *  The picture holds its 16:9 before it loads and the words keep one
+ *  height across the steps, so Next never moves under the pointer. */
+function tourStep(i, face) {
+  const [feel, pics, [x, y, fx = x, fy = y], alt] = TOUR[i], hand = TOUR[i][2].length > 2, last = i === TOUR.length - 1, dark = tourDark();
+  const img = (pic, cls) => `<img${cls ? ` class="${cls}"` : ""} src="${tourPic(pic, dark)}" width="800" height="450" alt="" decoding="async">`;
+  const clip = tourCalm() ? "" : `<video class="w-tv" src="${tourClip(i, dark)}" muted playsinline autoplay preload="auto" disablepictureinpicture disableremoteplayback aria-hidden="true"></video>`;
+  // Every step's words and the last step's buttons are laid in the bubble
+  // unseen, under this step's, so it is as tall as the tallest at any width.
+  const said = (j, live) => `<div${live ? ' aria-live="polite"' : ' class="w-tghost" aria-hidden="true"'}><p class="w-tprob">${TOUR[j][4]}</p><h3>${TOUR[j][5]}</h3><p>${TOUR[j][6]}</p></div>`;
+  const nav = (end, live) => `<div class="w-tnav${live ? "" : " w-tghost"}"${live ? "" : ' aria-hidden="true"'}>` +
+    `<button type="button" class="text"${live ? ' data-w="w-tback"' : ""}${i ? "" : " disabled"}>‹ Back</button><span class="w-tcount">${live ? i + 1 : TOUR.length} of ${TOUR.length}</span>` +
+    (end ? `<a href="/start"${live ? ' data-nav="start"' : ""} class="w-tall">All of it, on one page</a><button type="button" class="w-btn"${live ? ' data-w="pick"' : ""}>Choose its folder…</button>`
+      : `<button type="button" class="btn"${live ? ' data-w="w-tnext"' : ""}>Next ›</button>`) + `</div>`;
+  return `<div class="w-tstep" role="group" aria-label="${i + 1} of ${TOUR.length}"><span class="w-tface">${face(feel)}</span>` +
+    `<div class="w-tsay"><div class="w-tstack">${said(i, true)}${TOUR.map((_, j) => j === i ? "" : said(j)).join("")}</div>` +
+    `<div class="w-tstack">${nav(last, true)}${last ? "" : nav(true)}</div></div></div>` +
+    `<div class="w-tpic${pics.length > 1 ? " two" : ""}${hand ? "" : " calm"}${clip ? " wait" : ""}" role="img" aria-label="${alt}" style="--x:${x}%;--y:${y}%;--fx:${fx}%;--fy:${fy}%">` +
+    `<div class="w-tz">${img(pics[0])}${pics[1] ? img(pics[1], "w-tf2") : ""}</div><span class="w-tclick"></span><span class="w-tptr">${TOUR_PTR}</span>${clip}</div>`;
+}
+/** The step's clip, once it is really playing; if it errs, or has not
+ *  begun in a second and a half, the picture plays instead and the clip
+ *  goes. Until one or the other the box holds its place, empty. A press on
+ *  a clip that has played plays it again. */
+function tourPlay(tb) {
+  const pic = tb.querySelector(".w-tpic"), v = pic && pic.querySelector(".w-tv");
+  if (!v) return;
+  const still = () => { clearTimeout(late); pic.classList.remove("wait"); v.remove(); };
+  const late = setTimeout(still, 1500);
+  v.addEventListener("error", still, { once: true });
+  v.addEventListener("playing", () => { clearTimeout(late); pic.classList.replace("wait", "vid"); }, { once: true });
+  pic.addEventListener("click", () => { if (pic.classList.contains("vid") && v.ended) { v.currentTime = 0; v.play().catch(() => {}); } });
+}
+/** The next step's frames and clip, fetched while this one plays, so Next
+ *  shows them at once. */
+let tourNext = null;
+function tourAhead(i) {
+  if (i + 1 >= TOUR.length) return;
+  for (const pic of TOUR[i + 1][1]) new Image().src = tourPic(pic, tourDark());
+  if (tourCalm()) return;
+  tourNext = document.createElement("video");
+  tourNext.muted = true; tourNext.preload = "auto"; tourNext.src = tourClip(i + 1, tourDark());
+}
+/** The two ways in: a folder the reader has, or one snyvi makes. */
+const askBtns = quiet => quiet
+  // Got another project?'s: text buttons, under the card's one accent Open.
+  ? `<div class="w-btns"><button type="button" class="text w-pick" data-w="pick">Add its folder…</button><span class="w-dot" aria-hidden="true">·</span><button type="button" class="text" data-w="w-new">Start something new</button></div>`
+  : `<div class="w-btns"><button type="button" class="w-btn w-pick" data-w="pick">Choose its folder…</button><button type="button" class="btn" data-w="w-new">Start something new</button></div>`;
+const askAgain = ask => { ask.innerHTML = askBtns(ask.classList.contains("w-again")); ask.querySelector("button").focus(); };
+
+/** Open or close the tour, or take it a step. Arrows walk it and Esc
+ *  closes it while the focus is in it; the toggle gets the focus back. */
+function tourGo(box, w, face) {
+  const t = box && box.querySelector(".w-tour"), tb = t && t.querySelector(".w-tbox"), more = t && t.querySelector(".w-more");
+  if (!tb) return;
+  const draw = i => { t.dataset.i = i; tb.innerHTML = tourStep(i, face); tourPlay(tb); tourAhead(i); };
+  if (w === "w-tour") {
+    const open = tb.hidden;
+    tb.hidden = !open; more.setAttribute("aria-expanded", open);
+    if (!open) return;
+    draw(+t.dataset.i || 0);
+    if (!t.dataset.keys) {
+      t.dataset.keys = "1";
+      tb.addEventListener("keydown", e => {
+        const i = +t.dataset.i || 0;
+        if (e.key === "Escape") { tourGo(box, "w-tour", face); more.focus(); }
+        else if (e.key === "ArrowRight" && i < TOUR.length - 1) draw(i + 1);
+        else if (e.key === "ArrowLeft" && i > 0) draw(i - 1);
+        else return;
+        e.preventDefault(); e.stopPropagation();
+        if (!tb.hidden) (tb.querySelector('[data-w="w-tnext"]') || tb.querySelector('[data-w="pick"]')).focus();
+      });
+    }
+    tb.querySelector('[data-w="w-tnext"]')?.focus();
+    tb.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  const i = Math.max(0, Math.min(TOUR.length - 1, (+t.dataset.i || 0) + (w === "w-tnext" ? 1 : -1)));
+  draw(i);
+  (tb.querySelector(w === "w-tnext" ? '[data-w="w-tnext"]' : '[data-w="w-tback"]:not(:disabled)') || tb.querySelector('[data-w="w-tnext"]') || tb.querySelector('[data-w="pick"]')).focus();
+}
+
+/** Where *Start something new* puts a folder: the last place the reader
+ *  chose with Change…, as a browse root, or `~/Projects`. Kept in this
+ *  window's own preferences. */
+const UNDER = "snyvi.own.under", MADE = "snyvi.own.made";
+const kept = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+/** Welcome's own buttons past the first (`data-w="w-…"`), handed here by the
+ *  page: the sheet that names a new folder, its Change…, Make it and Cancel,
+ *  and Got another one?'s Open. `c` is the pages context. */
+export async function welcomeAct(c, b, made) {
+  const w = b.dataset.w, box = b.closest(".welcome"), esc = c.esc;
+  const ask = box && box.querySelector(".w-ask");
+  if (w === "w-new" && ask) {
+    const under = kept(UNDER, null);
+    ask.innerHTML = `<form class="w-new" data-w-form><h3>Start something new</h3><label for="w-name">What's it called?</label><input id="w-name" name="name" spellcheck="false" autocomplete="off" maxlength="80" required>` +
+      `<label>Where</label><div class="w-where"><span data-pv="path">${esc(under ? under.path : "~/Projects")}/</span><button type="button" class="text" data-w="w-under">Change…</button></div>` +
+      `<p class="w-fine">snyvi makes this one empty folder, and gives it a desk. It doesn't look anywhere else.</p>` +
+      `<div class="w-btns"><button type="button" class="text" data-w="w-back">Cancel</button><button type="submit" class="w-btn">Make it</button></div></form>`;
+    const f = ask.querySelector("form"), inp = f.querySelector("input"), base = () => (kept(UNDER, null)?.path || "~/Projects") + "/";
+    inp.addEventListener("input", () => {
+      const n = inp.value.trim();
+      f.querySelector('[data-pv="path"]').textContent = base() + n;
+    });
+    inp.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); askAgain(ask); } });
+    f.addEventListener("submit", e => { e.preventDefault(); makeNew(c, f, inp.value); });
+    inp.focus();
+  } else if (w === "w-tour" || w === "w-tnext" || w === "w-tback") tourGo(box, w, c.mascotHead);
+  else if (w === "w-back" && ask) askAgain(ask);
+  else if (w === "w-under") {
+    // The desktop's own dialog, as Choose its folder… opens; what it answers
+    // is opened as a folder (it shows under Folders), and named here only by
+    // its id, so the page never names a path to the daemon.
+    const r = await fetch("/api/browse/pick", { method: "POST", headers: { "x-snyvi-capability": c.capability } }).catch(() => null);
+    if (!r || r.status === 204) return;
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { c.toast("Could not open a folder", { sub: new Error(j.error || `${r.status}`) }); return; }
+    keep(UNDER, { id: j.root.id, path: c.tilde(j.root.path) });
+    const f = box.querySelector("form[data-w-form]");
+    if (f) f.querySelector('[data-pv="path"]').textContent = c.tilde(j.root.path) + "/" + f.querySelector("input").value.trim();
+  } else if (w === "w-open" && made[+b.dataset.i]) c.go(made[+b.dataset.i].id);
+}
+
+/** Make it: the one folder, then its desk, as a picked folder gets one. A
+ *  name the daemon refuses says why under the field, which stays. */
+async function makeNew(c, f, name) {
+  const under = kept(UNDER, null), say = why => { f.querySelector(".w-err")?.remove(); f.querySelector(".w-btns").insertAdjacentHTML("beforebegin", `<p class="w-err" role="alert">${c.esc(why)}</p>`); };
+  let j;
+  try { j = await c.deskApi("/api/browse/new", { name, ...(under ? { under: under.id } : {}) }); }
+  catch (e) {
+    // The place picked last time is gone from this daemon: back to the default, once.
+    if (under && /404/.test(String(e))) { keep(UNDER, null); return makeNew(c, f, name); }
+    say(c.sayErr(e).why); return;
+  }
+  keep(MADE, [...kept(MADE, []), j.root.path].slice(-20));
+  // Straight to its desk: a folder made just now is the reader starting
+  // on it, not one of several to bring in.
+  await c.make({ root: j.root.id, path: "" }, false);
+}
+
+/** Got another project? (R10 C): shown after a desk made from Welcome's
+ *  Choose its folder…, never on its own (Start something new goes to its
+ *  desk). The desk just made leads, as a card with the page's one accent
+ *  button, and Enter opens it; each one added after is a row on the card,
+ *  newest first, and the sidebar has it already. */
+export function another(made, { esc, tilde }) {
+  const last = made.length - 1;
+  return `<div class="connect welcome"><h1 class="w-done">✓ ${esc(made.map(d => d.name).join(", "))} ${made.length === 1 ? "has a desk" : "have desks"}.</h1>` +
+    `<ul class="w-added">${made.map((d, i) => `<li><div><b>${esc(d.name)}</b><span>${esc(tilde(d.root))}</span></div><button type="button" class="${i === last ? "w-btn" : "text"}" data-w="w-open" data-i="${i}">Open desk →</button></li>`).reverse().join("")}</ul>` +
+    `<h2 class="w-again-q">Got another project?</h2><div class="w-ask w-again">${askBtns(true)}</div></div>`;
 }
 
 // ---------- /start: how snyvi works ----------
@@ -898,14 +1181,16 @@ export function welcome({ cap, places, tilde, mascot, esc }) {
 const folded = () => document.documentElement.dataset.side === "0";
 const q = s => document.querySelector(s);
 const SHOW = {
-  arrives: { at: () => q("#tree a[data-id]") && (folded() ? q('#rail-nav [data-pop="tree"]') : q("#tree a[data-id]")),
+  // What has arrived is the page's to say, not the tree's: on a direct load
+  // the tree is not drawn yet, and nothing in it is not nothing arrived.
+  arrives: { at: () => startDocs && (folded() ? q('#rail-nav [data-pop="tree"]') : q("#tree a[data-id]") || q("#tree")),
     none: `Nothing has arrived yet. <a href="/connect" data-nav="connect">Agents</a>` },
-  waiting: { at: () => q("#queue .t-queue") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#queue .t-queue")), none: "Nothing is waiting right now." },
+  waiting: { at: () => q("#inbox-row .t-inbox.new") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#inbox-row .t-inbox")), none: "Nothing is waiting right now." },
   desks: { at: () => startCap && (folded() ? q('#rail-nav [data-pop="desks"]') : q("#desk-nav .sec-head")), none: "Desks live in the window: <code>snyvi app</code>." },
-  notes: { at: () => !q("#note")?.hidden && (folded() ? q("#rail-note") : q("#note")), none: "No aside right now." },
+  notes: { at: () => q("#cn:not([hidden]) .oy-pill, #meta .oy-foot:not(.none), #onyou .oy-pill"), none: "Nothing in the corner right now. Ctrl Alt Y opens it." },
   keys: { at: () => q("#btn-help"), none: "" },
 };
-let startCap = false;
+let startCap = false, startDocs = false;
 const showLink = k => (SHOW[k].at() ? `<a href="#${k}" class="show-me" data-show="${k}">Show me</a>` : `<span class="show-none">${SHOW[k].none}</span>`);
 
 /** Light the thing a section is about, and nothing else: no navigation, no
@@ -924,8 +1209,8 @@ function showMe(a) {
 
 /** The page, drawn into the document pane. `cap` says whether this window
  *  can run desks. */
-export function start({ cap }) {
-  startCap = !!cap;
+export function start({ cap, docs }) {
+  startCap = !!cap; startDocs = !!docs;
   const sec = (id, title, body, keys) => `<section id="${id}" class="start-sec"><h2>${title}</h2>${body}${keys ? `<p class="start-keys">${keys}</p>` : ""}</section>`;
   return `<div class="connect start"><header class="doc-head"><h1 class="doc-title">How snyvi works</h1><p class="doc-sub">Six things, a paragraph each. Every key is in ${kb("?")}.</p></header>` +
     sec("desks", "A desk for each project",
@@ -933,14 +1218,14 @@ export function start({ cap }) {
       `${kb("ctrl", "`")} desk / reading · ${kb("ctrl", "⌥", "1")}–${kb("4")} a panel · ${kb("ctrl", "⌥", "N")} new panel · ${kb("ctrl", "⌥", "W")} close it (with Undo) · ${kb("ctrl", "⌥", "Z")} that panel alone. Every other key goes to the panel.`) +
     sec("arrives", "Nothing scrolls away",
       `<p>When an agent writes something worth reading, it sends it here and replies with a link, and by the time you read the reply the document is already open. It is filed under its project, the folder the agent was working in, and under its workflow, one per Claude Code session. There is nothing to import or save: what arrives stays until you remove it, and Undo brings it back. ${showLink("arrives")}</p>`,
-      `${kb("mod", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("/")} find in this one`) +
+      `${kb("mod", "K")} search everything · ${kb("j")} ${kb("k")} next / previous document · ${kb("mod", "F")} find in this one`) +
     sec("waiting", "What is waiting",
-      `<p>A document that arrives while you read never takes the page away. It waits, as a row under Waiting in the sidebar and a count in the bar above what you are reading (or a number on the inbox icon, when the sidebar is folded). ${kb("n")} opens the oldest and takes it off, so the next ${kb("n")} is the one after: one key, in the order they came. Opening one any other way counts as read too, and Mark all read clears the list without opening anything. Opened one from the bar in the middle of another? ‹ at the top left takes you back to it, where you were, and once more to the panels; hold it for the last ten places. ${showLink("waiting")}</p>`,
+      `<p>A document that arrives while you read never takes the page away. It waits: Recent in the sidebar lights up with how many, and lists them first until they are read, and a bar above what you are reading says what came (or a number on the inbox icon, when the sidebar is folded). ${kb("n")} opens the newest and takes it off, so the next ${kb("n")} is the one before it: one key, from the latest back. Opening one any other way counts as read too, and Mark all read clears the list without opening anything. Opened one from the bar in the middle of another? ‹ at the top left takes you back to it, where you were, and once more to the panels; hold it for the last ten places. ${showLink("waiting")}</p>`,
       `${kb("n")} the next one waiting · ${kb("alt", "←")} ${kb("alt", "→")} back / forward · ${kb("h")} home · ${kb("i")} the inbox · ${kb("Del")} remove, ${kb("mod", "Z")} put it back`) +
     sec("notes", "Out of your head: notes, points and asides",
       `<p>Three small things, each going one way. <em>Notes</em> are yours: a list kept with each desk (+ New note), ticked off as things get done. An agent in that desk's panels can read it and tick a line, and nothing more. <em>Points</em> go from you to a panel: select a passage in a document you read over a desk and press + Point for panel 2. They gather under the panel until Put it in panel 2 types them into its input, quoted. Nothing is sent until you press Enter there.</p>` +
       `<ul class="dk-list start-sample" inert aria-hidden="true"><li class="dk-note dk-point"><span class="nm">From PLAN.md: the cache is per project, not per desk</span></li></ul><button type="button" class="dk-new dk-put start-sample" inert aria-hidden="true" tabindex="-1">Put it in panel 2</button>` +
-      `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They sit at the foot of the sidebar. ${showLink("notes")}</p>`,
+      `<p><em>Asides</em> come from an agent to you: a line about what it noticed, never a document and never counted as waiting. They rise in the corner, bottom right, and stay in its tray under Lately until you remove them; Ctrl Alt Y opens it. ${showLink("notes")}</p>`,
       `Right-click anything for what it can do · ${kb("☰")} or ${kb("shift", "F10")} the same menu from the keyboard`) +
     sec("versions", "Versions",
       `<p>A document is never changed. When an agent revises its plan it sends it again, and you keep both: the newest waits for you, the older ones are one key away. ${kb("c")} shows what changed since the one before, in green and red, and ${kb("s")} turns that between side by side and inline. Every version of the same file, from any session, is listed under Versions in the contents.</p>` +
@@ -1027,9 +1312,9 @@ html[data-upd="failed"] .brand-mark::after { background: var(--danger); }
 html[data-upd="waiting"] .brand-mark::after { animation: upd-breathe 1.6s ease-in-out infinite; }
 @keyframes upd-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { html[data-upd="waiting"] .brand-mark::after { animation: none; } }
-#side > #upd-card { position: absolute; left: 8px; right: 8px; bottom: calc(var(--note-foot, 52px) + var(--note-h, 0px)); z-index: 4; margin: 0 0 6px; }
+#side > #upd-card { position: absolute; left: 8px; right: 8px; bottom: var(--note-foot, 52px); z-index: 4; margin: 0 0 6px; }
 :root[data-side="0"] #side > #upd-card { display: none; }
-:root:not([data-side="0"]) #app #side:has(> #upd-card:not([hidden])) #trees { padding-bottom: calc(8px + var(--note-h, 0px) + var(--upd-h, 0px)); }
+:root:not([data-side="0"]) #app #side:has(> #upd-card:not([hidden])) #trees { padding-bottom: calc(8px + var(--upd-h, 0px)); }
 .uc { position: relative; overflow: hidden; isolation: isolate; padding: 10px 12px; border-radius: var(--r-md); background: color-mix(in srgb, var(--accent) 6%, var(--bg-side)); border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--rule)); box-shadow: var(--shadow); font-size: var(--fs-small); }
 .uc[data-state="failed"] { border-color: color-mix(in srgb, var(--danger) 35%, var(--rule)); }
 /* The peek: 72 px, tilted, faint, rising from the card's corner -- the aside
@@ -1151,7 +1436,7 @@ export function pages(c) {
     if (push) history.pushState({ start: true }, "", "/start" + (at || ""));
     // A click in the page went elsewhere while the chunk was on its way.
     if (state.view !== "start") return;
-    docEl.innerHTML = start({ cap: !!c.capability });
+    docEl.innerHTML = start({ cap: !!c.capability, docs: state.tree.length > 0 });
     startReady(boot.v);
     if (push) c.swapIn();
     const sec = at && document.getElementById(at.slice(1));
@@ -1163,7 +1448,8 @@ export function pages(c) {
    *  come back to from Help; the empty library draws the same page at `/`. */
   function welcomePage() {
     welcomePlaces = c.places();
-    return welcome({ cap: !!c.capability, places: welcomePlaces, tilde: c.tilde, mascot: c.mascotHead("glad"), esc });
+    return welcome({ cap: !!c.capability, places: welcomePlaces, tilde: c.tilde, mascot: c.mascotHead("glad"), esc,
+      first: !!c.capability && !!state.desks && !state.desks.desks.length });
   }
   async function showWelcome(push = true) {
     if (push) c.leave();
@@ -1178,5 +1464,18 @@ export function pages(c) {
     c.afterRender();
     if (push) toHead();
   }
-  return { showConnect, showStart, showWelcome, welcomePage, connectClaude, refreshAgents, place: i => welcomePlaces[i] };
+  /** A desk made from Welcome, in this window: Got another one? instead of
+   *  the desk itself, until the reader opens one (R10 C). */
+  const made = [];
+  function welcomed(id) {
+    const d = state.desks && state.desks.desks.find(x => x.id === id);
+    if (!d) return c.go(id);
+    made.push({ id, name: d.name, root: d.root });
+    if (state.view !== "welcome") { open("welcome", "Welcome · snyvi"); history.pushState({ welcome: true }, "", "/welcome"); }
+    docEl.innerHTML = another(made, { esc, tilde: c.tilde });
+    main.scrollTo({ top: 0, behavior: "instant" });
+    c.afterRender();
+    docEl.querySelector('[data-w="w-open"]')?.focus();
+  }
+  return { showConnect, showStart, showWelcome, welcomePage, connectClaude, refreshAgents, welcomed, welcomeAct: b => welcomeAct(c, b, made), place: i => welcomePlaces[i] };
 }

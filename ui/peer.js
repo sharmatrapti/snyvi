@@ -197,6 +197,9 @@ async function start(ctx, url, body) {
         `<p>Ask them: do you see these same four? If not, remove ${esc(p.name)} from Home and pair again.</p>` +
         `<div class="pr-foot"><button type="button" class="pr-go" data-pr="close">Done</button></div>`);
       ctx.toast(`Paired with ${p.name}`, { sub: `what they send shows under From ${p.name}` });
+      // A document's Send to… is drawn once there is a friend to send to, so
+      // the page open under the sheet is drawn again to have it now.
+      if (ctx.state?.doc) ctx.refreshDoc?.(ctx.state.doc.id);
     } else if (p.state === "failed") over(p.why || "the pairing did not finish");
     else if (p.state === "cancelled") over("the code was cancelled");
     else if (Date.now() > until) over("the code ran out. Make a new one");
@@ -387,46 +390,23 @@ export async function save(ctx, id, b) {
   }
 }
 
-/* ---------- an agent's offer ---------- */
+/* ---------- what the stream says ---------- */
 
-/** An agent in a panel offered a document to a friend: the question, where
- *  the reader is. `o` is the `peeroffers` event, or a row from /api/peers. */
-/** What the page's event stream says about friends: an agent's offer is
- *  put to the reader where they are, with the agent's name on it; a line
- *  from a friend is a toast that opens Home, unless it came quietly. */
+/** What the page's event stream says about friends: a line, a reply or a
+ *  tick from one rises in the corner (ui/corner.js), unless it came
+ *  quietly, and settles there under Lately, where the daemon keeps it. An
+ *  agent's offer is the corner's own, an On you row (app.js `onPeer`). */
 export function event(ctx, j) {
-  if (j.offer != null) offer(ctx, j);
-  else if (j.done && !j.quiet) ctx.toast(`${j.from} ticked your line`, { sub: j.done + (j.commit ? ` · ${String(j.commit).slice(0, 7)}` : ""), kind: "news", go: ctx.home });
+  const { esc } = ctx, from = esc(j.from || "");
+  if (j.done && !j.quiet) ctx.rise({ kind: "friend", key: `pd${Date.now()}`, from: `<b>${from}</b> ticked your line`, title: j.done + (j.commit ? ` · ${String(j.commit).slice(0, 7)}` : ""), label: "Home", go: ctx.home });
   else if (j.reply) {
     // The reply is in the head the next time the document is drawn; the
     // copy kept from before it is not. Open now, it is drawn again only
     // when the reader asks: the page does not move under their eyes.
     const open = ctx.state?.doc?.id === j.doc;
     if (!open) ctx.refreshDoc?.(j.doc);
-    if (!j.quiet) ctx.toast(`${j.from} replied`, { sub: j.reply, kind: "news", action: open && { label: "Show it", run: () => ctx.refreshDoc(j.doc) } });
+    if (!j.quiet) ctx.rise({ kind: "friend", key: `pr${Date.now()}`, from: `<b>${from}</b> replied`, title: j.reply, label: open ? "Show it" : "Open", go: open ? () => ctx.refreshDoc(j.doc) : () => ctx.showDoc?.(j.doc) });
   }
-  else if (j.from && !j.quiet) ctx.toast(`A line from ${j.from}`, { sub: j.desk ? `a suggestion on ${j.desk}` : "waiting on Home, under Arrived", kind: "news", go: ctx.home });
+  else if (j.from && !j.quiet) ctx.rise({ kind: "friend", key: `pn${Date.now()}`, from: `A line from <b>${from}</b>`, title: j.desk ? `a suggestion on ${j.desk}` : "on Home, in Lately", label: "Home", go: ctx.home });
 }
 
-export function offer(ctx, o) {
-  const { esc } = ctx;
-  const id = o.offer != null ? o.offer : o.id;
-  if (id == null) return;
-  open(o.text ? `Send a line to ${esc(o.to || "a friend")}?` : `Send <span class="pr-title">${esc(o.title || "a document")}</span> to ${esc(o.to || "a friend")}?`,
-    (o.text ? `<p class="pr-title">“${esc(o.text)}”</p>` : "") +
-    `<p>${esc(o.by || "An agent")}${o.desk ? ` on the desk <b>${esc(o.desk)}</b>` : ""} offers it. Nothing has gone: it goes only if you press Send.</p>` +
-    `<div class="pr-said" aria-live="polite"></div>` +
-    `<div class="pr-foot"><button type="button" data-pr="no">Not now</button><button type="button" class="pr-go" data-pr="yes">Send</button></div>`);
-  const answer = async yes => {
-    for (const b of box.querySelectorAll(".pr-foot button")) b.disabled = true;
-    try {
-      const r = await post(`/api/peers/offers/${id}`, { send: yes });
-      if (!yes) { close(); return; }
-      say(r.sent ? `Sent to ${r.to}.` : `Queued for ${r.to}; it goes when the relay can be reached.`);
-      box.querySelector(".pr-foot").innerHTML = `<button type="button" class="pr-go" data-pr="close">Done</button>`;
-      box.querySelector(".pr-go").focus();
-    } catch (e) { say(ctx.sayErr(e).why, true); for (const b of box.querySelectorAll(".pr-foot button")) b.disabled = false; }
-  };
-  box.querySelector("[data-pr=yes]").addEventListener("click", () => answer(true));
-  box.querySelector("[data-pr=no]").addEventListener("click", () => answer(false));
-}

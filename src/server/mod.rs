@@ -14,7 +14,9 @@ mod api_agent;
 mod api_browse;
 mod api_desk;
 mod api_docs;
+mod api_gallery;
 mod api_peer;
+mod api_pipeline;
 mod api_thread;
 mod api_widget;
 mod assets;
@@ -22,6 +24,7 @@ mod auth;
 mod events;
 mod lifecycle;
 mod peer_link;
+mod pipeline_run;
 #[cfg(test)]
 mod tests;
 mod widget_run;
@@ -32,7 +35,9 @@ use api_agent::*;
 use api_browse::*;
 use api_desk::*;
 use api_docs::*;
+use api_gallery::*;
 use api_peer::*;
+use api_pipeline::*;
 use api_thread::*;
 use api_widget::*;
 use assets::*;
@@ -144,8 +149,6 @@ pub struct App {
     /// The panes that have been woken since this daemon started: their
     /// screens, and their processes while they run. See `crate::pane`.
     pub panes: Arc<crate::pane::Panes>,
-    /// The last few lines agents left beside the work. See `crate::aside`.
-    pub asides: crate::aside::Asides,
     /// What git last said about each desk's folder, kept briefly: Home is
     /// drawn again on every event it shows. See `crate::git`.
     pub git: crate::git::Cache,
@@ -183,9 +186,9 @@ pub struct App {
     /// The `update` block last sent, so the watcher's tick sends it again
     /// only when something in it moved. See `emit_update_if_changed`.
     update_sent: std::sync::Mutex<String>,
-    /// The account's rate-limit windows, as the last status line in a panel
-    /// said them: account-wide, so the latest is the one. Home's quota.
-    pub quota: std::sync::Mutex<Option<serde_json::Value>>,
+    /// Per Claude account: its rate-limit windows as a status line last said
+    /// them, and whether its sign-in stopped working (`api_accounts::Usage`).
+    pub usage: api_accounts::Usage,
     /// Friends: the daemon's own keys once read, the pairings under way, and
     /// the link's wake-up. See `api_peer`, `peer_link` and `crate::peer`.
     pub peers: api_peer::Peers,
@@ -325,7 +328,6 @@ fn new_app(
         online: std::sync::Mutex::new(Default::default()),
         capabilities: crate::capability::Capabilities::load(paths.config_dir.join("capabilities")),
         panes,
-        asides: Default::default(),
         git: Default::default(),
         exe,
         started_at: crate::store::now(),
@@ -337,7 +339,7 @@ fn new_app(
         relaunch_window: std::sync::atomic::AtomicBool::new(false),
         restarting: std::sync::atomic::AtomicBool::new(false),
         update_sent: Default::default(),
-        quota: Default::default(),
+        usage: Default::default(),
         peers: Default::default(),
     })
 }
@@ -388,6 +390,10 @@ fn pane_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/notes/{note}/tick", post(pane_tick_note))
         .route("/api/panes/{id}/notes/{note}/mark", post(pane_mark_note))
         .route("/api/panes/{id}/name", post(pane_name))
+        .route("/api/panes/{id}/card", post(pane_card))
+        // A desk's links (`crate::links`): an agent pins one, the reader hides it.
+        .route("/api/panes/{id}/links", post(pane_pin_link))
+        .route("/api/desks/{id}/links/{link}/{to}", post(hide_desk_link))
         .route("/api/panes/{id}/brief", get(pane_brief))
         .route("/api/panes/{id}/changes", get(pane_changes))
         .route("/api/panes/{id}/keys/{name}", get(pane_key))
@@ -400,18 +406,54 @@ fn pane_routes() -> Router<Arc<App>> {
         )
 }
 
+/// Folders read straight from disk (`api_browse`): the picker, Welcome's
+/// new folder, and what an open folder holds.
+fn browse_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/browse", get(browse_list).post(browse_open))
+        .route("/api/browse/pick", post(browse_pick))
+        .route("/api/browse/pick/cancel", post(browse_pick_cancel))
+        .route("/api/browse/new", post(browse_new))
+        .route("/api/browse/{id}/close", post(browse_close))
+        .route("/api/browse/{id}/reopen", post(browse_reopen))
+        .route("/api/browse/{id}/tree", get(browse_tree))
+        .route("/api/browse/{id}/file", get(browse_file))
+        .route("/api/browse/{id}/raw", get(browse_raw))
+        .route("/api/browse/{id}/raw/{*path}", get(browse_raw_path))
+        .route("/api/browse/{id}/find", get(browse_find))
+        .route("/api/browse/{id}/outline", get(browse_outline))
+}
+
 /// The sidebars' layout and their widgets (`api_widget`).
 fn widget_routes() -> Router<Arc<App>> {
     Router::new()
         .route("/api/layout", post(set_layout))
         .route("/api/desks/{id}/widgets", get(desk_widgets))
         .route("/api/panes/{id}/widget", post(pane_set_widget))
+        .route("/api/panes/{id}/widgets", get(pane_widgets))
         .route("/api/widgets", get(list_widgets).post(set_widget))
         .route("/sidebars", get(shell_sidebars))
         .route("/api/widgets/{name}/allow", post(allow_widget))
         .route("/api/widgets/{name}/prefs", post(widget_prefs))
         .route("/api/widgets/{name}/retry", post(retry_widget))
+        .route("/api/widgets/{name}/tell", post(tell_widget))
+        .route("/api/widgets/{name}/remove", post(remove_widget))
+        .route("/api/widgets/{name}/restore", post(restore_widget))
         .route("/api/panes/{id}/propose-widget", post(pane_propose_widget))
+        .route("/api/panes/{id}/gallery", post(pane_add_gallery))
+        .route("/api/gallery", get(list_gallery).post(add_gallery))
+        .route("/api/gallery/pick", post(pick_gallery))
+}
+
+/// Pipelines (`api_pipeline`): the window's alone, on the desk gate.
+fn pipeline_routes() -> Router<Arc<App>> {
+    Router::new()
+        .route(
+            "/api/desks/{id}/pipelines",
+            get(desk_pipelines).post(new_pipeline),
+        )
+        .route("/api/desks/{id}/pipelines/{row}/edit", post(edit_pipeline))
+        .route("/api/desks/{id}/pipelines/{row}/{act}", post(pipeline_act))
 }
 
 /// Claude accounts (`api_accounts`): the list, adding one with its token,
@@ -437,6 +479,8 @@ fn thread_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/thread/move", post(pane_move_thread))
         .route("/api/panes/{id}/ask", post(pane_ask))
         .route("/api/panes/{id}/handover", post(pane_hand_over))
+        .route("/api/panes/{id}/settle", post(pane_settle))
+        .route("/api/panes/{id}/away", post(pane_away))
         .route("/api/panes/{id}/suggest-panel", post(pane_suggest_panel))
         .route("/api/panes/{id}/suggest-desk", post(pane_suggest_desk))
         .route("/api/panes/{id}/seen", post(pane_seen))
@@ -448,6 +492,10 @@ fn thread_routes() -> Router<Arc<App>> {
         .route("/api/panes/{id}/note", post(pane_note))
         .route("/api/claude-mod", get(mod_setting).post(set_mod_setting))
         .route("/api/desks/{id}/threads", get(desk_threads))
+        .route(
+            "/api/desks/{id}/panes/{pane}/cards/{card}/{act}",
+            post(desk_card_act),
+        )
         .route("/api/desks/{id}/threads/{row}/move", post(desk_move_thread))
         .route("/api/desks/{id}/threads/{row}/{act}", post(desk_thread_act))
         .route("/api/desks/{id}/turns/{row}/answer", post(desk_answer_turn))
@@ -485,9 +533,11 @@ fn router(app: Arc<App>) -> Router {
         .route("/b/{id}", get(shell_browse))
         .route("/b/{id}/{*path}", get(shell_browse_file))
         .route("/files/{id}/{*path}", get(doc_file))
+        .route("/gallery/{file}", get(gallery_file))
         .route("/assets/mermaid.js", get(asset_mermaid))
         .route("/assets/{name}", get(asset_named))
         .route("/assets/fonts/{name}", get(asset_font))
+        .route("/assets/tour/{name}", get(asset_tour))
         .route("/api/health", get(health))
         .route("/api/about", get(about))
         .route("/api/agents", get(agents))
@@ -518,6 +568,11 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/notes/seen", post(see_asides))
         .route("/api/notes/dismiss", post(dismiss_asides))
         .route("/api/notes/restore", post(restore_asides))
+        // Lately, the corner's kept list (`crate::lately`).
+        .route("/api/lately", get(lately))
+        .route("/api/lately/seen", post(see_lately))
+        .route("/api/lately/remove", post(remove_lately))
+        .route("/api/lately/restore", post(restore_lately))
         .route("/api/focus", post(focus))
         .route("/api/shutdown", post(shutdown))
         .route("/api/restart", post(restart).delete(cancel_restart))
@@ -527,17 +582,7 @@ fn router(app: Arc<App>) -> Router {
         .route("/api/reset", get(reset_census).post(reset))
         .route("/api/reveal", post(reveal))
         .route("/api/resolve", post(resolve_path))
-        .route("/api/browse", get(browse_list).post(browse_open))
-        .route("/api/browse/pick", post(browse_pick))
-        .route("/api/browse/pick/cancel", post(browse_pick_cancel))
-        .route("/api/browse/{id}/close", post(browse_close))
-        .route("/api/browse/{id}/reopen", post(browse_reopen))
-        .route("/api/browse/{id}/tree", get(browse_tree))
-        .route("/api/browse/{id}/file", get(browse_file))
-        .route("/api/browse/{id}/raw", get(browse_raw))
-        .route("/api/browse/{id}/raw/{*path}", get(browse_raw_path))
-        .route("/api/browse/{id}/find", get(browse_find))
-        .route("/api/browse/{id}/outline", get(browse_outline))
+        .merge(browse_routes())
         .route("/api/docs/{id}/raw", get(doc_raw))
         .route("/api/docs/{id}/blob", get(doc_blob))
         .route("/api/compare/{a}/{b}", get(compare))
@@ -566,6 +611,7 @@ fn router(app: Arc<App>) -> Router {
             post(restore_desk_note),
         )
         .route("/api/desks/{id}/notes/{note}/keep", post(keep_desk_note))
+        .route("/api/desks/{id}/notes/{note}/check", post(check_desk_note))
         .route("/api/desks/{id}/leftoff", post(desk_left_off))
         .route("/api/desks/{id}/keys", get(desk_keys).post(add_desk_key))
         .route("/api/desks/{id}/keys/{name}/remove", post(remove_desk_key))
@@ -585,6 +631,7 @@ fn router(app: Arc<App>) -> Router {
         .merge(account_routes())
         .merge(thread_routes())
         .merge(widget_routes())
+        .merge(pipeline_routes())
         .merge(peer_routes())
         .route("/desks", get(shell_desk_list))
         .route("/desk/{id}", get(shell_desk))
@@ -642,10 +689,20 @@ async fn asked_to_stop(mut stop_rx: broadcast::Receiver<()>, told: broadcast::Se
     let _ = told.send(());
 }
 
+/// What runs beside the router for as long as the daemon does: the
+/// watchers, widget files' commands while their widgets are in view, and
+/// pipelines' stages, one after another in their panels.
+fn spawn_runners(app: &Arc<App>) {
+    crate::watch::spawn_browse_watcher(app.clone());
+    crate::watch::spawn_ui_watcher(app.clone());
+    widget_run::spawn(app.clone());
+    pipeline_run::spawn(app.clone());
+}
+
 pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     let token = config::load_or_create_token(&paths)?;
     let window = config::load_or_create_window_secret(&paths)?;
-    let store = Store::open(&paths)?;
+    let store = crate::receive::refiled(Store::open(&paths)?);
     // A planned restart left a marker and marks; a crash left neither. Both
     // are read now, before anything can ask, and cleared once the port is
     // held: a successor that dies before then is started again, and must
@@ -694,10 +751,7 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // way out needs the panes.
     let leaving = app.clone();
     let told = app.shutdown.clone();
-    crate::watch::spawn_browse_watcher(app.clone());
-    crate::watch::spawn_ui_watcher(app.clone());
-    // Widget files' commands, while their widgets are in view.
-    widget_run::spawn(app.clone());
+    spawn_runners(&app);
     crate::claude_mod::start(&paths);
     let router = router(app);
 
@@ -729,25 +783,8 @@ pub async fn run(paths: Paths) -> anyhow::Result<Leaving> {
     // The link to the relay, for as long as there is a friend: what they
     // send arrives as it lands, page open or not.
     spawn_peer_link(leaving.clone());
-    // An install from an older snyvi gets the hooks that tell a panel what
-    // Claude is doing, without the reader running `init-claude` again. Only
-    // where our hook already is and names this binary, and only once this
-    // daemon holds the port: one that is about to exit writes nothing. See
-    // `hook::top_up`.
-    // Pasted pictures past their week, as Claude Code clears its own paste
-    // cache (`api_desk::sweep_pastes`).
-    let pastes = paths.data_dir.join("pastes");
-    tokio::task::spawn_blocking(move || {
-        let gone = api_desk::sweep_pastes(&pastes, std::time::SystemTime::now());
-        if gone > 0 {
-            eprintln!("snyvi: cleared {gone} pasted picture(s) older than a week");
-        }
-    });
-    tokio::task::spawn_blocking(|| {
-        if let Ok(true) = crate::hook::top_up() {
-            eprintln!("snyvi: added the panel status hooks to ~/.claude/settings.json");
-        }
-    });
+    // Only once this daemon holds the port: one about to exit does neither.
+    spawn_chores(&paths);
     eprintln!("snyvi {VERSION} listening on http://{addr}");
     axum::serve(nodelay(listener), router)
         .with_graceful_shutdown(asked_to_stop(stop_rx, told))
@@ -805,7 +842,9 @@ pub(crate) fn emit_doc(app: &App, mut ev: serde_json::Value) {
 /// open to patch its sidebar with them -- a page that misses them refetches.
 pub(crate) fn doc_event(app: &App, received: &receive::Received) -> serde_json::Value {
     let doc = &received.doc;
-    let mut ev = json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app) });
+    // `quiet`: a draft the hook saved, which the page lists and does not
+    // announce; `promoted`: that draft, now sent, which it does.
+    let mut ev = json!({ "doc": doc, "url": format!("{}/d/{}", config::base_url(), doc.id), "existing": received.existing, "supersedes": received.supersedes, "waiting": waiting(app), "quiet": received.quiet, "promoted": received.promoted });
     if app.pages.load(Ordering::Relaxed) > 0 {
         ev["project"] = json!(app.store.project_row(doc.project_id).ok().flatten());
         ev["rows"] = json!(project_rows(
@@ -819,9 +858,29 @@ pub(crate) fn doc_event(app: &App, received: &receive::Received) -> serde_json::
     ev
 }
 
+/// What a daemon does once it holds the port, off the runtime.
+///
+/// An install from an older snyvi gets the hooks that tell a panel what
+/// Claude is doing, without the reader running `init-claude` again -- only
+/// where our hook already is and names this binary (`hook::top_up`). And
+/// pasted pictures past their week go, as Claude Code clears its own paste
+/// cache (`api_desk::sweep_pastes`).
+fn spawn_chores(paths: &Paths) {
+    let pastes = paths.data_dir.join("pastes");
+    tokio::task::spawn_blocking(move || {
+        if let Ok(true) = crate::hook::top_up() {
+            eprintln!("snyvi: added the panel status hooks to ~/.claude/settings.json");
+        }
+        let gone = api_desk::sweep_pastes(&pastes, std::time::SystemTime::now());
+        if gone > 0 {
+            eprintln!("snyvi: cleared {gone} pasted picture(s) older than a week");
+        }
+    });
+}
+
 /// A document in, the plain way: rendered and stored off the executor, then
 /// told to every page. A send has more to do around it (`receive_doc`); a
-/// pasted picture and a week's page have not, and come through here. The
+/// week's page and a pipeline's have not, and come through here. The
 /// refusal is the response the caller returns, boxed: a `Response` is a
 /// large thing to carry in every `Ok`, and clippy says so.
 async fn receive_and_emit(

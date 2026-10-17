@@ -1,0 +1,30 @@
+<!--{
+  "path": "/privacy",
+  "title": "What leaves your machine · snyvi",
+  "description": "snyvi runs on 127.0.0.1 with no account and no telemetry. The complete list of what it sends, and to whom.",
+  "nav": "privacy",
+  "head": "Privacy",
+  "rail": "toc"
+}-->
+<h1>What leaves your machine</h1>
+<p class="lede">snyvi listens on <code>127.0.0.1</code> and nowhere else. It has no account and sends no telemetry. This is the whole list of what it does send, and to whom.</p>
+
+<h2 id="the-update-check">The update check</h2>
+<p>Every six hours or so, one small request to GitHub asks for the latest release's manifest. It's mostly a 304. When there's a new version, snyvi downloads it from the same release, checks every file's checksum and signature, and applies it at a quiet moment, at most once a day.</p>
+<pre><code>snyvi update off   <span class="c"># no more checks</span>
+snyvi update       <span class="c"># check and update, when you ask</span></code></pre>
+
+<h2 id="a-friend">A friend, if you pair with one</h2>
+<p>Until you pair with a friend, nothing is sent. After that, your snyvi keeps one connection open to its own mailbox at <code>relay.snyvi.com</code>, and a document goes only when you press <b>Send</b>, sealed to your friend's key. The relay sees two public keys, a size and a time. It can't read what it holds, and it deletes a frame once it's delivered, or after seven days. An agent can offer a document, but only you can send it. <a href="/guide/friends">The design, in full</a>.</p>
+
+<h2 id="the-tour">The tour, if you open it</h2>
+<p>The tour on the Welcome page plays a few seconds of the window for each step, fetched from <code>snyvi.com/tour/</code> when you open it, the same as any page loading a video. Nothing of yours goes with the request. With reduced motion on, or offline, it shows the pictures built into snyvi instead and fetches nothing.</p>
+
+<h2 id="what-you-run">What you run in it</h2>
+<p>A panel is a real shell on your machine. Claude Code, Codex or anything else you start in one talks to its own service, the same as in any terminal, and snyvi adds nothing to that traffic. Signing in to a Claude account from a desk runs Claude Code's own sign-in.</p>
+
+<h2 id="this-site">This site</h2>
+<p>snyvi.com is static pages served by Cloudflare. It sets no cookies and runs no analytics. The theme you pick here is kept in your own browser's storage.</p>
+
+<h2 id="everything-else">Everything else</h2>
+<p>Documents, notes, desks, keys and history stay in snyvi's folder on your disk, in one SQLite file and the documents beside it. Removing something keeps it recoverable until you prune. <code>snyvi reset</code> starts over, and uninstalling takes snyvi away with nothing left running. The code is MIT and <a href="https://github.com/snymrova/snyvi">on GitHub</a>: every claim on this page can be checked there.</p>

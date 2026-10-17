@@ -2,6 +2,11 @@
 //! `widget.json` and the command it names, which snyvi runs on a timer
 //! while the widget is in view and draws what it prints (docs/WIDGETS.md).
 //!
+//! A desk's own widget is one level down, in `<config>/widgets/@<desk
+//! id>/<name>/` (1.32): `@` is in no widget's name, so the two never meet,
+//! and a desk renamed keeps its widgets. A name is shared or owned, never
+//! both (`taken`).
+//!
 //! Nothing in here runs anything: this reads the folders, says what each
 //! one asks for, hashes what the reader allowed, and writes a starter. The
 //! running is the daemon's (`crate::server::widget_run`).
@@ -14,7 +19,9 @@ use std::path::{Path, PathBuf};
 
 /// The most a widget's folder may hold, all its files together: what is
 /// hashed is what was allowed, and a folder this size is read in a moment.
-pub const FOLDER_MAX: u64 = 64 * 1024;
+/// Room for the most a proposal carries: a 16 KB script, four 16 KB files
+/// and its widget.json.
+pub const FOLDER_MAX: u64 = 96 * 1024;
 /// How often a command may run, and how long it may take.
 pub const EVERY_MIN: u64 = 5;
 pub const EVERY_DEFAULT: u64 = 60;
@@ -24,6 +31,145 @@ pub const TIMEOUT_DEFAULT: u64 = 10;
 /// Where the reader's widget folders are.
 pub fn dir(config_dir: &Path) -> PathBuf {
     config_dir.join("widgets")
+}
+
+/// Where desk `desk`'s own widgets are.
+pub fn owned_dir(config_dir: &Path, desk: i64) -> PathBuf {
+    dir(config_dir).join(format!("@{desk}"))
+}
+
+/// The folder of `owner`'s widget `name`: in its desk's folder, or for 0 --
+/// shared or global -- in the widgets folder itself.
+pub fn folder_of(config_dir: &Path, owner: i64, name: &str) -> PathBuf {
+    if owner == 0 {
+        dir(config_dir).join(name)
+    } else {
+        owned_dir(config_dir, owner).join(name)
+    }
+}
+
+/// Where a pruned desk's widgets are kept: out of the runner's sight, and
+/// still on disk (snyvi never deletes).
+pub fn pruned_dir(config_dir: &Path) -> PathBuf {
+    dir(config_dir).join(".pruned")
+}
+
+/// Where a removed agent's widget is kept: out of the runner's sight, as a
+/// pruned desk's are, until Undo or a move by hand puts it back.
+pub fn removed_dir(config_dir: &Path) -> PathBuf {
+    dir(config_dir).join(".removed")
+}
+
+/// Desk `owner`'s widget `name` out of sight, to `.removed/<owner>-<name>-
+/// <now>` (a `-2` after it when that is there already): moved, never
+/// deleted. The id it is kept under, which Undo hands back.
+pub fn remove(config_dir: &Path, owner: i64, name: &str, now: i64) -> Result<String, String> {
+    let to = removed_dir(config_dir);
+    std::fs::create_dir_all(&to).map_err(|e| format!("could not keep it: {e}"))?;
+    let base = format!("{owner}-{name}-{now}");
+    let id = (1..)
+        .map(|n| {
+            if n == 1 {
+                base.clone()
+            } else {
+                format!("{base}-{n}")
+            }
+        })
+        .find(|id| !to.join(id).exists())
+        .unwrap_or(base);
+    std::fs::rename(folder_of(config_dir, owner, name), to.join(&id))
+        .map_err(|e| format!("could not move it: {e}"))?;
+    Ok(id)
+}
+
+/// The name of the widget a `.removed/` id holds, if it is desk `owner`'s:
+/// the name its widget.json says, when the id is `<owner>-<name>-<time>`
+/// (a `-<n>` after it). Read, not parsed, so `a-1-<time>` is `a-1`'s and
+/// never `a`'s.
+pub fn removed_name(config_dir: &Path, id: &str, owner: i64) -> Option<String> {
+    let rest = id.strip_prefix(&format!("{owner}-"))?;
+    let json =
+        std::fs::read_to_string(removed_dir(config_dir).join(id).join("widget.json")).ok()?;
+    let name = serde_json::from_str::<Value>(&json)
+        .ok()?
+        .get("name")?
+        .as_str()?
+        .to_string();
+    let t = rest.strip_prefix(&format!("{name}-"))?;
+    let stamp_ok = t.starts_with(|c: char| c.is_ascii_digit())
+        && t.bytes().all(|b| b.is_ascii_digit() || b == b'-')
+        && t.split('-').count() <= 2;
+    (stamp_ok && super::name_ok(&name)).then_some(name)
+}
+
+/// The names of desk `owner`'s widgets in `.removed/`, for an agent to
+/// leave alone (`read_widgets`).
+pub fn removed_names(config_dir: &Path, owner: i64) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(removed_dir(config_dir))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| removed_name(config_dir, &e.file_name().to_string_lossy(), owner))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// A removed widget back where it was: Undo. Refused for an id that is not
+/// `owner`'s `name`, and when the name was taken meanwhile.
+pub fn restore(config_dir: &Path, id: &str, owner: i64, name: &str) -> Result<(), String> {
+    let from = removed_dir(config_dir).join(id);
+    // The id is `name`'s, not `name-1`'s: what follows the name is the time
+    // it was removed, and the folder says the name too.
+    let ours = removed_name(config_dir, id, owner).as_deref() == Some(name);
+    if !ours || !from.is_dir() {
+        return Err(format!("{name} was not removed from here"));
+    }
+    if let Some(why) = taken(config_dir, owner, name) {
+        return Err(why);
+    }
+    std::fs::rename(&from, folder_of(config_dir, owner, name))
+        .map_err(|e| format!("could not move it back: {e}"))
+}
+
+/// The desk an `@<id>` folder is for.
+fn owner_of(folder_name: &str) -> Option<i64> {
+    folder_name
+        .strip_prefix('@')
+        .and_then(|n| n.parse::<i64>().ok())
+        .filter(|n| *n > 0)
+}
+
+/// Why `name` cannot be `owner`'s (0: shared), or None when it can. A
+/// desk's own name may be another desk's own too, but not a shared one's;
+/// a shared name may be no desk's own.
+pub fn taken(config_dir: &Path, owner: i64, name: &str) -> Option<String> {
+    clash(config_dir, None, owner, name)
+}
+
+/// Why widget `name` cannot move from `from` to `to` (0: shared), or None.
+/// Its own folder is not in its way.
+pub fn taken_moving(config_dir: &Path, from: i64, to: i64, name: &str) -> Option<String> {
+    clash(config_dir, Some(from), to, name)
+}
+
+fn clash(config_dir: &Path, from: Option<i64>, to: i64, name: &str) -> Option<String> {
+    if folder_of(config_dir, to, name).exists() {
+        return Some(format!("a widget called {name} is already there"));
+    }
+    if to != 0 {
+        let shared = from != Some(0) && dir(config_dir).join(name).exists();
+        return shared.then(|| format!("a shared widget is called {name}: pick another name"));
+    }
+    std::fs::read_dir(dir(config_dir))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| owner_of(&e.file_name().to_string_lossy()))
+        .filter(|d| Some(*d) != from)
+        .find(|d| owned_dir(config_dir, *d).join(name).exists())
+        .map(|d| format!("desk {d} has a widget of its own called {name}: rename one first"))
 }
 
 /// Where a widget runs: on the desk on the page, in the desk's folder, or
@@ -121,28 +267,81 @@ pub struct Found {
     pub name: String,
     pub folder: PathBuf,
     pub spec: Result<Spec, String>,
+    /// The desk it belongs to; 0 for a shared or global one.
+    pub owner: i64,
 }
 
-/// Every widget folder, by name. A folder whose `widget.json` does not read,
-/// or names another widget, is listed with the reason, so /sidebars can
-/// say it rather than leave the reader guessing.
-pub fn scan(config_dir: &Path) -> Vec<Found> {
-    let Ok(rd) = std::fs::read_dir(dir(config_dir)) else {
+impl Found {
+    /// The widget's key among all of them: its name, or `@<desk>/<name>`
+    /// for a desk's own, since two desks may each own a `status`.
+    pub fn key(&self) -> String {
+        if self.owner == 0 {
+            self.name.clone()
+        } else {
+            format!("@{}/{}", self.owner, self.name)
+        }
+    }
+}
+
+/// The widget folders directly in `parent`, each for `owner`.
+fn scan_in(parent: &Path, owner: i64) -> Vec<Found> {
+    let Ok(rd) = std::fs::read_dir(parent) else {
         return Vec::new();
     };
-    let mut out: Vec<Found> = rd
-        .flatten()
+    rd.flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
             name_ok(&name).then(|| Found {
-                spec: read(&e.path(), &name),
+                spec: read(&e.path(), &name).and_then(|s| {
+                    if owner != 0 && s.scope == Scope::Global {
+                        Err(
+                            "a desk's own widget is on its desk: its widget.json cannot say global"
+                                .into(),
+                        )
+                    } else {
+                        Ok(s)
+                    }
+                }),
                 name,
                 folder: e.path(),
+                owner,
             })
         })
-        .collect();
+        .collect()
+}
+
+/// Every widget folder: the shared and global ones by name, then each
+/// desk's own. A folder whose `widget.json` does not read, or names another
+/// widget, is listed with the reason, so /sidebars can say it rather than
+/// leave the reader guessing; so is a shared one whose name a desk owns.
+pub fn scan(config_dir: &Path) -> Vec<Found> {
+    let base = dir(config_dir);
+    let mut out = scan_in(&base, 0);
     out.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut desks: Vec<i64> = std::fs::read_dir(&base)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|e| owner_of(&e.file_name().to_string_lossy()))
+        .collect();
+    desks.sort_unstable();
+    let mut owned = Vec::new();
+    for d in desks {
+        let mut mine = scan_in(&owned_dir(config_dir, d), d);
+        mine.sort_by(|a, b| a.name.cmp(&b.name));
+        owned.extend(mine);
+    }
+    for f in out.iter_mut() {
+        if let Some(o) = owned.iter().find(|o| o.name == f.name) {
+            f.spec = Err(format!(
+                "desk {} has a widget of its own called {}: rename one of them",
+                o.owner, f.name
+            ));
+        }
+    }
+    out.extend(owned);
     out
 }
 
@@ -164,13 +363,20 @@ pub fn read(folder: &Path, name: &str) -> Result<Spec, String> {
     Ok(spec.bounded())
 }
 
+/// What a folder's stamp is: its newest change, its bytes, how many
+/// entries, and its names (with where each link points), so a rename or a
+/// link moves it as an edit does.
+pub type Stamp = (u128, u64, usize, u64);
+
 /// A stamp of everything in a folder, cheap to take every round: what
 /// changed in it moves it, and only then is the folder hashed again.
-pub fn stamp(folder: &Path) -> Option<(u128, u64, usize)> {
+pub fn stamp(folder: &Path) -> Option<Stamp> {
+    use std::hash::{Hash, Hasher};
     let mut newest = 0u128;
     let (mut bytes, mut n) = (0u64, 0usize);
-    for f in files(folder) {
-        let m = std::fs::metadata(&f).ok()?;
+    let mut names = std::collections::hash_map::DefaultHasher::new();
+    for (f, link) in files(folder) {
+        let m = std::fs::symlink_metadata(&f).ok()?;
         let t = m
             .modified()
             .ok()?
@@ -180,14 +386,19 @@ pub fn stamp(folder: &Path) -> Option<(u128, u64, usize)> {
         newest = newest.max(t);
         bytes += m.len();
         n += 1;
+        f.hash(&mut names);
+        if link {
+            std::fs::read_link(&f).ok().hash(&mut names);
+        }
     }
-    Some((newest, bytes, n))
+    Some((newest, bytes, n, names.finish()))
 }
 
-/// Every regular file under a folder, in a fixed order; links are not
-/// followed, so the hash is of what is in the folder and nothing it points
-/// to.
-fn files(folder: &Path) -> Vec<PathBuf> {
+/// Every regular file and link under a folder, in a fixed order, `true`
+/// for a link. Links are not followed: a link is allowed as where it
+/// points, its name and its target's path, so one dropped in (the folder is
+/// first on PATH) or pointed elsewhere asks again.
+fn files(folder: &Path) -> Vec<(PathBuf, bool)> {
     let mut out = Vec::new();
     let mut todo = vec![folder.to_path_buf()];
     while let Some(d) = todo.pop() {
@@ -198,8 +409,8 @@ fn files(folder: &Path) -> Vec<PathBuf> {
             let Ok(t) = e.file_type() else { continue };
             if t.is_dir() {
                 todo.push(e.path());
-            } else if t.is_file() {
-                out.push(e.path());
+            } else if t.is_file() || t.is_symlink() {
+                out.push((e.path(), t.is_symlink()));
             }
         }
     }
@@ -207,18 +418,37 @@ fn files(folder: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// The hash of a whole folder -- every file's path in it and its bytes --
-/// which is what the reader allows: a change to anything in it, the script
-/// or a file it reads, asks again. Refused past `FOLDER_MAX`.
+/// The hash of a whole folder -- every file's path in it and its bytes,
+/// every link's path and where it points -- which is what the reader
+/// allows: a change to anything in it, the script or a file it reads, asks
+/// again. Refused past `FOLDER_MAX`, measured before a file is read. A
+/// folder of plain files hashes as it did before links were counted, so
+/// what was allowed stays allowed.
 pub fn hash(folder: &Path) -> Result<String, String> {
     let mut h = blake3::Hasher::new();
     let mut total = 0u64;
-    for f in files(folder) {
+    for (f, link) in files(folder) {
         let rel = f
             .strip_prefix(folder)
             .unwrap_or(&f)
             .to_string_lossy()
             .replace('\\', "/");
+        if link {
+            let to = std::fs::read_link(&f).map_err(|e| format!("could not read {rel}: {e}"))?;
+            h.update(b"\x01link\0");
+            h.update(rel.as_bytes());
+            h.update(&[0]);
+            h.update(to.to_string_lossy().as_bytes());
+            h.update(&[0]);
+            continue;
+        }
+        let len = std::fs::metadata(&f).map(|m| m.len()).unwrap_or(0);
+        if total + len > FOLDER_MAX {
+            return Err(format!(
+                "the folder holds more than {} KB",
+                FOLDER_MAX / 1024
+            ));
+        }
         let bytes = std::fs::read(&f).map_err(|e| format!("could not read {rel}: {e}"))?;
         total += bytes.len() as u64;
         if total > FOLDER_MAX {
@@ -242,6 +472,55 @@ const DIR_VAR: &str = if cfg!(windows) {
 } else {
     "$SNYVI_WIDGET_DIR"
 };
+
+/// The most settings a proposed widget may have.
+pub const SETTINGS_MAX: usize = 8;
+
+/// Whether an agent's proposed settings are ones /sidebars can draw: a key
+/// as a widget's name is, a type it has a row for, and a choice with its
+/// choices. A file the reader writes is read as it is; this is for what an
+/// agent sends, which goes back to it with what is wrong.
+pub fn settings_ok(spec: &Spec) -> Result<(), String> {
+    if spec.settings.len() > SETTINGS_MAX {
+        return Err(format!("a widget has at most {SETTINGS_MAX} settings"));
+    }
+    for (k, f) in &spec.settings {
+        let key_ok = !k.is_empty()
+            && k.len() <= super::NAME_MAX
+            && k.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
+        if !key_ok {
+            return Err(format!(
+                "the setting \"{k}\": a key is lowercase letters, digits, _ and -, at most 32"
+            ));
+        }
+        // A default /sidebars can show: the type it says, or none.
+        let d = &f.default;
+        let default_ok = match f.kind.as_str() {
+            "string" => d.is_null() || d.is_string(),
+            "number" => d.is_null() || d.is_number(),
+            "boolean" | "bool" => d.is_null() || d.is_boolean(),
+            "choice" if !f.choices.is_empty() => {
+                d.is_null() || d.as_str().is_some_and(|c| f.choices.iter().any(|x| x == c))
+            }
+            "choice" => return Err(format!("the setting {k} is a choice with no choices")),
+            other => {
+                return Err(format!(
+                    "the setting {k} is a {other}: a setting is a string, number, choice or boolean"
+                ))
+            }
+        };
+        if !default_ok {
+            return Err(format!("the setting {k}'s default is not a {}", f.kind));
+        }
+        if f.label.chars().count() > 60 || f.choices.len() > 12 {
+            return Err(format!(
+                "the setting {k}: a label of at most 60 characters, at most 12 choices"
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Whether a desk widget's command reaches the files in its own folder
 /// (#111). A desk widget runs in the desk's folder, with its own first on
@@ -423,7 +702,50 @@ mod tests {
         assert_ne!(a, b, "a file the script could source is in the hash");
         assert_eq!(b, hash(&w).unwrap());
         std::fs::write(w.join("big"), vec![b'x'; FOLDER_MAX as usize]).unwrap();
-        assert!(hash(&w).unwrap_err().contains("more than 64 KB"));
+        assert!(hash(&w).unwrap_err().contains("more than 96 KB"));
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[test]
+    fn a_folder_of_plain_files_hashes_as_before_links_counted() {
+        // 1.36 hashes links too; a folder without one keeps the hash its
+        // Allow was given, so no widget asks again on the update.
+        let cfg = folder("compat");
+        let w = dir(&cfg).join("git");
+        std::fs::write(w.join("run.sh"), "echo a").unwrap();
+        std::fs::write(w.join("widget.json"), "{}").unwrap();
+        let mut h = blake3::Hasher::new();
+        for (rel, bytes) in [("run.sh", &b"echo a"[..]), ("widget.json", &b"{}"[..])] {
+            h.update(rel.as_bytes());
+            h.update(&[0]);
+            h.update(&(bytes.len() as u64).to_le_bytes());
+            h.update(bytes);
+        }
+        assert_eq!(hash(&w).unwrap(), h.finalize().to_hex().to_string());
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_or_a_rename_asks_again() {
+        let cfg = folder("links");
+        let w = dir(&cfg).join("git");
+        std::fs::write(w.join("run.sh"), "echo a").unwrap();
+        let (h0, s0) = (hash(&w).unwrap(), stamp(&w).unwrap());
+        // A link dropped in, first on PATH: shadows `git` for the script.
+        std::os::unix::fs::symlink("/bin/true", w.join("git")).unwrap();
+        let (h1, s1) = (hash(&w).unwrap(), stamp(&w).unwrap());
+        assert_ne!(h0, h1, "a link is in the hash");
+        assert_ne!(s0, s1, "and in the stamp");
+        // Pointed elsewhere: asks again.
+        std::fs::remove_file(w.join("git")).unwrap();
+        std::os::unix::fs::symlink("/bin/false", w.join("git")).unwrap();
+        assert_ne!(hash(&w).unwrap(), h1);
+        // A rename keeps sizes and times; the stamp still moves.
+        std::fs::remove_file(w.join("git")).unwrap();
+        let before = stamp(&w).unwrap();
+        std::fs::rename(w.join("run.sh"), w.join("go.sh")).unwrap();
+        assert_ne!(stamp(&w).unwrap(), before);
         let _ = std::fs::remove_dir_all(&cfg);
     }
 
@@ -499,6 +821,128 @@ mod tests {
         let _ = std::fs::remove_dir_all(&cfg);
     }
 
+    fn write_spec(folder: &Path, name: &str, scope: &str) {
+        std::fs::create_dir_all(folder).unwrap();
+        std::fs::write(
+            folder.join("widget.json"),
+            format!(r#"{{"name":"{name}","scope":"{scope}","run":{{"command":"run.sh"}}}}"#),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_desks_own_widgets_are_found_under_its_id() {
+        let cfg = folder("owned");
+        write_spec(&dir(&cfg).join("git"), "git", "desk");
+        write_spec(&folder_of(&cfg, 7, "arena"), "arena", "desk");
+        write_spec(&folder_of(&cfg, 9, "arena"), "arena", "desk");
+        write_spec(&folder_of(&cfg, 7, "left"), "left", "global");
+        // Not a desk's folder: no id, or not one.
+        write_spec(&dir(&cfg).join("@x").join("odd"), "odd", "desk");
+        write_spec(&pruned_dir(&cfg).join("3-1").join("old"), "old", "desk");
+        let found = scan(&cfg);
+        let keys: Vec<String> = found.iter().map(Found::key).collect();
+        assert_eq!(keys, ["git", "@7/arena", "@7/left", "@9/arena"]);
+        assert!(found[0].spec.is_ok() && found[1].spec.is_ok() && found[3].spec.is_ok());
+        assert!(found[2]
+            .spec
+            .as_ref()
+            .unwrap_err()
+            .contains("cannot say global"));
+        assert_eq!((found[1].owner, found[3].owner), (7, 9));
+        // A shared folder a desk owns the name of is not run.
+        write_spec(&dir(&cfg).join("arena"), "arena", "desk");
+        let found = scan(&cfg);
+        let shared = found.iter().find(|f| f.key() == "arena").unwrap();
+        assert!(shared
+            .spec
+            .as_ref()
+            .unwrap_err()
+            .contains("desk 7 has a widget of its own"));
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[test]
+    fn a_name_is_shared_or_owned_never_both() {
+        let cfg = folder("taken");
+        write_spec(&dir(&cfg).join("git"), "git", "desk");
+        write_spec(&folder_of(&cfg, 7, "arena"), "arena", "desk");
+        // Another desk may own one of the same name; the same desk may not.
+        assert_eq!(taken(&cfg, 9, "arena"), None);
+        assert!(taken(&cfg, 7, "arena").unwrap().contains("already there"));
+        // A desk may not own a shared name, nor share an owned one.
+        assert!(taken(&cfg, 7, "git").unwrap().contains("shared widget"));
+        assert!(taken(&cfg, 0, "arena").unwrap().contains("desk 7"));
+        assert_eq!(taken(&cfg, 0, "new"), None);
+        // Moving, its own folder is not in its way; another desk's is.
+        assert_eq!(taken_moving(&cfg, 7, 0, "arena"), None);
+        assert_eq!(taken_moving(&cfg, 0, 7, "git"), None);
+        write_spec(&folder_of(&cfg, 9, "arena"), "arena", "desk");
+        assert!(taken_moving(&cfg, 7, 0, "arena")
+            .unwrap()
+            .contains("desk 9"));
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[test]
+    fn a_folder_moved_keeps_its_hash() {
+        let cfg = folder("moved");
+        let from = dir(&cfg).join("git");
+        std::fs::write(from.join("run.sh"), "echo a").unwrap();
+        let before = hash(&from).unwrap();
+        let to = folder_of(&cfg, 7, "git");
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::rename(&from, &to).unwrap();
+        assert_eq!(
+            hash(&to).unwrap(),
+            before,
+            "what was allowed is still allowed"
+        );
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
+    #[test]
+    fn a_removed_widget_is_kept_out_of_sight_and_comes_back() {
+        let cfg = folder("removed");
+        write_spec(&folder_of(&cfg, 7, "arena"), "arena", "desk");
+        std::fs::write(folder_of(&cfg, 7, "arena").join("run.sh"), "echo a").unwrap();
+        let before = hash(&folder_of(&cfg, 7, "arena")).unwrap();
+        let id = remove(&cfg, 7, "arena", 100).unwrap();
+        assert_eq!(id, "7-arena-100");
+        assert!(
+            scan(&cfg).iter().all(|f| f.name != "arena"),
+            "nothing runs from .removed"
+        );
+        assert!(
+            removed_dir(&cfg).join(&id).join("run.sh").is_file(),
+            "moved, not deleted"
+        );
+        // Removed again in the same second: kept beside it, not over it.
+        write_spec(&folder_of(&cfg, 7, "arena"), "arena", "desk");
+        assert_eq!(remove(&cfg, 7, "arena", 100).unwrap(), "7-arena-100-2");
+        // Undo only puts back what was this desk's and this name's.
+        assert!(restore(&cfg, &id, 9, "arena").is_err());
+        assert!(restore(&cfg, "../../etc", 7, "arena").is_err());
+        assert!(restore(&cfg, "7-arena-", 7, "arena").is_err());
+        assert_eq!(removed_names(&cfg, 7), vec!["arena".to_string()]);
+        assert!(removed_names(&cfg, 9).is_empty());
+        // `a-1`'s folder is not `a`'s to undo, though its id reads as one.
+        write_spec(&folder_of(&cfg, 7, "a-1"), "a-1", "desk");
+        let other = remove(&cfg, 7, "a-1", 1_700_000_000).unwrap();
+        assert!(restore(&cfg, &other, 7, "a").is_err());
+        restore(&cfg, &id, 7, "arena").unwrap();
+        assert_eq!(
+            hash(&folder_of(&cfg, 7, "arena")).unwrap(),
+            before,
+            "allowed as it was"
+        );
+        // The name taken meanwhile: the other stays where it is kept.
+        assert!(restore(&cfg, "7-arena-100-2", 7, "arena")
+            .unwrap_err()
+            .contains("already there"));
+        let _ = std::fs::remove_dir_all(&cfg);
+    }
+
     #[test]
     fn a_starter_reads_back() {
         let (json, _, _) = starter("disk-free", Scope::Global);
@@ -507,5 +951,43 @@ mod tests {
             (s.name.as_str(), s.title.as_str(), s.scope),
             ("disk-free", "Disk free", Scope::Global)
         );
+    }
+
+    #[test]
+    fn proposed_settings_are_ones_the_page_can_draw() {
+        let spec = |settings: &str| -> Spec {
+            serde_json::from_str(&format!(
+                r#"{{"name":"ci","run":{{"command":"run.sh"}},"settings":{settings}}}"#
+            ))
+            .unwrap()
+        };
+        assert!(settings_ok(&spec(
+            r#"{"base":{"type":"string","default":"main"},
+            "branch_only":{"type":"boolean"},"every-n":{"type":"number"},
+            "which":{"type":"choice","choices":["a","b"]}}"#
+        ))
+        .is_ok());
+        assert!(settings_ok(&spec(r#"{"which":{"type":"choice"}}"#))
+            .unwrap_err()
+            .contains("no choices"));
+        assert!(settings_ok(&spec(r#"{"when":{"type":"date"}}"#))
+            .unwrap_err()
+            .contains("a setting is a string"));
+        assert!(settings_ok(&spec(r#"{"Base":{"type":"string"}}"#)).is_err());
+        // /sidebars draws "bool" too; a default must be one it can show.
+        assert!(settings_ok(&spec(r#"{"on":{"type":"bool","default":true}}"#)).is_ok());
+        assert!(
+            settings_ok(&spec(r#"{"port":{"type":"number","default":"3000"}}"#))
+                .unwrap_err()
+                .contains("default is not a number")
+        );
+        assert!(settings_ok(&spec(
+            r#"{"which":{"type":"choice","choices":["a"],"default":"b"}}"#
+        ))
+        .is_err());
+        let many: Vec<String> = (0..=SETTINGS_MAX)
+            .map(|i| format!(r#""s{i}":{{"type":"string"}}"#))
+            .collect();
+        assert!(settings_ok(&spec(&format!("{{{}}}", many.join(",")))).is_err());
     }
 }

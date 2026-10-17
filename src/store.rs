@@ -4,10 +4,8 @@
 use crate::accounts;
 use crate::config::Paths;
 use crate::desk::{self, Desk, Opened, Origin, Placed};
-use crate::peer;
 use crate::render::Kind;
-use crate::thread;
-use crate::widget;
+use crate::{peer, thread, widget};
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -65,6 +63,12 @@ pub struct TreeDoc {
     /// Its size in bytes, so the page can decide what a hover is allowed to
     /// fetch ahead of a click without asking.
     pub size: i64,
+    /// The friend who sent it, when one did: the row wears their initial,
+    /// filed into a folder of the reader's or under their own row (audit
+    /// 7c0fc42885: 4 of 5 of a friend's sat in the reader's project
+    /// looking like the reader's own).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub friend: String,
 }
 
 /// A document as the desk's rail lists it: what a pane on this desk sent,
@@ -167,6 +171,12 @@ pub struct NewDoc<'a> {
     pub origin: &'a str,
     /// The MCP client's name, "" when it came another way.
     pub sender: &'a str,
+    /// A draft the hook saved: listed, never waiting -- unless the version
+    /// it follows was waiting, whose mark it keeps (`insert`).
+    pub quiet: bool,
+    /// The sender's conversation (`Payload::session`), so the hook's drafts
+    /// can follow a workflow that conversation named (`named_workflow`).
+    pub session: &'a str,
     /// The pane it was sent from, if it was.
     pub desk: Option<&'a Origin>,
     /// The document body as stored. Bytes, not text, so an image or any other
@@ -536,14 +546,31 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (14, accounts::COLUMNS_1_30[2]),
     // 1.30 too: the questions an agent asked as one card (#110).
     (15, thread::GROUP_COLUMN),
-    // 1.30: widgets on the desks the reader chose, for as long as they chose,
-    // and the card that asks for one (#111).
+    // 1.30: widgets on chosen desks, for a chosen while, and their card (#111).
     (16, widget::PREFS_COLUMNS_1_30[0]),
     (16, widget::PREFS_COLUMNS_1_30[1]),
     (16, widget::PREFS_COLUMNS_1_30[2]),
     (16, thread::SUGGEST_COLUMNS_1_30[0]),
     (16, thread::SUGGEST_COLUMNS_1_30[1]),
     (16, thread::SUGGEST_COLUMNS_1_30[2]),
+    (17, widget::TITLE_COLUMN_1_31), // 1.31: a widget file's own title (#112)
+    // 1.32: a widget file belongs to a desk, or is shared; prefs by owner
+    // and name, and a seat says whose it is (`widget::OWNER_1_32`).
+    (18, widget::OWNER_1_32[0]),
+    (18, widget::OWNER_1_32[1]),
+    (18, widget::OWNER_1_32[2]),
+    (18, widget::OWNER_1_32[3]),
+    (18, widget::OWNER_1_32[4]),
+    // 1.33: the conversation a document came from (`NewDoc::session`).
+    (19, "ALTER TABLE docs ADD COLUMN session TEXT NOT NULL DEFAULT ''"),
+    (20, desk::HELD_COLUMN),
+    // 1.36: a question quieted by its prompt, a key turn's key (`thread::ON_YOU_1_36`).
+    (21, thread::ON_YOU_1_36[0]),
+    (21, thread::ON_YOU_1_36[1]),
+    (22, desk::LOOP_COLUMNS_1_37), // 1.37: a line landed by a commit, and its reply
+    (23, thread::PR_STATE_1_43), // 1.43: where a thread's PR is, as GitHub says it
+    (24, crate::links::COLUMN_1_43), // 1.43: a desk's links in the rail's foot
+    (25, thread::AWAY_COLUMN_1_44), // 1.44: why an agent put an On you card away
 ];
 
 /// 1.23's column, named so the old-database tests can take it away again.
@@ -552,19 +579,23 @@ pub const SAVED_PATH_COLUMN: &str = "ALTER TABLE docs ADD COLUMN saved_path TEXT
 /// A desk's list, read through `docs_desk` (desk, on or off the list, when):
 /// the one index a four-column `WHERE` on a desk's documents needs, and
 /// `?1` the desk, `?2` the limit.
-fn desk_docs_sql(off: bool) -> String {
+/// `sent` leaves the hook's drafts out, on both sides: a file's head is its
+/// newest send, not a draft saved after it.
+fn desk_docs_sql(off: bool, sent: bool) -> String {
+    let sent = if sent { "AND d.origin != 'hook'" } else { "" };
     format!(
         "SELECT d.id, d.title, d.kind, d.received_at, d.unread, d.pinned, d.desk_slot, p.name, d.source_path,
                 d.saved_path, d.origin, (d.peer_key != '' AND p.root NOT LIKE 'peer:%'), p.root
          FROM live_docs d JOIN projects p ON p.id = d.project_id
-         WHERE d.desk_id = ?1 AND d.desk_off {}
+         WHERE d.desk_id = ?1 AND d.desk_off {} {sent}
            AND (d.source_path IS NULL
                 OR d.rowid = (SELECT d2.rowid FROM live_docs d2
                               WHERE d2.desk_id = ?1 AND d2.project_id = d.project_id
-                                AND d2.source_path = d.source_path
+                                AND d2.source_path = d.source_path {}
                               ORDER BY d2.received_at DESC, d2.rowid DESC LIMIT 1))
          ORDER BY {} d.received_at DESC, d.rowid DESC LIMIT ?2",
         if off { "> 0" } else { "= 0" },
+        sent.replace("d.", "d2."),
         if off { "d.desk_off DESC," } else { "" },
     )
 }
@@ -625,17 +656,18 @@ impl Store {
             "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;",
         )?;
         conn.execute_batch(SCHEMA)?;
-        // Desks live in the same database and in tables of their own; see
-        // `crate::desk` for why that separation is the whole of the boundary.
+        // Desks have tables of their own: `crate::desk` says why that is the boundary.
         conn.execute_batch(desk::SCHEMA)?;
         // Claude accounts by label; their tokens are in `crate::secrets`.
         conn.execute_batch(accounts::SCHEMA)?;
         // Friends, and what is on its way to or from one (`crate::peer`).
         conn.execute_batch(peer::SCHEMA)?;
-        // Threads, turns and suggested panels (`crate::thread`), and the
-        // sidebars' layout and their widgets (`crate::widget`).
+        // Threads, turns and suggested panels (`crate::thread`), the sidebars'
+        // widgets (`crate::widget`), Lately, and pipelines (`crate::pipeline`).
         conn.execute_batch(thread::SCHEMA)?;
         conn.execute_batch(widget::SCHEMA)?;
+        conn.execute_batch(crate::lately::SCHEMA)?;
+        conn.execute_batch(crate::pipeline::SCHEMA)?;
         migrate(&conn)?;
         // After the columns are there on every database, old or new.
         //
@@ -728,11 +760,20 @@ impl Store {
             params![project_id, d.workflow_key],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
+        // A quiet one waits only where the version before it was waiting: a
+        // draft saved over a send nobody has read yet must not unmark it.
+        let waited =
+            "SELECT 1 FROM live_docs WHERE project_id = ?1 AND source_path = ?2 AND unread = 1";
+        let unread = !d.quiet
+            || d.source_path.is_some_and(|sp| {
+                tx.query_row(waited, params![project_id, sp], |_| Ok(()))
+                    .is_ok()
+            });
         tx.execute(
-            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender, desk_id, desk_name, desk_slot, is_head)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, 1, ?13, ?14, ?15, ?16, 1)",
+            "INSERT INTO docs(id, project_id, workflow_id, title, kind, lang, size, received_at, source_path, branch, content_hash, pinned, origin, unread, sender, desk_id, desk_name, desk_slot, is_head, session)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12, ?17, ?13, ?14, ?15, ?16, 1, ?18)",
             params![id, project_id, workflow_id, d.title, d.kind.as_str(), d.lang, size, now, d.source_path, d.branch, hash, d.origin, d.sender,
-                d.desk.map_or(0, |o| o.id), d.desk.map_or("", |o| o.name.as_str()), d.desk.map_or(0, |o| o.slot)],
+                d.desk.map_or(0, |o| o.id), d.desk.map_or("", |o| o.name.as_str()), d.desk.map_or(0, |o| o.slot), unread, d.session],
         )?;
         tx.execute(FTS_INSERT, params![id, d.title, d.search_body])?;
         // A newer version of a file takes the older one's place on the queue
@@ -1081,8 +1122,8 @@ impl Store {
     /// documents, one row per removal -- which is one row per lineage, named
     /// by its newest version, with how many went -- and, with `desks`, the
     /// notes taken off a desk's list, the panels closed on one and the desks closed. Each row
-    /// carries the route that puts it back; the asides the daemon holds in
-    /// memory are the server's to add.
+    /// carries the route that puts it back; Lately's rows (`crate::lately`)
+    /// are the server's to add.
     pub fn removed(&self, limit: usize, desks: bool) -> Result<Vec<Removed>> {
         let conn = self.conn.lock().unwrap();
         let mut out: Vec<Removed> = conn
@@ -1170,87 +1211,6 @@ impl Store {
             "UPDATE docs SET pinned = ?2 WHERE id = ?1",
             params![id, pinned as i64],
         )? > 0)
-    }
-
-    /// What arrived and has not been opened, oldest first: the order things
-    /// came in is the order to read them in. Every insert joins it and every
-    /// open leaves it, so it is the unread set with an order and nothing more.
-    pub fn queue(&self, limit: usize) -> Result<Vec<Doc>> {
-        let conn = self.conn.lock().unwrap();
-        let rows = conn
-            .prepare(&format!(
-                "SELECT {DOC_COLS} {HEAD_FROM} WHERE d.unread = 1 ORDER BY d.received_at, d.rowid LIMIT ?1"
-            ))?
-            .query_map(params![limit as i64], row_to_doc)?
-            .collect::<std::result::Result<_, _>>()?;
-        Ok(rows)
-    }
-
-    /// The newest documents still unread, newest first: Home's Arrived,
-    /// which reads what came last, where the queue reads oldest first.
-    pub fn newest_unread(&self, limit: usize) -> Result<Vec<Doc>> {
-        let conn = self.conn.lock().unwrap();
-        let rows = conn
-            .prepare(&format!(
-                "SELECT {DOC_COLS} {HEAD_FROM} WHERE d.unread = 1 ORDER BY d.received_at DESC, d.rowid DESC LIMIT ?1"
-            ))?
-            .query_map(params![limit as i64], row_to_doc)?
-            .collect::<std::result::Result<_, _>>()?;
-        Ok(rows)
-    }
-
-    /// How many are on the queue: what the bar says, however many rows the
-    /// page was sent.
-    pub fn waiting(&self) -> Result<i64> {
-        let conn = self.conn.lock().unwrap();
-        Ok(
-            conn.query_row("SELECT COUNT(*) FROM head_docs WHERE unread = 1", [], |r| {
-                r.get(0)
-            })?,
-        )
-    }
-
-    /// A document was opened. True when this is what took it off the queue.
-    pub fn mark_read(&self, id: &str) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        Ok(conn.execute(
-            "UPDATE docs SET unread = 0 WHERE id = ?1 AND unread = 1",
-            params![id],
-        )? > 0)
-    }
-
-    /// Everything waiting, marked read without being opened. Returns what
-    /// left the queue, so every open tab can take the same rows off.
-    pub fn mark_all_read(&self) -> Result<Vec<String>> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction()?;
-        let ids: Vec<String> = tx
-            .prepare("SELECT id FROM head_docs WHERE unread = 1")?
-            .query_map([], |r| r.get(0))?
-            .collect::<std::result::Result<_, _>>()?;
-        tx.execute("UPDATE docs SET unread = 0 WHERE unread = 1", [])?;
-        tx.commit()?;
-        Ok(ids)
-    }
-
-    /// Mark all read, taken back: the ids it returned go back on the queue,
-    /// except one removed since, which has no row to wait in. Returns the
-    /// ones that went back.
-    pub fn mark_unread(&self, ids: &[String]) -> Result<Vec<String>> {
-        let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction()?;
-        let mut back = Vec::new();
-        for id in ids {
-            if tx.execute(
-                "UPDATE docs SET unread = 1 WHERE id = ?1 AND unread = 0 AND deleted_at = 0",
-                params![id],
-            )? > 0
-            {
-                back.push(id.clone());
-            }
-        }
-        tx.commit()?;
-        Ok(back)
     }
 
     /// Name a project yourself. The directory it was derived from is its identity and
@@ -1609,7 +1569,8 @@ impl Store {
             })?
             .collect::<std::result::Result<_, _>>()?;
         let mut doc_stmt = conn.prepare(
-            "SELECT id, title, kind, received_at, pinned, unread, size FROM head_docs
+            "SELECT id, title, kind, received_at, pinned, unread, size,
+                    CASE WHEN origin = 'peer' THEN sender ELSE '' END FROM head_docs
              WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC LIMIT ?2",
         )?;
         for w in &mut wfs {
@@ -1647,7 +1608,8 @@ impl Store {
         };
         w.docs = conn
             .prepare(
-                "SELECT id, title, kind, received_at, pinned, unread, size FROM head_docs
+                "SELECT id, title, kind, received_at, pinned, unread, size,
+                    CASE WHEN origin = 'peer' THEN sender ELSE '' END FROM head_docs
                  WHERE workflow_id = ?1 ORDER BY received_at DESC, rowid DESC",
             )?
             .query_map(params![workflow_id], row_to_tree_doc)?
@@ -1789,9 +1751,30 @@ impl Store {
     /// the removal is looked at, so removing a file's newest version does not
     /// bring an older one up in its place; a new send is a new row, and shows.
     pub fn desk_docs(&self, desk_id: i64, limit: usize, off: bool) -> Result<Vec<DeskDoc>> {
+        self.desk_rows(&desk_docs_sql(off, false), desk_id, limit)
+    }
+
+    /// What this desk's panels sent, without the hook's drafts: what a
+    /// neighbour panel is told of, since a draft is not news.
+    pub fn desk_sent(&self, desk_id: i64, limit: usize) -> Result<Vec<DeskDoc>> {
+        self.desk_rows(&desk_docs_sql(false, true), desk_id, limit)
+    }
+
+    /// The desk's last document as its brief and Home's card name it: the
+    /// newest it sent, else its newest draft. A memory file the hook saved
+    /// was once the next panel's "last document" (audit bf13a1859b).
+    pub fn desk_last(&self, desk_id: i64) -> Option<DeskDoc> {
+        let sent = self
+            .desk_sent(desk_id, 1)
+            .ok()
+            .and_then(|v| v.into_iter().next());
+        sent.or_else(|| self.desk_docs(desk_id, 1, false).ok()?.into_iter().next())
+    }
+
+    fn desk_rows(&self, sql: &str, desk_id: i64, limit: usize) -> Result<Vec<DeskDoc>> {
         let conn = self.conn.lock().unwrap();
         let rows = conn
-            .prepare(&desk_docs_sql(off))?
+            .prepare(sql)?
             .query_map(params![desk_id, limit as i64], |r| {
                 let source_path: Option<String> = r.get(8)?;
                 let local_path = local_path(
@@ -1865,6 +1848,11 @@ impl Store {
 
     pub fn set_pane_cmd(&self, id: &str, cmd: &str) -> Result<bool> {
         desk::set_cmd(&self.conn.lock().unwrap(), id, cmd)
+    }
+
+    /// The reader pressed Start on a panel that was waiting for it (`desk::unhold`).
+    pub fn unhold_pane(&self, id: &str) -> Result<bool> {
+        desk::unhold(&self.conn.lock().unwrap(), id)
     }
 
     pub fn set_pane_session(&self, id: &str, session: &str) -> Result<bool> {
@@ -2083,8 +2071,15 @@ impl Store {
         desk::set_cwd(&self.conn.lock().unwrap(), id, cwd)
     }
 
-    pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str) -> Result<Opened> {
-        desk::open_pane(&mut self.conn.lock().unwrap(), desk_id, cwd, cmd, now())
+    pub fn open_pane(&self, desk_id: i64, cwd: &str, cmd: &str, held: bool) -> Result<Opened> {
+        desk::open_pane(
+            &mut self.conn.lock().unwrap(),
+            desk_id,
+            cwd,
+            cmd,
+            held,
+            now(),
+        )
     }
 
     /// Move a pane to another slot on its desk (`desk::move_pane`), and what
@@ -2257,12 +2252,13 @@ impl Store {
 
     /// What panes sent since `since`, every send and oldest first, as
     /// `(desk, id, title, at)`: Home's log and the rhythm of each desk. Over
-    /// `live_docs`, so a version counts as the day's work it was.
+    /// `live_docs`, so a version counts as the day's work it was; the hook's
+    /// drafts are not sends.
     pub fn desks_sent_since(&self, since: i64) -> Result<Vec<(i64, String, String, i64)>> {
         let conn = self.conn.lock().unwrap();
         let mut st = conn.prepare(
             "SELECT desk_id, id, title, received_at FROM live_docs
-             WHERE desk_id != 0 AND received_at >= ?1 ORDER BY received_at, rowid",
+             WHERE desk_id != 0 AND received_at >= ?1 AND origin != 'hook' ORDER BY received_at, rowid",
         )?;
         let rows = st.query_map(params![since], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
@@ -2351,7 +2347,7 @@ pub struct Census {
     pub desks: i64,
 }
 
-/// A tree row, which is the six columns of a document the sidebar draws and
+/// A tree row, which is the columns of a document the sidebar draws and
 /// none of the rest. Shared by the two queries that return them.
 fn row_to_tree_doc(r: &rusqlite::Row) -> rusqlite::Result<TreeDoc> {
     Ok(TreeDoc {
@@ -2362,6 +2358,7 @@ fn row_to_tree_doc(r: &rusqlite::Row) -> rusqlite::Result<TreeDoc> {
         pinned: r.get::<_, i64>(4)? != 0,
         unread: r.get::<_, i64>(5)? != 0,
         size: r.get(6)?,
+        friend: r.get(7)?,
     })
 }
 
@@ -2460,9 +2457,12 @@ pub fn new_id(hash: &str) -> String {
 }
 
 mod keys;
+mod queue;
+mod refile;
+mod sends;
 mod talk;
-pub use keys::Held;
 use talk::local_path;
+pub use {keys::Held, sends::Promotion};
 
 #[cfg(test)]
 mod tests;

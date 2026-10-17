@@ -57,7 +57,7 @@ export async function pick(ctx, forDesk = false) {
       const trim = p => p && p.replace(/(.)\/+$/, "$1");
       const had = state.desks && state.desks.desks.find(d => trim(d.root) === trim(j.root.path));
       if (had) ctx.show(had.id, true);
-      else await make(ctx, { root: j.root.id, path: "" });
+      else await make(ctx, { root: j.root.id, path: "" }, forDesk === "welcome");
       return;
     }
     // Open in the sidebar as well as on the page; the toggle fills its tree.
@@ -77,8 +77,9 @@ function alreadyOpen({ capability, toast }) {
 
 /** A new desk on folder `f` -- a folder under Folders, or a project by its
  *  id -- or with none on no folder: it starts in the home directory, which
- *  the daemon names. */
-export async function make(ctx, f) {
+ *  the daemon names. `welcome`: asked from Welcome, which goes on to Got
+ *  another one? rather than to the desk. */
+export async function make(ctx, f, welcome) {
   const { toast, api } = ctx;
   try {
     const j = await api("/api/desks", !f ? {} : f.project != null ? { project: f.project, name: f.name } : { root: f.root, path: f.path });
@@ -88,12 +89,13 @@ export async function make(ctx, f) {
     // folder's desk, it opens on a shell, started, as it always did.
     const claude = !!f && await hasClaude();
     try {
-      const p = await api(`/api/desks/${j.desk.id}/panes`, claude ? { cmd: "claude" } : {});
-      if (claude) ctx.hold(p.pane.id);
-      else await api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
+      const p = await api(`/api/desks/${j.desk.id}/panes`, claude ? { cmd: "claude", held: true } : {});
+      if (!claude) await api(`/api/panes/${p.pane.id}/start`, { cmd: "" });
     } catch (e) { toast(claude ? "Could not open Claude's panel" : "Could not start the new desk's shell", { sub: e }); }
     await ctx.load();
-    ctx.show(j.desk.id, true);
+    // Made from Welcome: Got another one? first, the desk one click on.
+    if (welcome && ctx.welcomed) ctx.welcomed(j.desk.id);
+    else ctx.show(j.desk.id, true);
   } catch (e) { toast("Could not make a desk", { sub: e }); }
 }
 
@@ -304,22 +306,45 @@ async function keepAll(ctx, pid, name) {
  *  to a friend…. A reader who never pairs is never offered it. */
 const booted = (() => { try { return +JSON.parse(document.getElementById("boot").textContent).friends || 0; } catch { return 0; } })();
 const friendsOf = ctx => ctx.state.friends ?? booted;
-/** A widget's box, from its head (#111): a widget file on a desk can be
- *  kept to this desk or taken off it, and any widget turned off -- which
- *  /sidebars turns on again (snyvi never deletes). */
+/** The desk a widget's box belongs to, from its section: its desk when it
+ *  is that desk's own (`data-wsrc` "own"), 0 when shared or global. */
+const ownerOf = sec => sec?.dataset.wsrc === "own" ? +sec.dataset.wdesk : 0;
+/** A widget's box, from its head (#111): a desk's own widget file can be
+ *  shared with other desks (1.32); a shared one on a desk made this desk's
+ *  own or taken off it; and any widget turned off -- which /sidebars turns
+ *  on again (snyvi never deletes). */
 function widgetItems(ctx, sec) {
   if (!sec) return [];
-  const name = sec.dataset.w, desk = +sec.dataset.wdesk, file = sec.dataset.wsrc === "file";
-  const set = (body, what) => async () => {
-    try { await ctx.api(`/api/widgets/${name}/prefs`, body); }
+  const name = sec.dataset.w, desk = +sec.dataset.wdesk, owner = ownerOf(sec), file = sec.dataset.wsrc === "file";
+  // A pushed box is switched off on its own desk alone (1.36): its switch
+  // is kept under its desk, as a desk's own widget's is.
+  const offKey = sec.dataset.wsrc === "push" ? desk : owner;
+  const set = (body, what, then) => async () => {
+    try { await ctx.api(`/api/widgets/${name}/prefs`, { owner, ...body }); then?.(); }
     catch (e) { ctx.toast(`Could not ${what}`, { sub: e }); }
   };
   return [
-    file && desk && { label: "Only on this desk", run: set({ only_desk: desk }, "keep it to this desk") },
+    owner && { label: "Share with other desks…", run: set({ share: true }, "share it", () => ctx.showSidebars(true)) },
+    file && desk && { label: "Make it this desk's own", run: set({ keep_here: desk }, "make it this desk's") },
     file && desk && { label: "Not on this desk", run: set({ not_desk: desk }, "take it off this desk") },
-    { label: "Turn off", run: set({ hidden: true }, "turn it off") },
+    (file || owner) && { label: "Open its folder", run: () => reveal(ctx, { widget: name, owner }) },
+    { label: "Turn off", run: set({ hidden: true, owner: offKey }, "turn it off") },
     RULE,
   ].filter(Boolean);
+}
+/** An agent's widget on a desk -- its own widget file, or a box a panel
+ *  pushed -- can be removed, last and below a rule: its folder is kept in
+ *  widgets/.removed/ and the box says Undo where it was. The reader's own
+ *  widgets have Turn off alone. */
+function removeItem(ctx, sec) {
+  const name = sec?.dataset.w, desk = +sec?.dataset.wdesk;
+  if (!desk || !ctx.desk?.seatOf?.(desk, name)?.agent) return [];
+  return [RULE, { label: "Remove", danger: true, run: () => removeWidget(ctx, name, desk, ownerOf(sec)) }];
+}
+async function removeWidget(ctx, name, desk, owner) {
+  ctx.desk.widgetGone(desk, name, owner);
+  try { const j = await ctx.api(`/api/widgets/${name}/remove`, { desk, owner }); ctx.desk.widgetKept(name, j.from); }
+  catch (e) { ctx.desk.widgetBack(name); ctx.toast(`Could not remove ${name}`, { sub: e }); }
 }
 function entries(ctx, el, byKey = false) {
   const { capability } = ctx, copyIt = (text, what) => ({ label: what, run: at => ctx.copied(text, at) });
@@ -330,6 +355,7 @@ function entries(ctx, el, byKey = false) {
   if (el.matches(".sec-head")) return { head: el.querySelector(".sec-nm")?.textContent || "Sidebars", items: [
     ...widgetItems(ctx, el.closest("section.wg")),
     { label: "Arrange sidebars…", moves: 1, run: () => ctx.showSidebars(true) },
+    ...removeItem(ctx, el.closest("section.wg")),
   ] };
   // snyvi's own mark: the one setting that is about snyvi itself.
   if (el.matches(".brand-mark")) return { head: "snyvi", items: [
@@ -410,7 +436,10 @@ function entries(ctx, el, byKey = false) {
       dk && d.panes.some(p => !(p.status && p.status.running)) && { label: "Start all", run: () => dk.startAll() },
       dk && d.panes.length && { label: dk.isFull() ? "Back to the grid" : "Full view", key: ctx.keyHint("ctrl+alt+z"), run: () => dk.zoomOn() },
       { label: "Rename…", key: here ? "" : "F2", moves: 1, run: () => dk ? dk.renameHere() : rename(ctx, el, "desk", id) },
-      dk && { label: "Keys…", run: () => dk.keysHere() }, RULE,
+      dk && { label: "Keys…", run: () => dk.keysHere() },
+      // Focus follows the pointer left this menu for the foot strip (1.43):
+      // it is the whole app's, and here it read as this desk's alone.
+      RULE,
       // Where it is in the list; what cannot move it is not offered.
       ...(here ? [] : moves(ctx, id, byKey)),
       files({ desk: id }), copyIt(d.root, "Copy path"), RULE,
@@ -474,6 +503,48 @@ async function order(ctx, ids, moved, byKey) {
   if (byKey) ctx.focusDesk(moved);
   try { await ctx.api("/api/desks/order", { ids }); }
   catch (e) { ds.desks = was; ctx.deskSaid(moved, "Couldn't move it", e); if (byKey) ctx.focusDesk(moved); }
+}
+
+/** Allow a widget file to run, from its seat: the window's capability,
+ *  which a tab has not. Its next run, a moment later, fills the seat. */
+export async function allowWidget(ctx, b) {
+  b.disabled = true;
+  try { await ctx.api(`/api/widgets/${b.dataset.wallow}/allow`, { owner: ownerOf(b.closest("section.wg")) }); b.textContent = "Allowed"; }
+  catch (e) {
+    b.disabled = false;
+    if (e?.status === 403) ctx.toast("Allow works in the snyvi window", { sub: "A tab cannot let a command run" });
+    else ctx.toast(`Not allowed: ${e?.message || e}`);
+  }
+}
+/** A seat's own buttons: Try again on one that stopped, Turn off here,
+ *  Tell the agent on one that failed (#112), Undo on one just removed.
+ *  Said in the seat, where the click was. */
+export async function seatAct(ctx, b) {
+  // A gallery's tile: its viewer, fetched on the first one.
+  // Its ?v= is this chunk's own, so the two are of one build.
+  if (b.dataset.gal) return (await import(`/assets/gallery.js${new URL(import.meta.url).search}`)).show(ctx, b);
+  const name = b.dataset.wretry || b.dataset.wnot || b.dataset.wtell || b.dataset.wundo, desk = +b.dataset.wd, owner = ownerOf(b.closest("section.wg"));
+  b.disabled = true;
+  if (b.dataset.wundo) {
+    try { await ctx.api(`/api/widgets/${name}/restore`, { desk, owner: +b.dataset.wown, from: b.dataset.wfrom || "" }); ctx.desk?.widgetBack?.(name, +b.dataset.wown !== 0); }
+    catch (e) { b.disabled = false; ctx.toast(`Could not bring ${name} back`, { sub: e }); }
+    return;
+  }
+  try {
+    if (b.dataset.wtell) {
+      const j = await ctx.api(`/api/widgets/${name}/tell`, { desk });
+      b.textContent = j.told ? "Told · on its next prompt" : "No agent proposed it";
+      return;
+    }
+    if (b.dataset.wretry) await ctx.api(`/api/widgets/${name}/retry`, { desk, owner });
+    else await ctx.api(`/api/widgets/${name}/prefs`, { not_desk: desk, owner });
+    b.textContent = b.dataset.wretry ? "Running…" : "Turned off";
+  } catch (e) { b.disabled = false; b.textContent = "Could not · again"; b.dataset.tip = e?.message || ""; }
+}
+/** A cut body or line opened where it is, or closed again. */
+export function seatOpen(ctx, x) {
+  const o = x.classList.toggle("open"), b = x.lastElementChild;
+  if (b?.matches(".wg-more")) { b.ariaExpanded = o; b.textContent = o ? "less" : "more"; }
 }
 
 /** Desk `id` one place up (-1) or down (1), or to the top ("top"): its menu
@@ -612,10 +683,14 @@ const CSS = `
 #pop { position: fixed; left: 50px; top: 8px; z-index: var(--z-pop); width: var(--side-w); max-height: calc(100vh - 16px); overflow: auto; overscroll-behavior: contain;
   padding: 2px 8px 8px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-sm); box-shadow: var(--shadow);
   animation: sheet-l var(--dur-quick) var(--ease-out); }
-#pop > #note { margin: 6px 0 0; }
 #pop > :first-child .sec-head { margin-top: 4px; }
-@media (max-width: 760px) { #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; } }
-#ctx { position: fixed; z-index: var(--z-pop); min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-ui); transform-origin: 0 0; animation: ctx-in var(--dur-instant) ease-out; }
+/* Lately is read, not navigated: it opens wider than the sections, as On
+   you's tray does once it is opened, so a title is one line more often than
+   two; and shorter than the window, so the page shows above it and its end
+   is a row or a fold, never a row the window's edge cut through. */
+#pop:has(> #lately-nav) { width: 360px; max-height: min(70vh, 560px, calc(100vh - var(--foot-h) - 20px)); padding: 0 0 6px; }
+@media (max-width: 760px) { #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; } #pop:has(> #lately-nav) { width: min(88vw, 360px); max-height: none; } }
+#ctx { position: fixed; z-index: var(--z-pop); min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-sm); box-shadow: var(--shadow); font-size: var(--fs-ui); transform-origin: 0 0; animation: ctx-in var(--dur-instant) ease-out; }
 @keyframes ctx-in { from { opacity: 0; transform: scale(.97); } }
 @media (prefers-reduced-motion: reduce) { #ctx { animation: none; } }
 /* What the menu acts on, named at its top: a right-click in a busy grid
@@ -663,7 +738,7 @@ function install(ctx) {
     // The focus goes back where the menu came from, unless the entry moves
     // it itself -- renaming, opening, going to a desk (`moves`).
     close(!it.moves);
-    Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast(`Could not ${it.label.replace(/…$/, "").toLowerCase()}`, { sub: err, at }));
+    Promise.resolve().then(() => it.run(at)).catch(err => ctx.toast(`Could not ${it.label.replace(/…$/, "").replace(/^./, c => c.toLowerCase())}`, { sub: err, at }));
   });
   // The item under the pointer is the one with the focus: one row lit, and
   // Enter acts on it.
@@ -699,10 +774,17 @@ function install(ctx) {
  * it is fetched on the first press of a rail icon, and a reader whose
  * sidebar is never folded never pays for it. */
 const $ = s => document.querySelector(s), root = document.documentElement;
-const POPS = { inbox: ["#inbox-row", "#queue"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], note: ["#note"] };
+// Lately is no section of the tree: corner.js makes its element and keeps
+// it, out of sight, in #trees between openings (`lately`), so it opens and
+// closes as the sections do.
+const POPS = { inbox: ["#inbox-row"], tree: ["#tree"], desks: ["#desk-nav"], browse: ["#browse-nav"], widgets: ["#widgets-nav"], lately: ["#lately-nav"] };
 /** #trees' order: the reader's (app.js `placeLeft` writes it), or index.html's. */
-const home = () => ($("#trees").dataset.order || "#inbox-row #queue #tree #desk-nav #browse-nav #widgets-nav").split(" ");
+const home = () => ($("#trees").dataset.order || "#inbox-row #tree #desk-nav #browse-nav #widgets-nav").split(" ");
 let popBtn = null, popWired = false;
+/** Whether the last thing the reader did was a key, for the ring. */
+let popKey = false;
+addEventListener("keydown", () => { popKey = true; }, true);
+addEventListener("pointerdown", () => { popKey = false; }, true);
 export function pop(ctx, sec, btn) {
   sheet();
   const popEl = $("#pop");
@@ -718,9 +800,26 @@ export function pop(ctx, sec, btn) {
   if (sec === "tree") ctx.drawTree();
   // Level with the icon, and moved only as far as it takes to stay on the
   // window, the way a toast answers a control in the rail.
+  // A section opens beside the sidebar, not over its own rows. Lately, from
+  // its button in the sidebar's foot, stands over that foot's corner as On
+  // you's tray does over the rail's: 8 px in from the column's edge, growing
+  // away from the window's edge over the panels.
+  const side = root.dataset.side === "0" ? null : $("#side").getBoundingClientRect();
+  const fromFoot = sec === "lately" && side && btn.closest?.(".side-foot");
+  popEl.style.left = side ? Math.round(fromFoot ? side.left + 8 : side.right + 6) + "px" : "";
+  // Lately's floor is the foot its button stands in: it ends 6 px above the
+  // foot's rule, as On you's tray does above the rail's (audit 98b9d67a7d),
+  // not down over the foot to the window's edge.
   const r = btn.getBoundingClientRect(), h = popEl.offsetHeight;
-  popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, innerHeight - h - 8))) + "px";
-  (popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
+  const foot = sec === "lately" && $(".side-foot")?.getBoundingClientRect();
+  const floor = foot && foot.height ? foot.top - 6 : innerHeight - 8;
+  popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, floor - h))) + "px";
+  // Opened with the pointer, the focus goes in without a ring; the first
+  // key brings it back (app.css .ring-quiet).
+  popEl.classList.toggle("ring-quiet", !popKey);
+  // Lately's head has buttons now, as On you's does; its first row is still
+  // where the keys start, the newest thing that came.
+  ((sec === "lately" && popEl.querySelector(".cn-list button.cn-t")) || popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
 }
 /** Put the section back where it lives. `back` gives the focus to its icon. */
 export function unpop(back = true) {
@@ -731,7 +830,6 @@ export function unpop(back = true) {
   // Each back before the first section that follows it in #trees' order,
   // whatever else is still at home: the end is not its place.
   for (const id of POPS[sec]) {
-    if (id === "#note") { $("#side").insertBefore($(id), $(".side-foot")); continue; }
     const order = home(), after = order.slice(order.indexOf(id) + 1).map(s => $(s)).find(el => el.parentElement === treesEl);
     treesEl.insertBefore($(id), after || popEl);
   }
@@ -766,6 +864,7 @@ function wirePop(popEl) {
   // The menu's keys: the arrows walk its rows, Home and End go to its ends,
   // a letter to the next row that starts with it. Tabbing out of it closes it.
   popEl.addEventListener("keydown", e => {
+    popEl.classList.remove("ring-quiet");
     if (e.target.closest("input") || e.ctrlKey || e.metaKey || e.altKey) return;
     const bs = [...popEl.querySelectorAll("a[href], button, summary")].filter(x => x.offsetParent), at = bs.indexOf(document.activeElement), n = bs.length;
     const go = i => bs[(i + n) % n]?.focus();
@@ -782,20 +881,11 @@ function wirePop(popEl) {
     e.preventDefault(); e.stopPropagation();
   });
   popEl.addEventListener("focusout", e => { const t = e.relatedTarget; if (t && !popEl.contains(t) && !t.closest("#ctx")) unpop(false); });
-  // The aside's section empties when its last line goes, and its icon with
-  // it: the popover goes too, and a keyboard that was in it lands on the
-  // rail rather than on nothing.
-  new MutationObserver(() => {
-    if (root.dataset.pop !== "note" || !$("#note").hidden) return;
-    const had = popEl.contains(document.activeElement) || document.activeElement === document.body;
-    unpop(false);
-    if (had) [...railNav.querySelectorAll(".icon")].find(x => x.offsetParent)?.focus({ preventScroll: true });
-  }).observe($("#note"), { attributes: true, attributeFilter: ["hidden"] });
   // Following a link in it is being done with it; opening a row's fold is not.
   popEl.addEventListener("click", e => { if (e.target.closest("a[href]")) queueMicrotask(() => unpop()); });
   // The context menu is on <body>, but a row's menu is the popover's own: an
   // action there (Rename, Remove with its Undo) happens in the row, in here.
-  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target) && !e.target.closest?.("#ctx")) unpop(false); }, true);
+  document.addEventListener("pointerdown", e => { if (root.dataset.pop && !popEl.contains(e.target) && !railNav.contains(e.target) && !e.target.closest?.("#ctx, #btn-lately")) unpop(false); }, true);
 }
 
 /** Shut the menu from outside, which is what Escape does everywhere else on

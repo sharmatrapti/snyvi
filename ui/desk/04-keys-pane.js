@@ -82,13 +82,16 @@ function makeView(p) {
   const el = document.createElement("section");
   el.className = "pn";
   el.dataset.id = p.id;
-  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-git"></span><span class="pn-ctx"></span><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
+  el.innerHTML = `<header class="pn-head"><span class="pn-slot"></span><span class="pn-cmd"></span><span class="pn-acc"></span><span class="pn-git"></span><span class="pn-ctx"></span><a class="pn-page" hidden></a><span class="pn-state"></span><button type="button" class="pn-ren" data-tip="Rename panel" data-key="f2" aria-label="Rename this panel">${ctx.glyph("pen")}</button><button type="button" class="pn-full" data-tip="Full view" data-key="ctrl+alt+z" aria-label="Full view">${ctx.glyph("fill")}</button><button type="button" class="pn-x" data-tip="Close panel" data-tip-sub="asks first · Undo for 8 s" aria-label="Close this panel">${ctx.glyph("x")}</button></header>` +
     `<div class="pn-body" tabindex="0" role="region" aria-label="Panel ${p.slot}"><div class="pn-old"></div><div class="pn-sb"></div><div class="pn-live"><canvas class="pn-cv"></canvas><div class="pn-scr"></div><i class="pn-caret" hidden></i></div></div>` +
     `<div class="pn-offer" hidden role="status"><span>${OFFER_SAYS}</span><button type="button" data-offer="go">↻ Resume conversation</button><button type="button" data-offer="x" data-tip="Not now" aria-label="Not now">✕</button></div>` +
+    `<div class="pn-switch" hidden role="status"><span></span></div>` +
     `<div class="pn-connect" hidden role="status"></div>` +
     `<form class="pn-start" hidden><button type="submit">▶ Start</button><input spellcheck="false" autocomplete="off" aria-label="Command to run"><button type="button" class="pn-resume" hidden data-tip="Resume conversation" data-tip-sub="claude --resume, the one this panel last had">↻ Resume conversation</button></form>`;
-  // A new project desk's first panel, holding `claude` for the reader's Enter.
-  const first = !!(ctx.held && ctx.held.delete(p.id));
+  // A new project desk's first panel, holding `claude` for the reader's
+  // press. The daemon keeps the hold (`Pane::held`), so it is held on every
+  // load and in every window, never resumed, until a Start ends it.
+  const first = !!p.held;
   const kept = keepStopped.delete(p.id) || first;
   const v = {
     id: p.id, pane: p, el, status: p.status || {}, cols: 0, rows: 0, cells: [], cur: [0, 0, 0], mode: [0, 0, 0, 0], wheelAcc: 0, asked: false,
@@ -107,7 +110,7 @@ function makeView(p) {
   const { body, start } = v;
   // Chunks within a screen of the view, either way, are kept in the document.
   v.io = new IntersectionObserver(e => reach(v, e), { root: body, rootMargin: "100% 0px" });
-  if (first) firstPanel(v);
+  claudeStrip(v, first);
   v.g = v.cv.getContext("2d");
   watchLook();
 
@@ -118,6 +121,9 @@ function makeView(p) {
   body.addEventListener("blur", () => el.classList.remove("on"));
   const hd = el.querySelector(".pn-head");
   hd.addEventListener("click", e => {
+    // The page this panel sent and the reader has not opened (rail.js `pageChips`).
+    const pg = e.target.closest(".pn-page");
+    if (pg) { e.preventDefault(); ctx.read(pg.dataset.read); return; }
     if (e.target.closest(".pn-full")) { focused = v.id; zoom(); return; }
     if (e.target.closest(".pn-ren")) { renamePanel(v); return; }
     const x = e.target.closest(".pn-x");
@@ -126,7 +132,7 @@ function makeView(p) {
     v.dragged = false;
   });
   // A double-click on the head, not the body: there it selects a word.
-  hd.addEventListener("dblclick", e => { if (!e.target.closest(".pn-full, .pn-ren, .pn-x")) { focused = v.id; zoom(); } });
+  hd.addEventListener("dblclick", e => { if (!e.target.closest(".pn-full, .pn-ren, .pn-x, .pn-page")) { focused = v.id; zoom(); } });
   hd.addEventListener("pointerdown", e => drag(v, e));
   body.addEventListener("keydown", e => {
     // The platform's (⌘C, ⌘V, ⌘K), and snyvi's own: the swap, the pane keys
@@ -182,21 +188,29 @@ function makeView(p) {
   start.addEventListener("submit", e => { e.preventDefault(); run(v, start.querySelector("input").value); });
   start.querySelector("input").addEventListener("keydown", e => e.stopPropagation());
   start.querySelector(".pn-resume").addEventListener("click", () => run(v, "", false, true));
-  // The offer runs `claude --resume <id>` at the prompt of the shell the pane
-  // came back as, in its folder. Nothing is typed until it is clicked, and a
-  // click that cannot go says why in the strip, which stays (#108).
-  el.querySelector(".pn-offer").addEventListener("click", e => {
-    const b = e.target.closest("[data-offer]");
-    if (!b) return;
-    if (b.dataset.offer === "go") {
-      const why = resumeHere(v, true);
-      if (why) { offerSay(v, why); return; }
-    } else body.focus();
-    v.offered = false; v.offerSpent = true; header(v);
-  });
+  el.querySelector(".pn-offer").addEventListener("click", e => offerClick(v, e));
+  el.querySelector(".pn-switch").addEventListener("click", e => switchClick(v, e));
   new ResizeObserver(() => fit(v)).observe(body);
   header(v);
   return v;
+}
+
+/** The offer runs `claude --resume <id>` at the prompt of the shell the pane
+ *  came back as, in its folder. Nothing is typed until it is clicked, and a
+ *  click that cannot go says why in the strip, which stays (#108). */
+function offerClick(v, e) {
+  const b = e.target.closest("[data-offer]");
+  if (!b || b.disabled) return;
+  if (b.dataset.offer === "go") {
+    // A shell still on its way to its prompt is waited for, not refused:
+    // a click that only said "not at a prompt" was a dead end (audit
+    // 2dbcf2e538).
+    if (v.status.running && !v.mode[1]) return offerWait(v);
+    const why = resumeHere(v, true);
+    if (why) { offerSay(v, why); return; }
+  } else if (b.dataset.offer === "restart") offerRestart(v);
+  else { offerStop(v); v.body.focus(); }
+  v.offered = false; v.offerSpent = true; header(v);
 }
 
 /** A picture dropped on a panel goes in as a pasted one does. Only files are
@@ -315,6 +329,57 @@ function offerSay(v, why) {
   v.offerTimer = setTimeout(() => { t.textContent = OFFER_SAYS; t.classList.remove("why"); }, 5000);
 }
 
+/** The strip's Resume on a shell that is not at its prompt yet -- its rc
+ *  still loading, an instant prompt not yet live -- waits for it, as long as
+ *  OFFER_WAIT_MS, and then types the resume as a ready shell gets it. Past
+ *  that, something else holds the panel, and the strip offers the one thing
+ *  that still goes: the panel restarted straight into the conversation. */
+const OFFER_WAIT_MS = 8000;
+function offerWait(v) {
+  offerStop(v);
+  const t = v.el.querySelector(".pn-offer > span"), go = v.el.querySelector(".pn-offer [data-offer]");
+  t.textContent = "Waiting for the shell's prompt…";
+  go.disabled = true;
+  const at = Date.now();
+  v.offerWait = setInterval(() => {
+    if (v.mode[1]) {
+      offerStop(v);
+      const why = resumeHere(v, true);
+      if (why) offerSay(v, why); else { v.offered = false; v.offerSpent = true; header(v); }
+    } else if (Date.now() - at > OFFER_WAIT_MS) {
+      offerStop(v);
+      t.textContent = `Something is running in panel ${v.pane.slot}`;
+      t.classList.add("why");
+      go.dataset.offer = "restart";
+      go.textContent = "↻ Restart into the conversation";
+      go.dataset.tip = "Stops what is running here";
+    }
+  }, 200);
+}
+
+/** The strip back as it was: no wait, Resume its button, its own line. */
+function offerStop(v) {
+  clearInterval(v.offerWait);
+  v.offerWait = 0;
+  const t = v.el.querySelector(".pn-offer > span"), go = v.el.querySelector(".pn-offer [data-offer]");
+  if (!t || !go) return;
+  clearTimeout(v.offerTimer);
+  t.textContent = OFFER_SAYS;
+  t.classList.remove("why");
+  go.disabled = false;
+  go.dataset.offer = "go";
+  go.textContent = "↻ Resume conversation";
+  delete go.dataset.tip;
+}
+
+/** Stop the panel and start it as its conversation, as a stopped panel's
+ *  Resume does; the start waits on the stop (`onStop`, 02-socket.js). */
+function offerRestart(v) {
+  offerStop(v);
+  v.onStop = () => run(v, v.status.cmd || v.pane.cmd || "", false, true);
+  ctx.api(`/api/panes/${v.id}/stop`, {}).catch(e => { v.onStop = null; ctx.toast("Could not restart the panel", e); });
+}
+
 /** The accent this window wears, as CSS resolved it, for the prompt the shell
  *  is dressed in. The shell bakes it in at birth and cannot be told again --
  *  the page re-tints instead, in `color`, so a swatch reaches a pane that is
@@ -327,9 +392,10 @@ function accent() {
   return /^#[0-9a-f]{6}$/i.test(c) ? c : "";
 }
 
-async function run(v, cmd, quiet, again) {
+async function run(v, cmd, quiet, again, once) {
   if (v.starting) return;
   v.starting = true;
+  unready(v);
   v.resumed = true;
   let shell = false;
   const [c, r] = v.size ? v.size.split("x").map(Number) : [80, 24];
@@ -340,7 +406,7 @@ async function run(v, cmd, quiet, again) {
     // the daemon holds to it only while the mark does, and past it starts
     // `cmd` with the conversation offered -- a panel unshown for minutes.
     const was = document.activeElement;
-    const j = await ctx.api(`/api/panes/${v.id}/start`, { ...(again ? { resume: true } : {}), marked: !!quiet, cmd, cols: c, rows: r, accent: accent() });
+    const j = await ctx.api(`/api/panes/${v.id}/start`, { ...(again ? { resume: true } : {}), ...(once ? { once: true } : {}), marked: !!quiet, cmd, cols: c, rows: r, accent: accent() });
     v.status = j.status;
     // The account picked is not the one running: its token is gone, or a
     // key Claude Code ranks above it is set.
@@ -382,13 +448,18 @@ const ctxUsed = s => s.ctx_used ?? (s.ctx_pct != null && s.ctx_size ? Math.round
  *  when there is no count yet rather than an old one. */
 const ctxFig = s => { const u = ctxUsed(s); return s.ctx_size ? `${u == null ? "—" : kTok(u)} / ${kTok(s.ctx_size)}` : `${s.ctx_pct}%`; };
 const ctxTip = s => `${s.model ? s.model + " · " : ""}${ctxFig(s)} in its context window · ${s.ctx_pct}%`;
-/** The account's window `k` (five_hour, seven_day) as the freshest panel
- *  here said it (#107). It is one account in every panel, and within a
- *  window the share used only grows: the latest window's highest share is
- *  the newest reading, with no clock to compare. */
-const freshest = k => {
-  let b = null;
-  for (const v of views.values()) { const l = v.status && v.status[k]; if (l && (!b || l.resets_at > b.resets_at || (l.resets_at === b.resets_at && l.used > b.used))) b = l; }
+/** Account `account`'s window `k` (five_hour, seven_day): the freshest of
+ *  what the daemon last heard from it anywhere and what this desk's panels
+ *  running as it say (#107). The windows are the account's, so a panel on
+ *  another account says nothing about them; and within a window the share
+ *  used only grows, so the latest window's highest share is the newest
+ *  reading, with no clock to compare. */
+const windowOf = (account, k) => {
+  let b = (ctx.desks.quotas || {})[account]?.[k] || null;
+  for (const v of views.values()) {
+    const l = v.status && (v.status.account || 0) === account && v.status[k];
+    if (l && (!b || l.resets_at > b.resets_at || (l.resets_at === b.resets_at && l.used > b.used))) b = l;
+  }
   return b;
 };
 /** What is left of a window, as Home's bars say it: one past its reset is
@@ -406,18 +477,22 @@ function resetsIn(l) {
   return ` · resets ${at.toLocaleDateString(undefined, { weekday: "short" })} ${at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 }
 /** "Usage left: 5 h 62% · resets in 2 h · 7 d 80% · resets Mon 9:30", the
- *  context hover's second line; nothing for an account Claude Code gives no
- *  windows to. */
-function usageSub() {
-  const f = freshest("five_hour"), w = freshest("seven_day");
+ *  context hover's second line, for the panel's own account; nothing for an
+ *  account Claude Code gives no windows to. */
+function usageSub(account) {
+  const f = windowOf(account, "five_hour"), w = windowOf(account, "seven_day");
   if (!f && !w) return "";
   return "Usage left: " + [f ? `5 h ${leftOf(f)}%${resetsIn(f)}` : "", w ? `7 d ${leftOf(w)}%${resetsIn(w)}` : ""].filter(Boolean).join(" · ");
 }
 /** The second line on every panel head's context figure: a reading from
- *  one panel is news for all of them. Written only where it differs. */
+ *  one panel is news for every panel on the same account. Written only
+ *  where it differs. */
 function paintUsage() {
-  const sub = usageSub();
+  const subs = new Map();
   for (const v of views.values()) {
+    const id = accountOf(v).id;
+    if (!subs.has(id)) subs.set(id, usageSub(id));
+    const sub = subs.get(id);
     const cx = v.el && v.el.querySelector(".pn-ctx"), on = sub && ctxPct(v.status) != null ? sub : "";
     if (!cx || (cx.dataset.tipSub || "") === on) continue;
     if (on) cx.dataset.tipSub = on; else delete cx.dataset.tipSub;
@@ -428,6 +503,9 @@ function paintUsage() {
 /** Who sent a document on the rail: the panel in that slot by the name it
  *  holds still under, or the slot alone once the panel is gone. */
 const sentBy = (vs, slot) => {
+  // Slot 0: sent from the desk's folder outside its panels (Claude in the
+  // reader's own terminal), or by a panel since closed.
+  if (!slot) return "this desk's folder";
   const v = vs.find(x => x.pane.slot === slot);
   if (!v) return `[${slot}]`;
   // What sends documents is an agent: a panel that has had a conversation
@@ -447,10 +525,12 @@ function announce(text) {
   if (el) { el.textContent = ""; el.textContent = text; }
 }
 
-/** The account a panel is on (`crate::accounts`), as `{ id, label }`. */
+/** The account a panel is on (`crate::accounts`), as `{ id, label }`. A
+ *  running panel whose account was taken away still holds its token, and
+ *  is that, not your login. */
 function accountOf(v) {
   const id = v.status.running ? v.status.account || 0 : v.pane.account ?? current()?.account ?? 0;
-  return accounts().find(a => a.id === id) || accounts()[0];
+  return accounts().find(a => a.id === id) || { id, label: "a removed account", removed: true };
 }
 
 function header(v) {
@@ -459,9 +539,18 @@ function header(v) {
   if (sl.textContent !== `[${v.pane.slot}]`) { sl.textContent = `[${v.pane.slot}]`; sl.dataset.key = `ctrl+alt+${v.pane.slot}`; }
   // Which Claude account, once there is more than one: what a running panel
   // started as, or what a stopped one will start as.
-  const acc = (ctx.desks.accounts || []).length ? accountOf(v) : null;
-  const st = `Panel ${v.pane.slot}${acc ? ` · Claude as ${acc.label}` : ""}`;
+  const acc = (ctx.desks.accounts || []).length || accountOf(v).removed ? accountOf(v) : null;
+  // What the rail's foot used to say of the focused panel and nowhere else
+  // (1.43): its model, its pid, and the folder its shell moved to.
+  const here = s.cwd || v.pane.cwd, d = current();
+  const st = [`Panel ${v.pane.slot}`, s.model, acc && `Claude as ${acc.label}`, s.running && s.pid && `pid ${s.pid}`].filter(Boolean).join(" · ");
   if (sl.dataset.tip !== st) sl.dataset.tip = st;
+  const away = here && d && here !== d.root ? `In ${tilde(here)}` : "";
+  if ((sl.dataset.tipSub || "") !== away) { if (away) sl.dataset.tipSub = away; else delete sl.dataset.tipSub; }
+  // And in the head itself, beside the command, once the panel is not on
+  // your login or its desk is not: a tip was the only place it was said.
+  const pa = $(".pn-acc"), says = acc && (acc.id || current()?.account) ? acc.label : "";
+  if (pa.textContent !== says) pa.textContent = says;
   const c = $(".pn-cmd");
   // Its title as the rail writes it: Claude Code puts its spinner's frame at
   // the front (◑, ✳), and the state beside it already says it is working.
@@ -486,7 +575,7 @@ function header(v) {
   tipOf(cx, cp == null ? "" : ctxTip(s));
   paintUsage();
   if (s.agent) heardFrom(v);
-  put($(".pn-state"), s.agent === "needs_you" ? "! needs you" : s.blocked ? "! waiting on you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : "○ stopped");
+  put($(".pn-state"), v.switching ? `↻ as ${v.switching}…` : s.agent === "needs_you" ? "! needs you" : s.blocked ? "! needs you" : s.agent === "working" ? "● working" : s.agent === "done" ? "✓ done" : s.running ? "● running" : s.exit != null ? `exited ${s.exit}` : v.pane.held ? "○ ready" : "○ stopped");
   // Said once, to a reader who cannot see the dot: a panel that needs the
   // reader, or has finished. Working and running are the quiet states.
   const word = s.agent === "needs_you" || s.blocked ? "needs you" : s.agent === "done" ? "done" : "";
@@ -505,31 +594,215 @@ function header(v) {
   const again = v.start.querySelector(".pn-resume");
   again.hidden = !talked(v);
   if (talked(v)) again.dataset.tipSub = `${resumeWord(v)}, the one this panel last had`;
-  // The status keeps saying `offer` until the pane's next start; a strip the
+  // The status keeps saying `offer` for the whole life of the shell it came
+  // back as, so the strip cannot wait on it to go: Claude opened in the panel
+  // by any road -- typed by hand, the rail's ↻, the strip itself -- has spent
+  // the offer, and so has a start that was not the offer's. A strip the
   // reader answered stays answered in this window.
-  if (s.offer && !v.offerSpent) v.offered = true;
+  if (s.agent_in || (s.running && !s.offer)) { if (v.offered) v.offerSpent = true; v.offered = false; }
+  else if (s.offer && !v.offerSpent) v.offered = true;
   const off = v.el.querySelector(".pn-offer");
   if (off) off.hidden = !(v.offered && talked(v) && s.running);
+  if (off && off.hidden && v.offerWait) offerStop(v);
+  switchStrip(v);
   cursor(v);
 }
 
-/** The first panel of a new project desk: `claude` in its Start field, the
- *  field focused so Enter runs it -- and, when Claude Code is not set up for
- *  snyvi yet, one strip above it that connects it first. A session started
- *  before that could never see snyvi. */
-async function firstPanel(v) {
-  requestAnimationFrame(() => requestAnimationFrame(() => { if (!v.start.hidden) v.start.querySelector("input").focus(); }));
-  let a;
-  try { a = await (await fetch("/api/agents")).json(); } catch { return; }
-  const row = a.rows.find(r => r.id === "claude");
-  if (!row || row.state === "connected" || !ctx.connect) return;
-  const strip = v.el.querySelector(".pn-connect");
-  strip.innerHTML = `<p>snyvi isn't connected to Claude Code yet. Connect it first, so what Claude writes lands here.</p><div class="w-connect"><button type="button" class="w-btn">Connect</button></div>`;
-  strip.hidden = false;
-  strip.querySelector("button").addEventListener("click", e => {
-    ctx.connect(e.currentTarget, (_, ok) => { if (ok) setTimeout(() => { strip.hidden = true; v.start.querySelector("input").focus(); }, 2400); });
-  });
+/** Why a turn ends that says the account's sign-in no longer works
+ *  (`accounts::AUTH_REASONS`). */
+const AUTH_STOPS = ["authentication_failed", "oauth_org_not_allowed", "account_on_hold", "billing_error"];
+/** What account `id` has left, the lower of its two windows; null when
+ *  nothing was heard from it. */
+function leftNow(id) {
+  const ws = ["five_hour", "seven_day"].map(k => windowOf(id, k)).filter(Boolean);
+  if (!ws.length) return null;
+  const w = ws.reduce((a, b) => (leftOf(b) < leftOf(a) ? b : a));
+  return { left: leftOf(w), w };
 }
+
+/** A switch of account that waits, or the way out of a limit or a sign-in
+ *  that stopped working, said on the panel it is about rather than in a
+ *  toast that went before it was done (notes #124, #126, #127). Over the
+ *  top of the screen like the offer, so it moves nothing.
+ *  - A switch asked for mid-answer says it goes when the answer ends,
+ *    until it does or is cancelled.
+ *  - A turn that ended at the usage limit (`stopped`, from Claude Code's
+ *    StopFailure) offers the other accounts, each with what it has left,
+ *    the ones that are out too after the rest; and, when none has any left,
+ *    Add another account: one click, the browser's approval, and the panel
+ *    goes on as it.
+ *  - A turn that ended because the sign-in no longer works offers Renew,
+ *    which comes back into the conversation as the same account.
+ *  - A sign-in the strip started shows its progress here (`signRow`).
+ *  Each until the next prompt or a ✕. */
+function switchStrip(v) {
+  const el = v.el.querySelector(".pn-switch");
+  if (!el) return;
+  const s = v.status, on = accountOf(v);
+  const open = !v.pending && !v.signing && s.running && v.limitShut !== s.agent_since;
+  const limit = open && s.stopped === "rate_limit" && continuable(v);
+  const auth = open && AUTH_STOPS.includes(s.stopped);
+  const others = limit || (auth && continuable(v)) ? accounts().filter(a => a.id !== on.id).map(a => ({ a, l: leftNow(a.id) })) : [];
+  // Something left first, most first; not heard from next; out last.
+  const rank = o => (o.l == null ? 50 : o.l.left === 0 ? -1 : 100 + o.l.left);
+  others.sort((x, y) => rank(y) - rank(x));
+  const add = limit && !others.some(o => !o.l || o.l.left > 0);
+  const renew = !!(auth && on.id && !on.removed);
+  const say = v.pending ? `Switches to ${labelOf(v.pending.account)} when this answer ends`
+    : v.signing ? " "
+    : limit ? `Limit reached as ${on.label}`
+    : auth ? (on.id ? `${on.removed ? "Its" : `${on.label}'s`} sign-in no longer works` : "Your login no longer works · run /login here")
+    : "";
+  const key = `${say}|${others.map(o => `${o.a.id}:${o.l ? o.l.left : ""}`)}|${add}|${renew}`;
+  if (el.dataset.k === key) return;
+  el.dataset.k = key;
+  el.hidden = !say;
+  el.replaceChildren();
+  if (!say) return;
+  const btn = (sw, text, tip, sub) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.dataset.sw = sw; b.textContent = text;
+    if (tip) b.dataset.tip = tip;
+    if (sub) b.dataset.tipSub = sub;
+    el.append(b);
+    return b;
+  };
+  if (v.signing) {
+    const row = document.createElement("div");
+    row.className = "sg-row";
+    el.append(row);
+    signRow(row, { label: "Try again", run: () => stripSign(v, v.signing?.renew ?? null) });
+  } else {
+    const t = document.createElement("span");
+    t.textContent = say;
+    if (v.pending) { t.dataset.tip = "Switching now would lose the answer Claude is writing"; t.dataset.tipSub = "it restarts into this conversation as soon as the answer is done"; }
+    else if (limit) { t.dataset.tip = `Usage limit reached as ${on.label}`; t.dataset.tipSub = "go on as another account, back into this conversation"; }
+    el.append(t);
+  }
+  if (renew) btn("renew", "Renew", `Sign ${on.label} in again`, continuable(v) ? "approve in your browser; the panel goes on as it" : "approve in your browser");
+  for (const { a, l } of others) {
+    const b = btn("as", `Continue as ${a.label}${!l ? "" : l.left ? ` · ${l.left}% left` : ` · out${resetsIn(l.w)}`}`, "Restarts this panel into its conversation", `as ${a.label}`);
+    b.dataset.n = a.id;
+    if (l && !l.left) b.classList.add("out");
+  }
+  if (add) btn("add", "Add another account", "Sign in another Claude account", "approve in your browser; the panel goes on as it");
+  const x = btn("x", "✕", v.pending ? "Cancel the switch" : v.signing ? "Cancel the sign-in" : "Not now");
+  x.setAttribute("aria-label", x.dataset.tip);
+}
+
+/** Add another account, or Renew, from a panel's strip: the sign-in, then
+ *  the panel back into its conversation as that account. A failure stays
+ *  on the strip with Try again; a cancel puts the strip back. */
+async function stripSign(v, renew) {
+  v.signing = { renew }; header(v);
+  let id;
+  try { id = await signIn(renew ? { renew } : {}); }
+  catch (e) { if (e.cancelled) { v.signing = null; header(v); } return; }
+  v.signing = null;
+  const d = current();
+  if (continuable(v)) switchSoon(v, id === d?.account ? null : id, labelOf(id), !!renew).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e));
+  else v.limitShut = v.status.agent_since;
+  header(v);
+}
+
+function switchClick(v, e) {
+  const b = e.target.closest("[data-sw]");
+  if (!b) return;
+  const k = b.dataset.sw;
+  if (k === "x") {
+    if (v.signing) { if (signOpen(signing)) signCancel(); v.signing = null; }
+    else if (v.pending) { v.whenDone = null; v.pending = null; } else v.limitShut = v.status.agent_since;
+    header(v); v.body.focus();
+    return;
+  }
+  if (k === "add") return void stripSign(v, null);
+  if (k === "renew") return void stripSign(v, accountOf(v).id);
+  const d = current(), a = accounts().find(x => x.id === +b.dataset.n);
+  if (d && a) switchSoon(v, a.id === d.account ? null : a.id, a.label).catch(e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e));
+}
+
+/** Where Claude Code stands here, for the panels and the rail to say what is
+ *  missing where the work is (R2): "missing" -- no `claude` on the daemon's
+ *  PATH -- "unconnected", or "connected". Asked once a desk view, and again
+ *  after a Connect; null until the first answer, when nothing is said. */
+let claudeIs = null, claudeAsk = null;
+function claudeNow(again) {
+  if (claudeAsk && !again) return claudeAsk;
+  claudeAsk = fetch("/api/agents").then(r => r.json()).then(a => {
+    const row = a.rows.find(r => r.id === "claude"), was = claudeIs;
+    claudeIs = row && row.state === "connected" ? "connected" : a.claude_on_path ? "unconnected" : "missing";
+    if (claudeIs !== was) { rail(); for (const v of views.values()) claudeStrip(v, !!v.pane.held); }
+    return claudeIs;
+  }).catch(() => { claudeAsk = null; return claudeIs; });
+  return claudeAsk;
+}
+/** Connect, from a panel's strip or the rail: the window's own confirm, then
+ *  everything that said "not connected" asks again. */
+function connectFrom(btn) {
+  ctx.connect(btn, (_, ok) => { if (ok) setTimeout(() => claudeNow(true), 2400); });
+}
+
+/** What snyvi asks for a new project desk, by the panel's one button: the
+ *  question a maker coming back to their own folder has, or, on a folder
+ *  snyvi just made for them, how Claude and snyvi work together. snyvi's own words, never anything it
+ *  received; run only on the reader's press, into a panel they made, and
+ *  quoted as one argument -- so they hold to letters, spaces and . , ' ?
+ *  (bench/ui.mjs checks), which `sh -c` and `cmd /C` both take as typed. */
+const ASK_LEFT = "Where did I leave off? Read this folder and its history, then send me where it stands and three next steps, to snyvi";
+// A folder just made has nothing in it to plan from yet: Claude says, in a
+// page that lands on the desk, how it and snyvi take a project from start
+// to finish, then asks what the reader wants to make -- the first page and
+// the first conversation at once.
+const ASK_NEW = "In plain words for someone new to snyvi, tell me how you and snyvi can help me start this project and see it through. Send it to snyvi as a short page, then ask me what I want to make here.";
+/** Folders snyvi made with Start something new (about.js): their desk asks
+ *  about snyvi, there being nothing to have left off. */
+const madeNew = root => { try { return (JSON.parse(localStorage.getItem("snyvi.own.made") || "[]")).includes(root); } catch { return false; } };
+
+/** The strip over a Claude panel. Over a held one -- a new project desk's
+ *  first, on every load -- it is the desk's one thing to do: *Ask Claude*,
+ *  focused, so Enter presses it, in the middle of the empty panel (`.ready`),
+ *  with a quiet *or just start Claude* for the bare prompt in place of the
+ *  Start bar, so the panel offers one thing and not three. Over any Claude panel while snyvi is not connected, it says so
+ *  with Connect: a session started before that can never see snyvi. A
+ *  panel with Claude Code missing altogether says nothing here; the rail
+ *  says it once for the desk. The strip is an overlay in its own slot, so
+ *  nothing under it moves. */
+function claudeStrip(v, held) {
+  const strip = v.el.querySelector(".pn-connect"), cmd = (v.pane.cmd || "").trim();
+  if (!strip || !(held || /^claude\b/.test(cmd))) return;
+  claudeNow();
+  if (claudeIs == null) return;
+  ready(v, false);
+  if (claudeIs === "unconnected" && (held || v.status.running)) {
+    strip.innerHTML = `<p>snyvi isn't connected to Claude Code yet. Connect it, so what Claude writes lands here${held ? "" : ", then start Claude again"}.</p><div class="w-connect"><button type="button" class="w-btn">Connect</button></div>`;
+    strip.hidden = false;
+    strip.querySelector("button").addEventListener("click", e => connectFrom(e.currentTarget));
+  } else if (claudeIs === "connected" && held && !v.status.running) {
+    const name = ctx.esc(v.pane.cwd.split(/[\\/]/).filter(Boolean).pop() || "this"), plan = madeNew(v.pane.cwd);
+    strip.innerHTML = `<p class="pn-ready">Claude is ready, in ${name}'s folder.</p><div class="w-connect"><button type="button" class="w-btn">${plan ? "Ask Claude about snyvi" : "Ask Claude: where did I leave off?"}</button></div>` +
+      `<p>${plan ? `Claude sends a short page here on how the two of you take <b>${name}</b> from start to finish, then asks what you want to make.` : `It reads the folder and its history, and sends you <b>where ${name} stands</b>: what's done, what's half-done, three next steps.`}</p>` +
+      // Claude's own first question in a folder it hasn't seen has No, exit
+      // picked: said here, before the press, so Enter there doesn't end it.
+      `<p class="pn-fine">If Claude asks whether you trust this folder, choose <b>Yes</b>.</p>` +
+      `<p><button type="button" class="text pn-bare">or just start Claude</button></p>`;
+    strip.hidden = false;
+    ready(v, true);
+    const b = strip.querySelector(".w-btn");
+    b.addEventListener("click", () => { strip.hidden = true; ready(v, false); run(v, `claude "${plan ? ASK_NEW : ASK_LEFT}"`, false, false, true); });
+    strip.querySelector(".pn-bare").addEventListener("click", () => { strip.hidden = true; ready(v, false); run(v, v.start.querySelector("input").value || v.pane.cmd || "claude"); });
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (!strip.hidden && !v.el.contains(document.activeElement)) b.focus(); }));
+    return;
+  } else strip.hidden = true;
+  if (held) requestAnimationFrame(() => requestAnimationFrame(() => { if (!v.start.hidden && !v.el.contains(document.activeElement)) v.start.querySelector("input").focus(); }));
+}
+
+/** A held panel's *Ask Claude* strip goes once the panel starts, by any
+ *  button and in any window: the hold it was for is over. */
+function unready(v) {
+  const st = v.el.querySelector(".pn-connect");
+  if (st && st.querySelector(".pn-ready")) { st.hidden = true; ready(v, false); }
+}
+const ready = (v, on) => v.el.classList.toggle("ready", on);
 
 /** The first time a hook is heard from any panel, that panel says so, once,
  *  in its own place: Claude and snyvi are talking. */

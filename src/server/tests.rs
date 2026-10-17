@@ -2,8 +2,9 @@
 
 use super::{
     desk_key, desk_refusal, dir_of, hello_allows, parse_range, Span, Ui, ABOUT_JS, APP_CSS, APP_JS,
-    BOOT_JS, BROWSE_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS, INDEX_HTML, KEYS_JS,
-    LOOK_JS, MENU_JS, MMD_JS, NAV_JS, NOTE_JS, PALETTE_JS, PATHS_JS, PEER_JS, TIP_JS, TOAST_JS,
+    BOOT_JS, BROWSE_JS, COPY_JS, CORNER_JS, DESK_JS, DIFF_JS, FIND_JS, FRAME_JS, GAME_JS, HOME_JS,
+    INDEX_HTML, KEYS_JS, LOOK_JS, MENU_JS, MMD_JS, NAV_JS, PALETTE_JS, PATHS_JS, PEER_JS, TIP_JS,
+    TOAST_JS,
 };
 use super::{
     new_app, router, App, Body, Paths, Router, StatusCode, Store, CAPABILITY_HEADER, NOT_THIS_HOST,
@@ -226,705 +227,6 @@ fn a_desk_route_takes_its_capability_from_a_header_and_nowhere_else() {
     );
 }
 
-/// What a route answers to. `ROUTES` names one for every route, and the
-/// test sends each route a request from another host, one with nothing,
-/// one with the wrong leave and one with the right one.
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Gate {
-    /// Anyone on this host: the shell, the assets, the reads.
-    Open,
-    /// A reader's action: from this page (an `Origin` of ours) or the token.
-    Reader,
-    /// A desk: this page and a live capability.
-    Desk,
-    /// An agent in a panel, or what sends: the token.
-    Token,
-    /// What runs the daemon: the capability or the window secret.
-    Window,
-    /// The one mint: the window secret alone.
-    Mint,
-}
-
-/// Method, path, JSON body (none sends no body), gate, and whether the
-/// request with the right leave is sent at all. A few routes open a
-/// dialog, write a keychain or run a setup; those are asked only to
-/// refuse. Ids are made up, so a route let through answers 404 or 400
-/// from its handler -- which is the proof the gate came first.
-const ROUTES: &[(&str, &str, Option<&str>, Gate, bool)] = &[
-    ("GET", "/", None, Gate::Open, true),
-    ("GET", "/inbox", None, Gate::Open, true),
-    ("GET", "/api/home", None, Gate::Open, true),
-    ("GET", "/connect", None, Gate::Open, true),
-    ("GET", "/start", None, Gate::Open, true),
-    ("GET", "/welcome", None, Gate::Open, true),
-    ("GET", "/d/nope", None, Gate::Open, true),
-    ("GET", "/b/nope", None, Gate::Open, true),
-    ("GET", "/b/nope/x.md", None, Gate::Open, true),
-    ("GET", "/files/nope/x.png", None, Gate::Open, true),
-    ("GET", "/assets/mermaid.js", None, Gate::Open, true),
-    ("GET", "/assets/app.js", None, Gate::Open, true),
-    ("GET", "/assets/fonts/x.woff2", None, Gate::Open, true),
-    ("GET", "/api/health", None, Gate::Open, true),
-    ("GET", "/api/about", None, Gate::Open, true),
-    ("GET", "/api/agents", None, Gate::Open, true),
-    (
-        "POST",
-        "/api/agents/claude/connect",
-        None,
-        Gate::Desk,
-        false,
-    ),
-    ("GET", "/api/tree", None, Gate::Open, true),
-    ("GET", "/api/projects/1/tree", None, Gate::Open, true),
-    ("GET", "/api/workflows/1/tree", None, Gate::Open, true),
-    ("GET", "/api/inbox", None, Gate::Open, true),
-    ("GET", "/api/search?q=x", None, Gate::Open, true),
-    ("POST", "/api/docs", Some("{}"), Gate::Token, true),
-    ("GET", "/api/docs/nope", None, Gate::Open, true),
-    (
-        "POST",
-        "/api/docs/nope/pin",
-        Some(r#"{"pinned":true}"#),
-        Gate::Reader,
-        true,
-    ),
-    ("POST", "/api/docs/nope/read", None, Gate::Reader, true),
-    ("GET", "/api/queue", None, Gate::Open, true),
-    ("POST", "/api/layout", Some("{}"), Gate::Reader, true),
-    ("POST", "/api/queue/clear", None, Gate::Reader, true),
-    (
-        "POST",
-        "/api/queue/unread",
-        Some(r#"{"ids":[]}"#),
-        Gate::Reader,
-        true,
-    ),
-    ("POST", "/api/docs/nope/delete", None, Gate::Reader, true),
-    ("POST", "/api/docs/nope/undelete", None, Gate::Reader, true),
-    ("GET", "/api/removed", None, Gate::Open, true),
-    ("GET", "/api/docs/nope/history", None, Gate::Open, true),
-    (
-        "POST",
-        "/api/projects/1/rename",
-        Some(r#"{"name":"x"}"#),
-        Gate::Reader,
-        true,
-    ),
-    (
-        "POST",
-        "/api/workflows/1/rename",
-        Some(r#"{"name":"x"}"#),
-        Gate::Reader,
-        true,
-    ),
-    ("GET", "/api/docs/nope/split", None, Gate::Open, true),
-    ("GET", "/api/docs/nope/outline", None, Gate::Open, true),
-    ("GET", "/api/notes", None, Gate::Open, true),
-    (
-        "POST",
-        "/api/notes",
-        Some(r#"{"text":"x"}"#),
-        Gate::Token,
-        true,
-    ),
-    ("POST", "/api/notes/seen", None, Gate::Reader, true),
-    (
-        "POST",
-        "/api/notes/dismiss",
-        Some(r#"{"ids":[]}"#),
-        Gate::Reader,
-        true,
-    ),
-    (
-        "POST",
-        "/api/notes/restore",
-        Some(r#"{"ids":[]}"#),
-        Gate::Reader,
-        true,
-    ),
-    ("POST", "/api/focus", None, Gate::Reader, true),
-    ("POST", "/api/shutdown", None, Gate::Window, true),
-    ("POST", "/api/restart", Some("{}"), Gate::Window, true),
-    ("DELETE", "/api/restart", None, Gate::Window, true),
-    (
-        "POST",
-        "/api/update/check",
-        Some(r#"{"lift":false}"#),
-        Gate::Window,
-        true,
-    ),
-    (
-        "POST",
-        "/api/update/auto",
-        Some(r#"{"on":false}"#),
-        Gate::Window,
-        true,
-    ),
-    ("POST", "/api/update/later", Some("{}"), Gate::Window, true),
-    ("GET", "/api/reset", None, Gate::Open, true),
-    // 999 documents is never the count there is, so the reset is refused
-    // as stale once it is past the gate, and the store stays.
-    (
-        "POST",
-        "/api/reset",
-        Some(r#"{"documents":999}"#),
-        Gate::Reader,
-        true,
-    ),
-    ("POST", "/api/reveal", Some("{}"), Gate::Reader, true),
-    (
-        "POST",
-        "/api/resolve",
-        Some(r#"{"word":"x"}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("GET", "/api/browse", None, Gate::Open, true),
-    (
-        "POST",
-        "/api/browse",
-        Some(r#"{"path":"."}"#),
-        Gate::Token,
-        true,
-    ),
-    ("POST", "/api/browse/pick", None, Gate::Desk, false),
-    // With no dialog open, a cancel wakes nothing: safe to let through.
-    ("POST", "/api/browse/pick/cancel", None, Gate::Desk, true),
-    ("POST", "/api/browse/nope/close", None, Gate::Reader, true),
-    ("POST", "/api/browse/nope/reopen", None, Gate::Reader, true),
-    ("GET", "/api/browse/nope/tree", None, Gate::Open, true),
-    (
-        "GET",
-        "/api/browse/nope/file?path=x.md",
-        None,
-        Gate::Open,
-        true,
-    ),
-    (
-        "GET",
-        "/api/browse/nope/raw?path=x.md",
-        None,
-        Gate::Open,
-        true,
-    ),
-    ("GET", "/api/browse/nope/raw/x.md", None, Gate::Open, true),
-    ("GET", "/api/browse/nope/find?q=x", None, Gate::Open, true),
-    (
-        "GET",
-        "/api/browse/nope/outline?path=x.md",
-        None,
-        Gate::Open,
-        true,
-    ),
-    ("GET", "/api/docs/nope/raw", None, Gate::Open, true),
-    ("GET", "/api/docs/nope/blob", None, Gate::Open, true),
-    ("GET", "/api/compare/a/b", None, Gate::Open, true),
-    ("GET", "/api/events", None, Gate::Open, true),
-    ("POST", "/api/capability", None, Gate::Mint, true),
-    // The socket proves itself in its first frame; without an upgrade it
-    // is a GET that goes nowhere, and the host gate is what is tested.
-    ("GET", "/api/desk", None, Gate::Open, true),
-    ("GET", "/api/desks", None, Gate::Desk, true),
-    ("POST", "/api/desks", Some("{}"), Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/1/rename",
-        Some(r#"{"name":"x"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/layout",
-        Some(r#"{"col":0.5,"row":0.5}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/move",
-        Some(r#"{"from":1,"to":2}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("POST", "/api/desks/1/delete", None, Gate::Desk, true),
-    ("POST", "/api/desks/1/reopen", None, Gate::Desk, true),
-    ("POST", "/api/desks/1/panes", Some("{}"), Gate::Desk, true),
-    ("GET", "/api/desks/1/docs", None, Gate::Desk, true),
-    ("POST", "/api/desks/1/docs/d/remove", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/1/docs/d/restore",
-        None,
-        Gate::Desk,
-        true,
-    ),
-    ("GET", "/api/desks/1/notes", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/1/notes",
-        Some(r#"{"text":"x"}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("POST", "/api/desks/1/notes/1", Some("{}"), Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/1/notes/1/remove",
-        None,
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/notes/1/restore",
-        None,
-        Gate::Desk,
-        true,
-    ),
-    ("POST", "/api/desks/1/notes/1/keep", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/1/leftoff",
-        Some(r#"{"text":"x","at":0}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("GET", "/api/desks/1/keys", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/1/keys",
-        Some(r#"{"name":"X_KEY","value":"y"}"#),
-        Gate::Desk,
-        false,
-    ),
-    (
-        "POST",
-        "/api/desks/1/keys/X_KEY/remove",
-        Some("{}"),
-        Gate::Desk,
-        false,
-    ),
-    ("GET", "/api/accounts", None, Gate::Desk, true),
-    // Let through, it would run the real `claude setup-token`.
-    (
-        "POST",
-        "/api/accounts/signin",
-        Some(r#"{"label":"Work"}"#),
-        Gate::Desk,
-        false,
-    ),
-    ("GET", "/api/accounts/signin", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/accounts/signin/code",
-        Some(r#"{"code":"abc"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/accounts/signin/cancel",
-        None,
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/accounts",
-        Some(r#"{"label":"Work","token":"nope"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/accounts/9/rename",
-        Some(r#"{"label":"Home"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/accounts/9/renew",
-        Some(r#"{"token":"nope"}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("POST", "/api/accounts/9/delete", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/1/account",
-        Some(r#"{"account":9}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/account",
-        Some(r#"{"account":null}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("POST", "/api/desks/1/visit", None, Gate::Desk, true),
-    ("GET", "/api/desks/1/git", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/order",
-        Some(r#"{"ids":[1]}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("POST", "/api/desks/1/park", Some("{}"), Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/1/week",
-        Some(r#"{"title":"t","content":"c"}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("POST", "/api/desks/1/notes/1/image", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/desks/1/notes/1/images",
-        Some(r#"{"images":[]}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "GET",
-        "/api/desks/1/note-images/x.png",
-        None,
-        Gate::Desk,
-        true,
-    ),
-    // Friends. Pair and join are asked only to refuse: let through, they
-    // mint a key into the keychain and open a room at the relay.
-    ("GET", "/api/peers", None, Gate::Open, true),
-    ("POST", "/api/peers/pair", Some("{}"), Gate::Reader, false),
-    ("POST", "/api/peers/join", Some("{}"), Gate::Reader, false),
-    ("GET", "/api/peers/pair/nope", None, Gate::Open, true),
-    ("DELETE", "/api/peers/pair/nope", None, Gate::Reader, true),
-    (
-        "POST",
-        "/api/peers/1/rename",
-        Some(r#"{"name":"x"}"#),
-        Gate::Reader,
-        true,
-    ),
-    ("POST", "/api/peers/1/mute", Some("{}"), Gate::Reader, true),
-    ("POST", "/api/peers/1/remove", None, Gate::Reader, true),
-    ("POST", "/api/peers/1/restore", None, Gate::Reader, true),
-    (
-        "POST",
-        "/api/peers/1/note",
-        Some(r#"{"text":"x"}"#),
-        Gate::Reader,
-        true,
-    ),
-    ("POST", "/api/peers/notes/1", Some("{}"), Gate::Reader, true),
-    (
-        "POST",
-        "/api/peers/offers/1",
-        Some("{}"),
-        Gate::Reader,
-        true,
-    ),
-    (
-        "POST",
-        "/api/docs/nope/send",
-        Some("{}"),
-        Gate::Reader,
-        true,
-    ),
-    // Where a friend's things land, and a friend's document kept on a desk
-    // and saved into its folder: the window's, as a desk is.
-    (
-        "POST",
-        "/api/peers/1/desk",
-        Some(r#"{"desk":0}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/docs/nope/keep",
-        Some(r#"{"desk":1}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("POST", "/api/docs/nope/save", None, Gate::Desk, true),
-    // A friend's document back under their row, and a frame tried again:
-    // the reader's, from a tab as well as the window.
-    ("POST", "/api/docs/nope/unfile", None, Gate::Reader, true),
-    (
-        "POST",
-        "/api/peers/outbox/nope/retry",
-        None,
-        Gate::Reader,
-        true,
-    ),
-    // 1.23: a reply under a friend's document, whether a friend hears of a
-    // read, and Tell Trapti ✓ on a line she sent: the reader's.
-    (
-        "POST",
-        "/api/docs/nope/reply",
-        Some(r#"{"text":"thanks"}"#),
-        Gate::Reader,
-        true,
-    ),
-    (
-        "POST",
-        "/api/peers/1/receipts",
-        Some(r#"{"on":true}"#),
-        Gate::Reader,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/notes/1/tell",
-        None,
-        Gate::Reader,
-        true,
-    ),
-    ("GET", "/api/brief", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/brief",
-        Some(r#"{"on":true}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("GET", "/api/asides", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/asides",
-        Some(r#"{"on":true}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("POST", "/api/panes/nope/delete", None, Gate::Desk, true),
-    ("POST", "/api/panes/nope/restore", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/panes/nope/rename",
-        Some(r#"{"name":"x"}"#),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/start",
-        Some(r#"{"cols":80,"rows":24}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("POST", "/api/panes/nope/stop", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/panes/nope/agent",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    ("GET", "/api/panes/nope/notes", None, Gate::Token, true),
-    (
-        "POST",
-        "/api/panes/nope/notes/1/tick",
-        None,
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/notes/1/mark",
-        None,
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/name",
-        Some(r#"{"name":"x"}"#),
-        Gate::Token,
-        true,
-    ),
-    ("GET", "/api/panes/nope/brief", None, Gate::Token, true),
-    ("GET", "/api/panes/nope/changes", None, Gate::Token, true),
-    (
-        "GET",
-        "/api/panes/nope/keys/GH_TOKEN",
-        None,
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/leftoff",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/suggest",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    ("POST", "/api/panes/nope/paste", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/panes/nope/offer",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/thread",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/thread/move",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    ("POST", "/api/panes/nope/ask", Some("{}"), Gate::Token, true),
-    (
-        "POST",
-        "/api/panes/nope/handover",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/suggest-panel",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/suggest-desk",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/seen",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    ("GET", "/api/panes/nope/band", None, Gate::Token, true),
-    ("GET", "/api/panes/nope/turns/1", None, Gate::Token, true),
-    (
-        "POST",
-        "/api/panes/nope/turns/1",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/note",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    ("GET", "/api/desks/1/threads", None, Gate::Desk, true),
-    ("GET", "/api/desks/1/widgets", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/panes/nope/widget",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    ("POST", "/api/widgets", Some("{}"), Gate::Token, true),
-    ("GET", "/api/widgets", None, Gate::Open, true),
-    ("GET", "/sidebars", None, Gate::Open, true),
-    (
-        "POST",
-        "/api/widgets/nope/allow",
-        Some("{}"),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/widgets/nope/prefs",
-        Some("{}"),
-        Gate::Reader,
-        true,
-    ),
-    (
-        "POST",
-        "/api/widgets/nope/retry",
-        Some("{}"),
-        Gate::Reader,
-        true,
-    ),
-    (
-        "POST",
-        "/api/panes/nope/propose-widget",
-        Some("{}"),
-        Gate::Token,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/threads/1/move",
-        Some("{}"),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/threads/1/remove",
-        None,
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/turns/1/answer",
-        Some("{}"),
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/turns/1/remove",
-        None,
-        Gate::Desk,
-        true,
-    ),
-    (
-        "POST",
-        "/api/desks/1/suggestions/1/open",
-        None,
-        Gate::Desk,
-        true,
-    ),
-    ("GET", "/api/claude-mod", None, Gate::Desk, true),
-    (
-        "POST",
-        "/api/claude-mod",
-        Some(r#"{"on":true}"#),
-        Gate::Desk,
-        true,
-    ),
-    ("GET", "/desks", None, Gate::Open, true),
-    ("GET", "/desk/1", None, Gate::Open, true),
-];
-
 /// One request to the router, without a port. Only a refusal's body is
 /// read: an event stream never ends.
 async fn ask(
@@ -1033,10 +335,12 @@ async fn every_route_answers_to_its_gate_and_to_this_host_only() {
     };
     let n = routes_in("\nfn router(")
         + routes_in("\nfn pane_routes(")
+        + routes_in("\nfn browse_routes(")
         + routes_in("\nfn account_routes(")
         + routes_in("\nfn peer_routes(")
         + routes_in("\nfn thread_routes(")
         + routes_in("\nfn widget_routes(")
+        + routes_in("\nfn pipeline_routes(")
         + routes_in("\nfn receive_route(");
     assert_eq!(
         n,
@@ -1399,7 +703,8 @@ fn every_id_the_script_uses_unguarded_is_in_the_page() {
         ("palette.js", PALETTE_JS),
         ("look.js", LOOK_JS),
         ("nav.js", NAV_JS),
-        ("note.js", NOTE_JS),
+        ("copy.js", COPY_JS),
+        ("corner.js", CORNER_JS),
         ("tip.js", TIP_JS),
         ("home.js", HOME_JS),
         ("peer.js", PEER_JS),
@@ -1451,7 +756,14 @@ fn the_hash_behind_the_version_covers_every_chunk_the_page_can_fetch() {
         .filter_map(|e| {
             let p = e.path();
             let name = p.file_name()?.to_str()?.to_string();
-            if p.is_dir() && name != "fonts" && !ui.join(format!("{name}.js")).exists() {
+            // A directory of parts holds scripts; one of pictures (the tour's
+            // stills) or fonts is served some other way.
+            let parts = p.is_dir()
+                && std::fs::read_dir(&p)
+                    .ok()?
+                    .filter_map(|e| e.ok())
+                    .any(|e| e.path().extension().is_some_and(|x| x == "js"));
+            if parts && !ui.join(format!("{name}.js")).exists() {
                 // A script kept as parts: served under the directory's name.
                 return Some(format!("{name}.js"));
             }
@@ -1551,6 +863,8 @@ async fn a_video_beside_a_document_streams_by_range_and_nothing_else_does() {
                 branch: None,
                 origin: "cli",
                 sender: "",
+                quiet: false,
+                session: "",
                 desk: None,
                 source: b"![take](take.mp4)",
                 staged: None,
@@ -1635,7 +949,7 @@ async fn an_aside_from_a_panel_says_which_and_one_from_nowhere_is_still_taken() 
         let desk = store.create_desk("/tmp/ledger", Some("ledger")).unwrap();
         for _ in 0..2 {
             if let crate::desk::Opened::Pane(p) =
-                store.open_pane(desk.id, "/tmp/ledger", "").unwrap()
+                store.open_pane(desk.id, "/tmp/ledger", "", false).unwrap()
             {
                 *pane.lock().unwrap() = p.id;
             }
@@ -1708,7 +1022,7 @@ async fn a_ctrl_clicked_folder_opens_in_the_reader() {
     let at = std::sync::Mutex::new((0, String::new()));
     let (_tmp, router, leaves) = gated_router_with("snyvi-resolve-dir", |store| {
         let desk = store.create_desk(&root, Some("ledger")).unwrap();
-        if let crate::desk::Opened::Pane(p) = store.open_pane(desk.id, &root, "").unwrap() {
+        if let crate::desk::Opened::Pane(p) = store.open_pane(desk.id, &root, "", false).unwrap() {
             *at.lock().unwrap() = (desk.id, p.id);
         }
     });
@@ -1904,6 +1218,8 @@ async fn a_friends_document_is_kept_on_a_desk_then_saved_into_its_folder() {
                         branch: None,
                         origin,
                         sender: "Trapti",
+                        quiet: false,
+                        session: "",
                         desk: None,
                         source: b"# Seeds\n\nbeans",
                         staged: None,
@@ -2000,6 +1316,8 @@ async fn a_friends_document_in_a_folder_goes_back_to_their_row() {
                         branch: None,
                         origin,
                         sender: "Trapti",
+                        quiet: false,
+                        session: "",
                         desk: None,
                         source: b"# Seeds",
                         staged: None,
@@ -2097,6 +1415,24 @@ fn a_saved_friends_document_gets_a_plain_name() {
     assert_eq!(file_name(&d), "garden-plan.md");
     d.source_path = Some(".bashrc".into());
     assert_eq!(file_name(&d), "garden-plan.md", "never a dotfile");
+    // Its head wears the friend's initial in their colour, the page's own
+    // (#123), and a player stored the old way is a button as it is served
+    // (#117, #120).
+    let old =
+        "<audio controls preload=\"metadata\" src=\"/files/x/a.mp3\" style=\"width:100%\"></audio>";
+    let html = super::assets::doc_html(&d, old, 0, &super::assets::Talk::default());
+    let h = super::assets::friend_hue("Trapti");
+    assert!(
+        html.contains(&format!("<span class=\"r-who\" style=\"--h:{h};")),
+        "{html}"
+    );
+    assert!(html.contains(">T</span>from Trapti"), "{html}");
+    assert!(html.contains("data-w=\"play\""), "{html}");
+    assert!(!html.contains("preload=\"metadata\""), "{html}");
+    // What the page's `hueOf` gives for the same names, run in node: the
+    // two colour a friend the same.
+    assert_eq!(h, 305);
+    assert_eq!(super::assets::friend_hue("Ana María 🌿"), 222);
 }
 
 /// A page sent to a friend carries its own pictures: one beside it goes in
@@ -2165,7 +1501,8 @@ async fn a_band_is_held_until_its_own_desk_moves() {
     let store = Store::open(&paths).unwrap();
     let desk = store.create_desk("/tmp/band", Some("band")).unwrap();
     let other = store.create_desk("/tmp/other", Some("other")).unwrap();
-    let crate::desk::Opened::Pane(pane) = store.open_pane(desk.id, "/tmp/band", "").unwrap() else {
+    let crate::desk::Opened::Pane(pane) = store.open_pane(desk.id, "/tmp/band", "", false).unwrap()
+    else {
         panic!("a pane")
     };
     let app = new_app(&paths, store, token, window, None, None);
@@ -2273,7 +1610,13 @@ async fn a_layout_is_kept_normalized_and_reaches_the_next_page() {
     let kept: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(kept["left"][0], "folders");
     assert_eq!(kept["left"].as_array().unwrap().len(), 4);
-    assert_eq!(kept["right"][0], "turn");
+    // Your turn is the desk corner's since 1.32, not a section: dropped.
+    assert_eq!(kept["right"][0], "panels");
+    assert!(!kept["right"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|x| x == "turn"));
     assert_eq!(kept["hidden"], serde_json::json!(["folders"]));
 
     let req = axum::http::Request::builder()
@@ -2402,6 +1745,8 @@ async fn a_friends_row_and_their_name_are_one_name() {
                     branch: None,
                     origin: "peer",
                     sender: "trapti",
+                    quiet: false,
+                    session: "",
                     desk: None,
                     source: b"# Seeds",
                     staged: None,
@@ -2491,7 +1836,165 @@ fn the_account_name_a_friend_sees_starts_with_a_capital() {
     assert_eq!(capitalized(""), "");
 }
 
+/// 1.33: the `doc` event says when an arrival is a draft the hook saved --
+/// listed by the page, never announced -- and when it is that draft, taken
+/// over by the agent's send, which is announced.
+#[tokio::test]
+async fn the_doc_event_says_a_draft_is_quiet() {
+    let tmp = crate::store::tempdir::Dir::new("snyvi-doc-quiet");
+    let paths = Paths {
+        data_dir: tmp.path.join("data"),
+        config_dir: tmp.path.join("config"),
+        docs_dir: tmp.path.join("data").join("docs"),
+        db_path: tmp.path.join("data").join("snyvi.db"),
+        token_path: tmp.path.join("config").join("token"),
+    };
+    let token = crate::config::load_or_create_token(&paths).unwrap();
+    let window = crate::config::load_or_create_window_secret(&paths).unwrap();
+    let store = Store::open(&paths).unwrap();
+    let app = new_app(&paths, store, token, window, None, None);
+    let payload = |origin: &str| crate::receive::Payload {
+        content: Some("# Draft\n\nbody".into()),
+        cwd: Some(tmp.path.to_string_lossy().to_string()),
+        origin: Some(origin.into()),
+        ..Default::default()
+    };
+    let draft = crate::receive::receive(&app.store, &app.renderer, payload("hook")).unwrap();
+    let ev = super::doc_event(&app, &draft);
+    assert_eq!(
+        (ev["quiet"].as_bool(), ev["promoted"].as_bool()),
+        (Some(true), Some(false))
+    );
+    let sent = crate::receive::receive(&app.store, &app.renderer, payload("mcp")).unwrap();
+    let ev = super::doc_event(&app, &sent);
+    assert_eq!(ev["quiet"].as_bool(), Some(false));
+}
+
 #[cfg(unix)]
 mod accounts;
+#[cfg(unix)]
+mod first_desk;
 mod keys;
 mod pastes;
+mod routes;
+mod widgets;
+use routes::{Gate, ROUTES};
+
+/// Lately keeps what came: an aside is a row there, listed newest first,
+/// and it is still there for the next daemon on the same database -- an
+/// update restarts the daemon, and asides used to go with it. A ✕ takes it
+/// out of the list and into Removed, whose restore brings it back.
+#[tokio::test]
+async fn an_aside_outlives_a_restart_and_a_removed_row_comes_back() {
+    let (tmp, _app, router, l) = gated_app_with("snyvi-lately", |_| {});
+    let call = |method: &str, path: &str, body: Option<serde_json::Value>, token: bool| {
+        let mut req = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", &l.host)
+            .header("origin", &l.origin)
+            .header(CAPABILITY_HEADER, &l.cap)
+            .header("content-type", "application/json");
+        if token {
+            req = req.header("authorization", &l.bearer);
+        }
+        let body = body.map_or(Body::empty(), |b| Body::from(b.to_string()));
+        router.clone().oneshot(req.body(body).unwrap())
+    };
+    async fn json(resp: axum::response::Response) -> serde_json::Value {
+        assert!(resp.status().is_success(), "{}", resp.status());
+        let bytes = axum::body::to_bytes(resp.into_body(), 65536).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap_or_default()
+    }
+    let said = json(
+        call(
+            "POST",
+            "/api/notes",
+            Some(serde_json::json!({ "text": "It held.", "sender": "claude-code" })),
+            true,
+        )
+        .await
+        .unwrap(),
+    )
+    .await;
+    let id = said["note"]["id"].as_i64().unwrap();
+    let lately = json(call("GET", "/api/lately", None, false).await.unwrap()).await;
+    assert_eq!(lately["rows"][0]["kind"], "aside");
+    assert_eq!(lately["rows"][0]["who"], "claude-code");
+    assert_eq!(lately["unseen"], true);
+    json(call("POST", "/api/lately/seen", None, false).await.unwrap()).await;
+    let lately = json(call("GET", "/api/lately", None, false).await.unwrap()).await;
+    assert_eq!(lately["unseen"], false);
+    assert_eq!(lately["rows"][0]["seen"], true);
+
+    // The next daemon, on the same database.
+    let paths = Paths {
+        data_dir: tmp.path.join("data"),
+        config_dir: tmp.path.join("config"),
+        docs_dir: tmp.path.join("data").join("docs"),
+        db_path: tmp.path.join("data").join("snyvi.db"),
+        token_path: tmp.path.join("config").join("token"),
+    };
+    let store = Store::open(&paths).unwrap();
+    let kept = store.clocked(|c, _| Ok(crate::aside::list(c))).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].text, "It held.");
+    assert!(kept[0].seen);
+    drop(store);
+
+    json(
+        call(
+            "POST",
+            "/api/lately/remove",
+            Some(serde_json::json!({ "ids": [id] })),
+            false,
+        )
+        .await
+        .unwrap(),
+    )
+    .await;
+    let lately = json(call("GET", "/api/lately", None, false).await.unwrap()).await;
+    assert!(lately["rows"].as_array().unwrap().is_empty());
+    let removed = json(call("GET", "/api/removed", None, false).await.unwrap()).await;
+    let row = removed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["kind"] == "aside")
+        .cloned()
+        .unwrap();
+    assert_eq!(row["restore"], "/api/lately/restore");
+    json(
+        call(
+            "POST",
+            "/api/lately/restore",
+            Some(serde_json::json!({ "ids": [id] })),
+            false,
+        )
+        .await
+        .unwrap(),
+    )
+    .await;
+    let lately = json(call("GET", "/api/lately", None, false).await.unwrap()).await;
+    assert_eq!(lately["rows"][0]["id"], id);
+}
+
+/// An ask raises a desktop notification only with no page in front, not
+/// when the reader turned them off, and once for a burst.
+#[test]
+fn an_ask_reaches_the_desktop_only_when_no_page_is_in_front() {
+    assert!(super::ask_notifies(false, false, 0, 1_000));
+    assert!(
+        !super::ask_notifies(false, true, 0, 1_000),
+        "a page is in front: its corner says it"
+    );
+    assert!(
+        !super::ask_notifies(true, false, 0, 1_000),
+        "SNYVI_NOTIFY=0"
+    );
+    assert!(
+        !super::ask_notifies(false, false, 990, 1_000),
+        "a burst is one"
+    );
+    assert!(super::ask_notifies(false, false, 900, 1_000));
+}

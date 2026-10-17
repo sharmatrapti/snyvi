@@ -39,7 +39,7 @@ async function act(b, byKey) {
     else if (a === "desk") ctx.go(deskId, true);
     else if (a === "copy") { await navigator.clipboard?.writeText(b.dataset.path); ctx.toast("Copied", b.dataset.path); }
     else if (a === "more") { docsAll = !docsAll; rail(); }
-    else if (a === "notes-more") { notesAll = !notesAll; rail(); }
+    else if (a === "notes-more" || a === "notes-done") { a === "notes-more" ? notesAll = !notesAll : notesDone = !notesDone; rail(); }
     // Off this desk's list, and back: the row keeps its place with an Undo,
     // as a note's does, and the daemon is told after the rail has changed.
     else if (a === "doc-x") {
@@ -104,7 +104,7 @@ async function act(b, byKey) {
       if (x) {
         // The last open line, ticked: the mark says so once the daemon has it.
         const last = stillOpen(x) && !noteList.some(y => y !== x && stillOpen(y));
-        x.done = !x.done;
+        x.done = !x.done; if (x.done) notesKept.add(x.id);
         rail();
         // The daemon owns the order -- a line just ticked goes to the end of
         // the done half -- so the list is read back rather than guessed at.
@@ -120,16 +120,7 @@ async function act(b, byKey) {
     else if (a === "note-num") copySha(b, "✓");
     else if (a === "note-doc") ctx.read(b.dataset.d);
     else if (a === "note-ev") { if (/^https?:\/\//.test(b.dataset.u)) openLink(b.dataset.u); }
-    else if (a === "note-keep") {
-      const x = noteList.find(y => y.id === +b.dataset.n);
-      if (x) {
-        const by = x.suggested_by;
-        x.suggested_by = "";
-        rail();
-        if (await told(b.dataset, `n${x.id}`, "Could not keep it", () => { x.suggested_by = by; },
-          () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/keep`, {}))) await getNotes(d.id, true);
-      }
-    }
+    else if (a === "note-keep" || a === "note-works" || a === "note-broken") await noteAct(a, b, d);
     else if (a === "note-tell") await tellNote(d, b);
     else if (a === "left-edit") leftOffEdit(d);
     else if (a === "left-back") leftOffBack(d);
@@ -193,6 +184,29 @@ const VERB = { new: "open a new panel", stop: "stop the panel", start: "start th
  *  was changed (`back`) and says so in the row that asked (`k`), with a
  *  Retry that does the same thing again (`again`, the button's data).
  *  True when the daemon said yes. */
+/** A line's answers that are not its circle: Keep on an agent's
+ *  suggestion; and on a line whose work is out (1.37), works -- ticked as
+ *  the reader's, with the commit it landed with (desk::check_note) -- and
+ *  not yet..., a field over the line for what is still wrong, which Enter
+ *  sends to reopen it (06-rail.js `saveNote`). Out of `act`, which is long. */
+async function noteAct(a, b, d) {
+  const x = noteList.find(y => y.id === +b.dataset.n);
+  if (!x) return;
+  if (a === "note-broken") { noteField = { kind: "broken", id: x.id }; noteDraft = ""; noteCaret = 0; rail(); return; }
+  if (a === "note-works") {
+    x.done = true; notesKept.add(x.id);
+    rail();
+    if (await told(b.dataset, `n${x.id}`, "Could not tick this", () => { x.done = false; },
+      () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/check`, { works: true }))) await getNotes(d.id, true);
+    return;
+  }
+  const by = x.suggested_by;
+  x.suggested_by = "";
+  rail();
+  if (await told(b.dataset, `n${x.id}`, "Could not keep it", () => { x.suggested_by = by; },
+    () => ctx.api(`/api/desks/${d.id}/notes/${x.id}/keep`, {}))) await getNotes(d.id, true);
+}
+
 /** Tell Trapti ✓ on a friend's ticked line: said in the row at once, put
  *  back with the reason if the daemon says no. */
 async function tellNote(d, b) {
@@ -361,16 +375,19 @@ function focusPane(id) {
 }
 
 function click(e) {
+  // The foot's links: a ✕, an Undo, the +N (17-links.js).
+  if (linkClick(e)) return;
   // A section's head, folded or opened where it is: no draw.
   const fd = e.target.closest("[data-fold]");
   if (fd) { ctx.fold(fd.dataset.fold); return; }
   const wa = e.target.closest("[data-wallow]");
   if (wa) { ctx.allowWidget(wa); return; }
-  const ws = e.target.closest("[data-wretry], [data-wnot]");
+  const ws = e.target.closest("[data-wretry], [data-wnot], [data-wtell], [data-wundo], [data-gal]");
   if (ws) { ctx.seatAct(ws); return; }
-  // A widget's body past its room opens where it is, and closes again.
-  const wb = !e.target.closest("a") && e.target.closest(".wg-body");
-  if (wb) { wb.classList.toggle("open"); return; }
+  // A widget's body or failed line past its room opens where it is, and
+  // closes again.
+  const wb = !e.target.closest("a") && e.target.closest(".wg-body, .wg-why");
+  if (wb) { ctx.seatOpen(wb); return; }
   const m = e.target.closest("[data-desk-menu]");
   if (m) { const r = m.getBoundingClientRect(); ctx.menu?.(m, r.left, r.bottom + 4, e.detail === 0); return; }
   const f = e.target.closest("[data-focus]");
@@ -379,6 +396,9 @@ function click(e) {
   // The row of the document on the page is a toggle: a second click puts
   // the panes back, the way the first put the document up.
   if (r) { e.preventDefault(); if (r.dataset.read === reading) ctx.go(deskId, true); else ctx.read(r.dataset.read); return; }
+  // The rail's Connect, where a desk waits on Claude Code (R2).
+  const cn = e.target.closest('button[data-a="connect"]');
+  if (cn) { connectFrom(cn); return; }
   const b = e.target.closest("[data-a]");
   // `detail` is 0 for a click a key made: what it opens is then a keyboard's.
   if (b && !b.disabled) act(b, !e.detail);
@@ -468,6 +488,7 @@ function detach() {
   ctx.metaEl.removeEventListener("click", click);
   closeLightbox();
   document.removeEventListener("keydown", keys, true);
+  hoverDetach();
   document.removeEventListener("mouseup", pickUp);
   document.removeEventListener("keyup", pickKey);
   removeEventListener("scroll", hidePick, true);
@@ -495,7 +516,7 @@ export function open(c) {
   if (first) measure();
   if (deskId !== c.id) {
     for (const v of [...views.values()]) dropView(v);
-    docList = []; docsAt = null; docsAll = false; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
+    docList = []; docsAt = null; docsAll = false; claudeAsk = null; forgetDocs(); forgetNotes(); forgetWidgets(); hidePoints();
     focused = null; full = false; keysClose();
   }
   deskId = c.id; reading = null;
@@ -513,6 +534,7 @@ export function open(c) {
   window.addEventListener("snyvi-paste-image", windowPaste);
   ctx.metaEl.addEventListener("click", click);
   document.addEventListener("keydown", keys, true);
+  hoverAttach();
   // A passage selected in a document read over the desk can be kept as a
   // point for the panel that sent it (`picked`).
   document.addEventListener("mouseup", pickUp);
@@ -587,48 +609,54 @@ const accounts = () => [{ id: 0, label: "your login" }, ...(ctx.desks.accounts |
  *  switch restarts it into that conversation. A shell is not restarted. */
 const continuable = v => v.status.running && v.pane.resume && (v.status.agent_in || talked(v));
 
-/** A panel's "Run as" entries, one an account, and only once a second
- *  account exists. Claude open in it, with a conversation to go back to:
- *  "Continue as", which restarts it into that conversation. Anything else:
- *  "Run as", which a stopped panel starts as and a running shell takes at
- *  its next start. The desk's own account is picked by following it. */
-function accountItems(v, d) {
-  const all = accounts();
-  if (all.length < 2) return [];
-  const s = v.status, on = v.pane.account ?? d.account;
-  const cont = continuable(v);
-  const was = cont ? s.account || 0 : on;
-  return [...all.filter(a => a.id !== was).map(a => ({ label: `${cont ? "Continue" : "Run"} as ${a.label}`, run: () => runAs(v, d, a, cont) })), "rule"];
+/** A switch, or, while Claude is answering -- which the daemon refuses, a
+ *  restart mid-answer losing the answer -- the same switch the moment the
+ *  answer is done. The reader asked for it once; a refusal they had to
+ *  remember to ask again was a dead end (note #113). */
+async function switchSoon(v, account, label, renewed = false) {
+  try { await switchPanel(v, account, label, renewed); }
+  catch (e) {
+    if (!/answering/i.test(String(e))) throw e;
+    // Said on the panel until it happens (`switchStrip`), by the account's
+    // name as it is when it does: a toast said it once, cut short, and went.
+    const p = v.pending = { account };
+    const fail = e => ctx.toast(`Could not switch panel ${v.pane.slot}`, e);
+    v.whenDone = () => switchPanel(v, account, labelOf(account), renewed).catch(fail);
+    // And asked again now and then: a turn whose end the hook never said is
+    // over once Claude has been quiet a while (`pane::is_answering`), and a
+    // status that still says `working` would otherwise hold it for ever.
+    const settle = () => { clearInterval(t); if (v.pending === p) { v.pending = null; v.whenDone = null; header(v); } };
+    const t = setInterval(() => {
+      if (v.pending !== p) return clearInterval(t);
+      switchPanel(v, account, labelOf(account), renewed).then(settle, e => { if (!/answering/i.test(String(e))) { settle(); fail(e); } });
+    }, SWITCH_RETRY_MS);
+    header(v);
+  }
 }
+const SWITCH_RETRY_MS = 15000;
 
-/** A panel as another account: `a` picked from its menu, the desk's own
- *  picked by following it. */
-async function runAs(v, d, a, cont) {
-  const account = a.id === d.account ? null : a.id;
-  if (!v.status.running) {
-    await ctx.api(`/api/panes/${v.id}/account`, { account });
-    v.pane.account = account;
-    return run(v, v.start.querySelector("input").value);
-  }
-  if (!cont) {
-    await ctx.api(`/api/panes/${v.id}/account`, { account });
-    v.pane.account = account;
-    return ctx.toast(`Panel ${v.pane.slot} runs as ${a.label}`, "from its next start");
-  }
-  return switchPanel(v, account, a.label);
+/** An account's name by its id, null being the desk's own. */
+function labelOf(account) {
+  const id = account ?? current()?.account ?? 0;
+  return (accounts().find(a => a.id === id) || accounts()[0]).label;
 }
 
 /** A running panel restarted as `account` (null: its desk's), back into its
- *  conversation. The daemon keeps the choice and refuses while Claude is
- *  answering; the stop and the start are this page's, as a restart's resume
- *  is, since it holds the panel's size. */
-async function switchPanel(v, account, label) {
+ *  conversation; `renewed`, also as the account it is already on, whose
+ *  new token only a start takes. The daemon keeps the choice and refuses
+ *  while Claude is answering; the stop and the start are this page's, as a
+ *  restart's resume is, since it holds the panel's size. */
+async function switchPanel(v, account, label, renewed) {
   const cmd = v.status.cmd || v.pane.cmd || "";
-  const j = await ctx.api(`/api/panes/${v.id}/account`, { account, switch: true });
+  const j = await ctx.api(`/api/panes/${v.id}/account`, { account, switch: true, ...(renewed ? { renewed } : {}) });
   v.pane.account = account;
   if (!j.restart) return;
-  v.onStop = () => run(v, cmd, false, j.resume);
-  try { await ctx.api(`/api/panes/${v.id}/stop`, {}); } catch (e) { v.onStop = null; throw e; }
+  // The head says what is happening for the stop and the start: a blank
+  // screen under "● running" said nothing at all.
+  v.switching = label; header(v);
+  const done = () => { v.switching = null; header(v); };
+  v.onStop = () => run(v, cmd, false, j.resume).finally(done);
+  try { await ctx.api(`/api/panes/${v.id}/stop`, {}); } catch (e) { v.onStop = null; done(); throw e; }
   announce(`Panel ${v.pane.slot} continues as ${label}`);
 }
 
@@ -642,6 +670,8 @@ export function actions(el) {
   if (!d) return null;
   const card = el.closest(".dk-pth");
   if (card) return threadMenu(card);
+  const lk = el.closest(".dk-lk-more, .dk-lk");
+  if (lk) return linksMenu(lk);
   const pane = el.closest(".dk-pane, .pn-head, .pn-body");
   if (pane) {
     const id = pane.matches(".dk-pane") ? pane.querySelector("[data-focus]")?.dataset.focus : pane.closest(".pn")?.dataset.id;
@@ -666,16 +696,16 @@ export function actions(el) {
       s.running ? { label: "Stop", run: does("stop") } : { label: "Start", run: () => run(v, v.start.querySelector("input").value) },
       !s.running && talked(v) && { label: "Resume conversation", run: () => run(v, "", false, true) },
       R,
-      ...accountItems(v, d),
       { label: "Copy folder path", run: () => { navigator.clipboard?.writeText(v.pane.cwd); ctx.toast("Copied", v.pane.cwd); } },
       { label: "Open in file manager", run: () => ctx.reveal({ desk: d.id }) },
       R,
       { label: "Rename…", key: ctx.keyHint("f2"), moves: 1, run: () => renamePanel(v) },
       ...threadItems(v),
+      ...pipeItems(v),
       { label: "Close panel", key: ctx.keyHint("ctrl+alt+w"), danger: true, run: does("close") },
     ] };
   }
-  const repo = el.closest(".dk-repo");
+  const repo = el.closest("a.dk-repo");
   if (repo) {
     const url = repo.getAttribute("href"), rn = repoName(url);
     return { head: rn ? rn.path : url, items: [
@@ -714,7 +744,10 @@ export function actions(el) {
       { label: "Add a picture…", run: () => pickImages(x.id) },
       { label: `Copy #${x.id}`, run: () => copySha(note.querySelector(".dk-num"), "✓") },
       ...(x.done && x.done_doc ? [{ label: "Open what it sent", run: () => ctx.read(x.done_doc) }] : []),
-      ...(x.done && x.done_commit ? [{ label: "Copy commit", run: () => copySha(note.querySelector(".dk-sha")) }] : []), R,
+      // Where a ticked line's work went is its tip, not marks on the row:
+      // these are the hands for it (06-rail.js `doneWords`).
+      ...(x.done && x.done_commit ? [{ label: `Copy commit ${x.done_commit.slice(0, 7)}`, run: () => navigator.clipboard?.writeText(x.done_commit) }] : []),
+      ...(x.done && /^https?:\/\//.test(x.done_evidence) ? [{ label: `Open ${evSay(x.done_evidence)}`, run: () => openLink(x.done_evidence) }] : []), R,
       { label: "Remove from the list", danger: true, run: does("note-x") },
       ...(noteList.some(y => y.done && !y.gone) ? [{ label: "Remove done notes", run: does("note-clear") }] : []),
     ] };
@@ -776,5 +809,7 @@ export function close() {
   docList = []; docsAt = null; docsAll = false;
   forgetDocs(); forgetNotes(); hidePoints();
   detach();
+  cardsDrop();
+  linksDrop();
   ctx.tocEl.innerHTML = ctx.metaEl.innerHTML = "";
 }

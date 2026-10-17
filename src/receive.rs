@@ -78,6 +78,13 @@ pub struct Received {
     /// names a document that is still in the library and is no longer the one
     /// its lists show. A reader with that id open is reading a version.
     pub supersedes: Option<String>,
+    /// A draft the hook saved: listed on its desk and in its project, and
+    /// nothing more -- no notification, no place on the queue, no wash. Only
+    /// a send someone meant asks for the reader (`quiet`).
+    pub quiet: bool,
+    /// The hook's draft of these same bytes, taken over by this send: an
+    /// arrival, though no row was inserted (`Store::promote`).
+    pub promoted: bool,
 }
 
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -109,6 +116,18 @@ pub fn search_text(text: &str) -> &str {
 /// `snyvi watch` on every save. They coalesce with each other.
 fn automatic(origin: &str) -> bool {
     matches!(origin, "hook" | "watch")
+}
+
+/// Saved by the hook as Claude wrote it, not sent: a draft, until the agent
+/// sends it (audit bf13a1859b, decision R3). `snyvi watch` is automatic too,
+/// but the reader started it for the file, and it stays loud.
+fn quiet(origin: &str) -> bool {
+    origin == "hook"
+}
+
+/// A send someone meant, which takes over the hook's draft of the same bytes.
+fn explicit(origin: &str) -> bool {
+    matches!(origin, "mcp" | "cli" | "plan")
 }
 
 /// What arrived, read: `bytes` is what gets stored; `text` is the decoded
@@ -291,7 +310,9 @@ fn workflow(
 /// the friend's own project, whose root is no folder on this machine
 /// (`peer::Peer::project_root`), so the sidebar gains one row per friend and
 /// nothing else -- or, when the reader gave them a desk, to that desk's.
-fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
+/// A desk's folder is the floor of the walk up (`project::resolve_on_desk`):
+/// the sending pane's desk, else the deepest desk the folder is in.
+fn place(store: &Store, p: &Payload, b: &Body) -> (String, String, Option<String>) {
     if let Some(root) = p.peer.as_ref().and_then(|fp| fp.root.as_ref()) {
         return desk_project(root);
     }
@@ -311,17 +332,78 @@ fn place(p: &Payload, b: &Body) -> (String, String, Option<String>) {
         .map(PathBuf::from)
         .or_else(|| b.path.as_deref().map(PathBuf::from))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
-    let proj = project::resolve(&anchor);
+    let proj = match desk_floor(store, p.pane.as_deref(), &anchor) {
+        Some(desk) => project::resolve_on_desk(&anchor, &desk),
+        None => project::resolve(&anchor),
+    };
     let branch = project::branch(&proj.root);
     (proj.root.to_string_lossy().to_string(), proj.name, branch)
+}
+
+/// The desk folder a sender's walk up stops at: its pane's desk when it was
+/// sent from one, else the deepest desk whose folder holds `anchor` -- Claude
+/// in the reader's own terminal, in a desk's folder, files where the desk's
+/// panes would.
+fn desk_floor(store: &Store, pane: Option<&str>, anchor: &Path) -> Option<PathBuf> {
+    if let Some(placed) = pane
+        .filter(|id| crate::pane::valid_id(id))
+        .and_then(|id| store.pane(id).ok().flatten())
+    {
+        return Some(PathBuf::from(placed.root));
+    }
+    let anchor = anchor
+        .canonicalize()
+        .unwrap_or_else(|_| anchor.to_path_buf());
+    store
+        .desks()
+        .ok()?
+        .into_iter()
+        .filter_map(|d| PathBuf::from(&d.root).canonicalize().ok())
+        .filter(|r| anchor.starts_with(r))
+        .max_by_key(|r| r.components().count())
 }
 
 /// The project a desk's folder is, as `place` gives it: what a friend's
 /// document kept on that desk joins.
 pub fn desk_project(root: &str) -> (String, String, Option<String>) {
-    let proj = project::resolve(Path::new(root));
+    let proj = project::resolve_on_desk(Path::new(root), Path::new(root));
     let branch = project::branch(&proj.root);
     (proj.root.to_string_lossy().to_string(), proj.name, branch)
+}
+
+/// The store as the daemon opens it, with what a desk sent before its folder
+/// bounded the walk up moved out of the folder above it. Once it has run
+/// there is nothing left for it to find.
+pub fn refiled(store: Store) -> Store {
+    match refile_desks(&store) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("snyvi: {n} document(s) moved to the desk they came from"),
+        Err(e) => eprintln!("snyvi: refiling documents onto their desks: {e:#}"),
+    }
+    store
+}
+
+/// Move what a desk sent out of a project above the desk's folder and into
+/// the desk's own (`store::refile`): what `place` files there now, done once
+/// for what came before it. Nothing is deleted or re-dated; each document
+/// keeps its versions, workflow and desk. A project left with nothing in it
+/// leaves the sidebar, as an emptied one always has. How many moved.
+pub fn refile_desks(store: &Store) -> Result<usize> {
+    let mut moved = 0;
+    for d in store.docs_on_desks()? {
+        let (root, name, _) = desk_project(&d.desk_root);
+        let (to, from) = (Path::new(&root), Path::new(&d.project_root));
+        if to != from
+            && to.starts_with(from)
+            && store.move_lineage(&d.id, &root, &name, &d.desk)?.is_some()
+        {
+            if d.off != 0 {
+                store.keep_desk_off(&d.id, d.off)?;
+            }
+            moved += 1;
+        }
+    }
+    Ok(moved)
 }
 
 /// The desk and slot a sender's pane is on, when it names one snyvi knows. A
@@ -336,18 +418,38 @@ pub fn pane_origin(store: &Store, pane: Option<&str>) -> Option<crate::desk::Ori
         })
 }
 
+/// The desk a document sent from outside any panel belongs on: the first
+/// desk, in the reader's order, whose folder is the document's project --
+/// Claude in the reader's own terminal, `snyvi send` from the folder. Placed
+/// with slot 0, which the rail reads as "this desk's folder" (R4). A friend's
+/// document keeps its own placement, and a pane's desk always wins: this is
+/// asked only when neither said.
+fn outside(store: &Store, root: &str) -> Option<crate::desk::Origin> {
+    store
+        .desks()
+        .ok()?
+        .into_iter()
+        .find(|d| desk_project(&d.root).0 == root)
+        .map(|d| crate::desk::Origin {
+            id: d.id,
+            name: d.name,
+            slot: 0,
+        })
+}
+
 pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Received> {
     let b = read(store, &p)?;
     let origin = p.origin.as_deref().unwrap_or("cli");
     // Attribution only. Which workflow a document joins is still the
     // session's, as it always was; the pane says where it was sent from.
-    let from = pane_origin(store, p.pane.as_deref()).or_else(|| {
-        p.peer
-            .as_ref()
-            .and_then(|fp| fp.desk.as_ref().map(|(o, _)| o.clone()))
-    });
-
-    let (root, proj_name, branch) = place(&p, &b);
+    let (root, proj_name, branch) = place(store, &p, &b);
+    let from = pane_origin(store, p.pane.as_deref())
+        .or_else(|| {
+            p.peer
+                .as_ref()
+                .and_then(|fp| fp.desk.as_ref().map(|(o, _)| o.clone()))
+        })
+        .or_else(|| p.peer.is_none().then(|| outside(store, &root)).flatten());
 
     // Same file, same bytes as the latest snapshot: hand back that document rather
     // than storing a duplicate (an explicit send after a hook send, or vice versa).
@@ -359,21 +461,21 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         Some(sp) => store.latest_for_path(&root, sp)?,
         None => None,
     };
-    if let Some(existing) = &latest_same_path {
-        if existing.content_hash == hash {
-            return Ok(Received {
-                doc: existing.clone(),
-                needs_full_highlight: false,
-                existing: true,
-                supersedes: None,
-            });
-        }
+    if let Some(same) = latest_same_path.as_ref().filter(|d| d.content_hash == hash) {
+        return unchanged(store, &p, origin, from.as_ref(), &proj_name, same);
     }
 
     let (kind, lang) = classify(renderer, &b, p.lang.as_deref());
     let title = render::title_for(p.title.as_deref(), kind, b.path.as_deref(), &b.text);
 
-    let (wf_name, wf_title) = workflow(&p, origin, from.as_ref(), &proj_name, &title);
+    // A draft with no workflow of its own joins the one its conversation
+    // named, when the agent has sent under a name here (decision R10).
+    let named = match (quiet(origin), &p.workflow, &p.session) {
+        (true, None, Some(s)) => store.named_workflow(&root, s.trim())?,
+        _ => None,
+    };
+    let (wf_name, wf_title) =
+        named.unwrap_or_else(|| workflow(&p, origin, from.as_ref(), &proj_name, &title));
 
     // A hook firing on every edit would otherwise fill a workflow with near-identical
     // snapshots; within a short window, overwrite the last one instead.
@@ -423,6 +525,8 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         branch: branch.as_deref(),
         origin,
         sender: p.sender.as_deref().unwrap_or(""),
+        quiet: quiet(origin),
+        session: p.session.as_deref().unwrap_or("").trim(),
         desk: from.as_ref(),
         source: &b.bytes,
         staged: b.staged.as_ref(),
@@ -437,6 +541,8 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
             needs_full_highlight,
             existing: true,
             supersedes: None,
+            quiet: quiet(origin),
+            promoted: false,
         });
     }
     // What this one is a version of, before it becomes the newest itself.
@@ -447,6 +553,90 @@ pub fn receive(store: &Store, renderer: &Renderer, p: Payload) -> Result<Receive
         needs_full_highlight,
         existing: false,
         supersedes,
+        quiet: quiet(origin),
+        promoted: false,
+    })
+}
+
+/// The same bytes as the newest snapshot of the file: that document, rather
+/// than a duplicate -- or, when an explicit send meets the hook's draft of
+/// them, the draft taken over (`promote`).
+fn unchanged(
+    store: &Store,
+    p: &Payload,
+    origin: &str,
+    from: Option<&crate::desk::Origin>,
+    project: &str,
+    same: &Doc,
+) -> Result<Received> {
+    if explicit(origin) && quiet(&same.origin) {
+        return promote(store, p, origin, from, project, same);
+    }
+    Ok(Received {
+        doc: same.clone(),
+        needs_full_highlight: false,
+        existing: true,
+        supersedes: None,
+        quiet: quiet(origin),
+        promoted: false,
+    })
+}
+
+/// The agent's send of bytes the hook already saved: the draft becomes the
+/// send, with the agent's title when it gave one and its workflow, and
+/// arrives. Nothing is rendered: the page is the same bytes', and its H1 was
+/// taken off whatever the title (`render::strip_leading_h1`).
+fn promote(
+    store: &Store,
+    p: &Payload,
+    origin: &str,
+    from: Option<&crate::desk::Origin>,
+    project: &str,
+    draft: &Doc,
+) -> Result<Received> {
+    let title = p
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or(&draft.title);
+    // Named by this send, or a plan's home: that. Otherwise the draft's own,
+    // which may be the one the conversation named (`named_workflow`) and
+    // is never worse than the session's key a nameless send would give.
+    let named = p.workflow.as_deref().is_some_and(|w| !w.trim().is_empty());
+    let (wf_name, wf_title) = if named || origin == "plan" {
+        workflow(p, origin, from, project, title)
+    } else {
+        (draft.workflow.clone(), draft.workflow_title.clone())
+    };
+    let by = crate::store::Promotion {
+        origin,
+        sender: p.sender.as_deref().unwrap_or(""),
+        session: p.session.as_deref().unwrap_or("").trim(),
+        title,
+        workflow_key: &wf_name.to_lowercase(),
+        workflow_title: &wf_title,
+    };
+    // What this send is a version of: the last one sent of the file, past
+    // the hook's drafts between. A plan edited and sent again went to
+    // Lately as a new document each time, five rows for one plan (1.43, G1).
+    let mut supersedes = None;
+    let mut at = store.previous(draft)?;
+    for _ in 0..64 {
+        let Some(prev) = at else { break };
+        if !quiet(&prev.origin) {
+            supersedes = Some(prev.id);
+            break;
+        }
+        at = store.previous(&prev)?;
+    }
+    Ok(Received {
+        doc: store.promote(&draft.id, &by)?,
+        needs_full_highlight: false,
+        existing: false,
+        supersedes,
+        quiet: false,
+        promoted: true,
     })
 }
 
@@ -533,7 +723,7 @@ mod tests {
         };
 
         let first = receive(&s, &r, mk("hook")).unwrap();
-        let again = receive(&s, &r, mk("mcp")).unwrap();
+        let again = receive(&s, &r, mk("hook")).unwrap();
         assert!(again.existing);
         assert_eq!(
             again.doc.id, first.doc.id,
@@ -585,6 +775,90 @@ mod tests {
         assert_eq!(hooked.doc.id, watched.doc.id);
         assert_eq!(s.source(&watched.doc.id).unwrap(), "# Notes\n\nv6");
         assert_eq!(s.count().unwrap(), 3);
+    }
+
+    /// The hook's draft is listed and does not wait; the agent's send of the
+    /// same bytes takes it over -- one row, waiting now, with the agent's
+    /// title and workflow -- and later drafts follow that workflow.
+    #[test]
+    fn a_draft_is_quiet_until_the_agent_sends_it() {
+        let (s, r, d) = setup();
+        let file = d.path.join("PLAN.md");
+        std::fs::write(&file, "# From the H1\n\nv1").unwrap();
+        let cwd = d.path.to_string_lossy().to_string();
+        let mk = |origin: &str, title: Option<&str>, workflow: Option<&str>| Payload {
+            path: Some(file.to_string_lossy().to_string()),
+            cwd: Some(cwd.clone()),
+            session: Some("claude 1234abcd".into()),
+            origin: Some(origin.into()),
+            title: title.map(str::to_string),
+            workflow: workflow.map(str::to_string),
+            ..Default::default()
+        };
+        let draft = receive(&s, &r, mk("hook", None, None)).unwrap();
+        assert!(draft.quiet && !draft.existing && !draft.promoted);
+        assert_eq!(s.waiting().unwrap(), 0, "a draft does not wait");
+        assert_eq!(draft.doc.workflow, "claude 1234abcd");
+
+        let sent = receive(&s, &r, mk("mcp", Some("The plan"), Some("Send paths"))).unwrap();
+        assert!(sent.promoted && !sent.existing && !sent.quiet);
+        assert_eq!(sent.supersedes, None, "the first send of the file");
+        assert_eq!(sent.doc.id, draft.doc.id, "one row");
+        assert_eq!(sent.doc.title, "The plan");
+        assert_eq!(sent.doc.origin, "mcp");
+        assert_eq!(sent.doc.workflow, "send paths");
+        assert_eq!(s.waiting().unwrap(), 1);
+        assert_eq!(s.count().unwrap(), 1);
+        // Sent again, unchanged: nothing arrives.
+        let again = receive(&s, &r, mk("mcp", Some("The plan"), None)).unwrap();
+        assert!(again.existing && !again.promoted);
+        // A draft that followed the named workflow, sent with no name: it
+        // stays in the named one.
+        let other = d.path.join("NOTES.md");
+        std::fs::write(&other, "# Notes").unwrap();
+        let note = |origin: &str| Payload {
+            path: Some(other.to_string_lossy().to_string()),
+            ..mk(origin, None, None)
+        };
+        assert_eq!(
+            receive(&s, &r, note("hook")).unwrap().doc.workflow,
+            "send paths"
+        );
+        let noted = receive(&s, &r, note("mcp")).unwrap();
+        assert!(noted.promoted);
+        assert_eq!(noted.doc.workflow, "send paths");
+
+        // The next draft joins the workflow the conversation named, and,
+        // since the send it follows is still unread, keeps it waiting.
+        std::fs::write(&file, "# From the H1\n\nv2").unwrap();
+        let next = receive(&s, &r, mk("hook", None, None)).unwrap();
+        assert!(next.quiet && !next.existing);
+        assert_eq!(next.supersedes.as_deref(), Some(draft.doc.id.as_str()));
+        assert_eq!(next.doc.workflow, "send paths");
+        assert_eq!(s.waiting().unwrap(), 2, "the mark moved to the new version");
+        assert!(s.queue(5).unwrap().iter().any(|q| q.id == next.doc.id));
+
+        // Read, then drafted again: the draft does not wait.
+        s.mark_read(&next.doc.id).unwrap();
+        std::fs::write(&file, "# From the H1\n\nv3").unwrap();
+        let read_then = receive(&s, &r, mk("hook", None, Some("other"))).unwrap();
+        assert!(!read_then.existing);
+        assert_eq!(s.waiting().unwrap(), 1, "only the notes wait");
+
+        // Different bytes from the agent: a new version, loud.
+        std::fs::write(&file, "# From the H1\n\nv4").unwrap();
+        let v4 = receive(&s, &r, mk("mcp", None, None)).unwrap();
+        assert!(!v4.quiet && !v4.promoted && !v4.existing);
+        assert_eq!(v4.supersedes.as_deref(), Some(read_then.doc.id.as_str()));
+        assert_eq!(s.waiting().unwrap(), 2);
+
+        // Drafted, then sent: a version of the last send, past the drafts
+        // between, so Lately says "2 versions" and not two documents (G1).
+        std::fs::write(&file, "# From the H1\n\nv5").unwrap();
+        receive(&s, &r, mk("hook", None, None)).unwrap();
+        let v5 = receive(&s, &r, mk("mcp", None, None)).unwrap();
+        assert!(v5.promoted);
+        assert_eq!(v5.supersedes.as_deref(), Some(v4.doc.id.as_str()));
     }
 
     #[test]
@@ -837,6 +1111,146 @@ mod tests {
         assert_eq!(got.doc.origin, "peer");
         assert_eq!(got.doc.sender, "Trapti");
         assert!(!s.projects().unwrap()[0].friend, "the desk's own row");
+    }
+
+    /// A document sent from a desk's folder outside its panels -- Claude in
+    /// the reader's own terminal -- lands on that desk, slot 0 (R4); a
+    /// pane on another desk keeps its own desk, and a friend's document is
+    /// not placed by folder.
+    #[test]
+    fn a_document_from_a_desks_folder_lands_on_that_desk() {
+        let (s, r, _d) = setup();
+        let garden = Dir::new("snyvi-recv-outside");
+        std::fs::create_dir_all(garden.path.join(".git")).unwrap();
+        std::fs::create_dir_all(garden.path.join("sub")).unwrap();
+        let g = garden.path.to_string_lossy().to_string();
+        let desk = s.create_desk(&g, Some("garden")).unwrap();
+        let other = s.create_desk("/tmp", Some("other")).unwrap();
+        let send = |text: &str, pane: Option<String>| {
+            receive(
+                &s,
+                &r,
+                Payload {
+                    content: Some(text.into()),
+                    cwd: Some(garden.path.join("sub").to_string_lossy().to_string()),
+                    origin: Some("cli".into()),
+                    pane,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .doc
+        };
+        let got = send("# Where it stands\n\none", None);
+        assert_eq!(
+            got.desk,
+            Some(crate::desk::Origin {
+                id: desk.id,
+                name: "garden".into(),
+                slot: 0
+            })
+        );
+
+        let crate::desk::Opened::Pane(p) = s.open_pane(other.id, "/tmp", "", false).unwrap() else {
+            panic!("a pane")
+        };
+        let got = send("# From the other desk\n\ntwo", Some(p.id));
+        assert_eq!(
+            got.desk.map(|o| o.id),
+            Some(other.id),
+            "the pane's desk wins"
+        );
+    }
+
+    /// A `.git` made a folder too high -- D:\workspaces\.git, around the
+    /// reader's every project -- does not take a desk's documents: a desk on
+    /// a folder with no repository of its own is its own project, from its
+    /// panels and from a terminal in its folder. What an older snyvi filed
+    /// above the desk is moved there once, ✕ and all, and the project above
+    /// is left with nothing.
+    #[test]
+    fn a_repository_above_a_desk_does_not_take_its_documents() {
+        let (s, r, _d) = setup();
+        let ws = Dir::new("snyvi-recv-ws");
+        let flow = ws.path.join("taskflow");
+        std::fs::create_dir_all(ws.path.join(".git")).unwrap();
+        // A folder of projects: another repository beside the desk's.
+        std::fs::create_dir_all(ws.path.join("snyvi/.git")).unwrap();
+        std::fs::create_dir_all(flow.join("supabase")).unwrap();
+        let desk = s
+            .create_desk(&flow.to_string_lossy(), Some("taskflow"))
+            .unwrap();
+        let crate::desk::Opened::Pane(p) = s
+            .open_pane(desk.id, &flow.to_string_lossy(), "", false)
+            .unwrap()
+        else {
+            panic!("a pane")
+        };
+        let send = |text: &str, cwd: &std::path::Path, pane: Option<String>| {
+            receive(
+                &s,
+                &r,
+                Payload {
+                    content: Some(text.into()),
+                    cwd: Some(cwd.to_string_lossy().to_string()),
+                    origin: Some("cli".into()),
+                    pane,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .doc
+        };
+        assert_eq!(desk_project(&flow.to_string_lossy()).1, "taskflow");
+        let pasted = send(
+            "# Pasted
+
+one",
+            &flow,
+            Some(p.id.clone()),
+        );
+        assert_eq!(pasted.project, "taskflow");
+        let setup_md = send(
+            "# Supabase Setup
+
+two",
+            &flow.join("supabase"),
+            None,
+        );
+        assert_eq!(
+            setup_md.project_id, pasted.project_id,
+            "a terminal in the desk's folder files there too"
+        );
+        assert_eq!(setup_md.desk.as_ref().map(|o| o.id), Some(desk.id));
+
+        // As 1.36.1 filed them: under the folder above, still on the desk.
+        let above = crate::project::resolve(&flow)
+            .root
+            .to_string_lossy()
+            .to_string();
+        let on = crate::desk::Origin {
+            id: desk.id,
+            name: "taskflow".into(),
+            slot: 0,
+        };
+        for d in [&pasted, &setup_md] {
+            s.move_lineage(&d.id, &above, "workspaces", &on).unwrap();
+        }
+        assert!(s.set_desk_doc_off(desk.id, &setup_md.id, true).unwrap());
+        assert_eq!(refile_desks(&s).unwrap(), 2);
+        for d in [&pasted, &setup_md] {
+            assert_eq!(s.get(&d.id).unwrap().unwrap().project, "taskflow");
+        }
+        assert!(
+            s.projects().unwrap().iter().all(|p| p.name != "workspaces"),
+            "nothing left above"
+        );
+        assert_eq!(
+            s.desk_docs(desk.id, 10, true).unwrap().len(),
+            1,
+            "the ✕ stays"
+        );
+        assert_eq!(refile_desks(&s).unwrap(), 0, "once");
     }
 
     /// A friend's document about a repository the reader has: into the

@@ -157,6 +157,8 @@ pub(crate) struct AskBody {
     via: String,
     by: String,
     cmd: String,
+    /// `key` only: the key's name, so adding it settles the turn.
+    key: String,
     /// `ask` with several questions, as one card (#110): each one's text,
     /// options and recommended, in place of the body's own.
     questions: Vec<QuestionBody>,
@@ -170,17 +172,37 @@ pub(crate) struct QuestionBody {
     recommended: Option<i64>,
 }
 
+/// What else waits on the reader on the desk, told back to the agent that
+/// just asked (#174): it can see a card it repeats, or one a session before
+/// it left that is done, and remove that one (`pane_away`).
+fn also_open(app: &App, desk: i64, not: &[i64]) -> Vec<serde_json::Value> {
+    let waiting = app
+        .store
+        .clocked(|c, now| thread::waiting_on(c, desk, false, now))
+        .unwrap_or_default();
+    waiting
+        .iter()
+        .filter(|t| !not.contains(&t.id))
+        .map(|t| json!({ "id": t.id, "kind": t.kind, "text": t.text, "cmd": t.cmd, "stale": t.stale, "created_at": t.created_at }))
+        .collect()
+}
+
 fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
     match r {
         Ok(Asked::Turn(t)) => {
             threads_moved(app, desk);
-            (StatusCode::CREATED, Json(json!({ "turn": t }))).into_response()
+            notify_turn(app, &t, 0);
+            let open = also_open(app, desk, &[t.id]);
+            (StatusCode::CREATED, Json(json!({ "turn": t, "open": open }))).into_response()
         }
         Ok(Asked::Group(ts)) => {
             threads_moved(app, desk);
+            notify_turn(app, &ts[0], ts.len() - 1);
+            let ids: Vec<i64> = ts.iter().map(|t| t.id).collect();
+            let open = also_open(app, desk, &ids);
             (
                 StatusCode::CREATED,
-                Json(json!({ "turn": ts[0], "turns": ts })),
+                Json(json!({ "turn": ts[0], "turns": ts, "open": open })),
             )
                 .into_response()
         }
@@ -192,12 +214,13 @@ fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
             ),
         ),
         Ok(Asked::Empty) => refused(StatusCode::BAD_REQUEST, "it needs one sentence"),
-        Ok(Asked::BadKind) => refused(StatusCode::BAD_REQUEST, "kind is try, merge, key or run"),
+        Ok(Asked::BadKind) => refused(StatusCode::BAD_REQUEST, "kind is try, merge, key, run or do"),
         Ok(Asked::BadCmd) => refused(
             StatusCode::BAD_REQUEST,
             format!(
-                "run needs cmd: one line, at most {} bytes, with no control characters",
-                thread::CMD_BYTES
+                "run needs cmd, or steps with at least one command: each command one line, at most {} bytes, with no control characters; at most {} steps",
+                thread::CMD_BYTES,
+                thread::STEPS_MAX
             ),
         ),
         Ok(Asked::BadOptions) => refused(
@@ -207,7 +230,7 @@ fn asked(app: &App, desk: i64, r: anyhow::Result<Asked>) -> Response {
         Ok(Asked::Full) => refused(
             StatusCode::CONFLICT,
             format!(
-                "{} things are already waiting on the user on this desk; wait for an answer",
+                "{} things asked in the last half hour are already waiting on the user on this desk; wait for an answer",
                 thread::TURNS_PER_DESK
             ),
         ),
@@ -226,7 +249,7 @@ pub(crate) async fn pane_ask(
     pane_turn(app, headers, id, b, true).await
 }
 
-/// `hand_over`: try, merge, key or run.
+/// `hand_over`: try, merge, key, run or do.
 pub(crate) async fn pane_hand_over(
     State(app): S,
     headers: HeaderMap,
@@ -251,7 +274,10 @@ async fn pane_turn(
     // options, and a question is not a hand-over.
     let kind = if decide { "decide".to_string() } else { b.kind };
     if !decide && kind == "decide" {
-        return refused(StatusCode::BAD_REQUEST, "kind is try, merge, key or run");
+        return refused(
+            StatusCode::BAD_REQUEST,
+            "kind is try, merge, key, run or do",
+        );
     }
     let a = Ask {
         kind,
@@ -259,10 +285,14 @@ async fn pane_turn(
         options: b.options,
         recommended: b.recommended.unwrap_or(-1),
         link: b.link,
-        via: b.via,
+        // Only a question can be the mod's mirror of Claude's own: a
+        // hand-over said to be a dialog would be kept out of On you, where
+        // the reader is the only one who can settle it (B7).
+        via: if decide { b.via } else { String::new() },
         by: b.by,
         pane: id,
         cmd: b.cmd,
+        key_name: b.key,
     };
     let desk = placed.desk_id;
     // Several questions are one card; a hand-over has no questions to put.
@@ -287,6 +317,76 @@ async fn pane_turn(
     }
     let r = app.store.clocked(|c, now| thread::ask(c, desk, &a, now));
     asked(&app, desk, r)
+}
+
+/// `settle_asks`: the agent says the questions it put on On you were
+/// answered in the conversation (B1). Only its own, only questions.
+pub(crate) async fn pane_settle(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    let desk = placed.desk_id;
+    match app
+        .store
+        .clocked(|c, now| thread::settle_asks(c, desk, &id, now))
+    {
+        Ok(n) => {
+            if n > 0 {
+                threads_moved(&app, desk);
+            }
+            Json(json!({ "settled": n })).into_response()
+        }
+        Err(e) => err(e),
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct AwayBody {
+    turn: i64,
+    #[serde(default)]
+    why: String,
+}
+
+/// `remove_card`: an agent on the desk removes a card from On you, saying why
+/// (#174). Any waiting turn on its own desk, never another desk's; the why
+/// is said in the tray with Bring back, and nothing is deleted.
+pub(crate) async fn pane_away(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<AwayBody>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    if b.why.trim().is_empty() {
+        return refused(
+            StatusCode::BAD_REQUEST,
+            "say why it is no longer on the user",
+        );
+    }
+    let desk = placed.desk_id;
+    let who = format!("panel {}", placed.pane.slot);
+    match app
+        .store
+        .clocked(|c, now| thread::put_away(c, desk, b.turn, &who, &b.why, now))
+    {
+        Ok(Some(t)) => {
+            threads_moved(&app, desk);
+            Json(json!({ "turn": t })).into_response()
+        }
+        Ok(None) => refused(
+            StatusCode::NOT_FOUND,
+            "no card of that id is waiting on the user on this desk",
+        ),
+        Err(e) => err(e),
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -390,6 +490,10 @@ pub(crate) async fn pane_seen(
         Err(no) => return *no,
     };
     let desk = placed.desk_id;
+    let mut b = b;
+    if !b.merged.trim().is_empty() {
+        b.mine = merged_by_reader(&app, desk, &id, &b).await;
+    }
     match app
         .store
         .clocked(|c, now| thread::seen(c, desk, &id, &b, now))
@@ -405,6 +509,40 @@ pub(crate) async fn pane_seen(
         Ok(None) => Json(json!({ "thread": null })).into_response(),
         Err(e) => err(e),
     }
+}
+
+/// Whether the merge the mod saw was the reader's own: who merged it, as
+/// the mod's gh said or the daemon's own asks, is who gh is signed in as
+/// here. Not knowing is not the reader's: the notes then land for their
+/// check rather than tick (#167). Off the lock and the runtime.
+async fn merged_by_reader(app: &Arc<App>, desk: i64, pane: &str, b: &Seen) -> bool {
+    let Ok(Some(root)) = app.store.desk(desk).map(|d| d.map(|d| d.root)) else {
+        return false;
+    };
+    let pr = match thread::pr_number(&b.pr) {
+        Some(n) => n,
+        None => app
+            .store
+            .clocked(|c, _| thread::of_pane(c, desk, pane))
+            .ok()
+            .flatten()
+            .map(|t| t.pr)
+            .unwrap_or_default(),
+    };
+    let said = b.merged_by.trim().to_string();
+    tokio::task::spawn_blocking(move || {
+        let dir = std::path::Path::new(&root);
+        let by = if said.is_empty() {
+            crate::gh::view(dir, &pr)
+                .map(|p| p.merged_by)
+                .unwrap_or_default()
+        } else {
+            said
+        };
+        !by.is_empty() && crate::gh::viewer(dir).is_some_and(|me| me.eq_ignore_ascii_case(&by))
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// The band's line above the mod's prompt: the pane's thread and what is
@@ -442,7 +580,7 @@ pub(crate) fn band_line(t: Option<&thread::Thread>, waiting: &[thread::Turn]) ->
         } else {
             String::new()
         };
-        parts.push(format!("your turn: {what}{more}"));
+        parts.push(format!("on you: {what}{more}"));
     }
     parts.join(" · ")
 }
@@ -475,10 +613,13 @@ pub(crate) async fn pane_band(
 
 /// The band's JSON and its tag.
 fn band_now(app: &App, desk: i64, pane: &str) -> anyhow::Result<(serde_json::Value, String)> {
-    let (t, waiting) = app.store.clocked(|c, _| {
+    let (t, waiting) = app.store.clocked(|c, now| {
         let t = thread::of_pane(c, desk, pane)?;
-        // The mod's own dialog is on screen already; the band names the rest.
-        let waiting = thread::waiting_on(c, desk, false)?;
+        // The mod's own dialog is on screen already; the band names the
+        // rest, while it is fresh: a turn that went quiet is not "on you"
+        // above every prompt for days.
+        let mut waiting = thread::waiting_on(c, desk, false, now)?;
+        waiting.retain(|w| !w.stale);
         Ok((t, waiting))
     })?;
     let body = json!({
@@ -619,23 +760,26 @@ pub(crate) async fn pane_answer_turn(
     let desk = placed.desk_id;
     let r = app.store.clocked(|c, now| {
         let Some(t) = thread::turn(c, desk, turn)? else {
-            return Ok(false);
+            return Ok(None);
         };
         if t.pane != id {
-            return Ok(false);
+            return Ok(None);
         }
         if b.drop {
-            return thread::drop_dialog(c, desk, turn, now);
+            return Ok(thread::drop_dialog(c, desk, turn, now)?.then_some(None));
         }
-        Ok(thread::answer(c, desk, turn, &b.answer, "panel", now)?.is_some())
+        Ok(thread::answer(c, desk, turn, &b.answer, "panel", now)?.map(Some))
     });
     match r {
-        Ok(true) => {
+        Ok(Some(answered)) => {
+            if let Some(t) = answered {
+                log_answered(&app, &t);
+            }
             threads_moved(&app, desk);
             Json(json!({ "ok": true })).into_response()
         }
         // Answered in snyvi first: the first answer stands.
-        Ok(false) => StatusCode::CONFLICT.into_response(),
+        Ok(None) => StatusCode::CONFLICT.into_response(),
         Err(e) => err(e),
     }
 }
@@ -679,6 +823,184 @@ pub(crate) async fn pane_note(
 /// How long an answered hand-over stays on the rail after its answer.
 const ANSWERED_SHOWN: i64 = 24 * 3600;
 
+/// How often one thread's PR, or its branch's merge, is looked for.
+const MERGE_LOOK: Duration = Duration::from_secs(300);
+
+/// What one sweep learned of one thread, off the lock.
+#[derive(Default)]
+struct Looked {
+    id: i64,
+    /// The branch its own worktree has out, when that differs from the row.
+    branch: Option<String>,
+    /// Its PR, found by its branch, when it had none.
+    found: Option<String>,
+    pr: Option<crate::gh::Pr>,
+    viewer: Option<String>,
+    /// git's guess at a merge, when GitHub could not be asked.
+    git: Option<(String, i64)>,
+}
+
+/// A thread's PR, read from GitHub, not guessed (#167). Each thread at most
+/// every MERGE_LOOK, off the store's lock and the runtime, before the rail
+/// reads its threads, so a PR merged on GitHub's page, from another
+/// checkout or with no panel open is heard as surely as one the panel's mod
+/// watched:
+///
+/// - with a PR: `gh pr view` says open, merged or closed, the checks, the
+///   merge and who made it; the reader's own merge ticks the thread's notes,
+///   anyone else's lands them for the reader's check (`thread::pr_facts`);
+/// - on a branch with no PR: the PR from that branch, if there is one now;
+/// - once, a thread from before 1.43 that counted as merged: its own
+///   worktree's branch and that branch's PR put right what a drifted branch
+///   had credited it with;
+/// - no gh, or no answer: git's guess at the branch's merge, which ships the
+///   thread and ticks nothing (`thread::landed`), as before.
+async fn merges_unseen(app: Arc<App>, desk: i64) {
+    static LOOKED: std::sync::Mutex<Vec<(i64, std::time::Instant)>> =
+        std::sync::Mutex::new(Vec::new());
+    let Ok(open) = app.store.clocked(|c, _| thread::sweep_due(c, desk)) else {
+        return;
+    };
+    let due: Vec<_> = {
+        let mut looked = LOOKED.lock().unwrap_or_else(|e| e.into_inner());
+        looked.retain(|(_, at)| at.elapsed() < MERGE_LOOK);
+        let due: Vec<_> = open
+            .into_iter()
+            .filter(|d| !looked.iter().any(|(l, _)| *l == d.id))
+            .collect();
+        looked.extend(due.iter().map(|d| (d.id, std::time::Instant::now())));
+        due
+    };
+    if due.is_empty() {
+        return;
+    }
+    let found = tokio::task::spawn_blocking(move || due.into_iter().map(look).collect::<Vec<_>>())
+        .await
+        .unwrap_or_default();
+    let moved = app
+        .store
+        .clocked(|c, now| {
+            let mut moved = false;
+            for l in &found {
+                moved |= file_looked(c, desk, l, now)?;
+            }
+            Ok(moved)
+        })
+        .unwrap_or(false);
+    if moved {
+        threads_moved(&app, desk);
+    }
+}
+
+/// Ask GitHub, or git, about one thread. Blocking.
+fn look(d: thread::Due) -> Looked {
+    let dir = std::path::Path::new(&d.dir);
+    let mut l = Looked {
+        id: d.id,
+        ..Looked::default()
+    };
+    if d.pr_state.is_empty() && d.own {
+        l.branch = crate::git::branch_of(dir).filter(|b| *b != d.branch && thread::branch_ok(b));
+    }
+    let branch = l.branch.clone().unwrap_or_else(|| d.branch.clone());
+    let pr = if d.pr.is_empty() && !branch.is_empty() {
+        l.found = crate::gh::by_head(dir, &branch);
+        l.found.clone().unwrap_or_default()
+    } else {
+        d.pr.clone()
+    };
+    if !pr.is_empty() {
+        l.pr = crate::gh::view(dir, &pr);
+        if l.pr.as_ref().is_some_and(|p| p.state == "merged") {
+            l.viewer = crate::gh::viewer(dir);
+        }
+    }
+    if l.pr.is_none() && !d.merged && !branch.is_empty() {
+        l.git = crate::git::merge_of(dir, &branch);
+    }
+    l
+}
+
+/// What `look` learned, filed. Whether a thread changed.
+fn file_looked(c: &rusqlite::Connection, desk: i64, l: &Looked, now: i64) -> anyhow::Result<bool> {
+    let mut moved = thread::repair_branch(
+        c,
+        desk,
+        l.id,
+        l.branch.as_deref().unwrap_or(""),
+        l.found.as_deref().unwrap_or(""),
+    )?;
+    let Some(t) = thread::get(c, desk, l.id)? else {
+        return Ok(moved);
+    };
+    if let Some(p) = &l.pr {
+        let mine = !p.merged_by.is_empty()
+            && l.viewer
+                .as_deref()
+                .is_some_and(|me| me.eq_ignore_ascii_case(&p.merged_by));
+        moved |= thread::pr_facts(c, &t, &thread::PrFacts::from(p), mine, "", now)?;
+    } else if let Some((m, at)) = &l.git {
+        moved |= thread::landed(c, desk, l.id, m, *at)?;
+    } else if t.pr.is_empty() {
+        moved |= thread::no_pr(c, desk, l.id)?;
+    }
+    Ok(moved)
+}
+
+/// A line's work went out by another branch than its thread's -- a release
+/// branch that gathered several worktrees, a branch reused, a worktree with
+/// none -- and no merge of its thread's branch ever came: #129-#131 sat at
+/// "planned" on 1.36 with their commit in 1.35. So the commits on main are
+/// read too, for what they say they finish ("(#129-#131)", `git::named_in`),
+/// and a line one names lands: "check it", with the commit, for the reader
+/// to check (`desk::land_notes`). As often as the merges, off the lock.
+async fn notes_landed(app: &Arc<App>, desk: i64) {
+    static LOOKED: std::sync::Mutex<Vec<(i64, std::time::Instant)>> =
+        std::sync::Mutex::new(Vec::new());
+    {
+        let mut looked = LOOKED.lock().unwrap_or_else(|e| e.into_inner());
+        looked.retain(|(_, at)| at.elapsed() < MERGE_LOOK);
+        if looked.iter().any(|(d, _)| *d == desk) {
+            return;
+        }
+        looked.push((desk, std::time::Instant::now()));
+    }
+    let Ok(Some(root)) = app.store.desk(desk).map(|d| d.map(|d| d.root)) else {
+        return;
+    };
+    let Ok(open) = app.store.clocked(|c, _| crate::desk::landable(c, desk)) else {
+        return;
+    };
+    let Some(since) = open.iter().map(|(_, t)| *t).min() else {
+        return;
+    };
+    let named = tokio::task::spawn_blocking(move || {
+        crate::git::notes_named(std::path::Path::new(&root), since)
+    })
+    .await
+    .unwrap_or_default();
+    // Newest first from git: the latest commit that names a line, made after
+    // the line was written (or reopened), is the one it lands with.
+    let mut found: Vec<(i64, String, i64)> = Vec::new();
+    for (id, commit, at) in named {
+        let fits = open.iter().any(|(n, t)| *n == id && at >= *t);
+        if fits && !found.iter().any(|(f, ..)| *f == id) {
+            found.push((id, commit, at));
+        }
+    }
+    if found.is_empty() {
+        return;
+    }
+    if app
+        .store
+        .clocked(|c, _| crate::desk::land_notes(c, desk, &found))
+        .unwrap_or(0)
+        > 0
+    {
+        notes_moved(app, desk);
+    }
+}
+
 /// A desk's threads, its turns and its waiting suggestions: the rail's three
 /// sections in one read.
 pub(crate) async fn desk_threads(
@@ -690,18 +1012,27 @@ pub(crate) async fn desk_threads(
     if let Some(no) = refuse_desk(&app, &headers, &q) {
         return no;
     }
+    // GitHub can take seconds to answer: the rail is not held for it. What
+    // the sweep finds comes as the `desknotes` event, and the rail reads again.
+    tokio::spawn(merges_unseen(app.clone(), id));
+    notes_landed(&app, id).await;
     let r = app.store.clocked(|c, now| {
+        // What has waited three days is put away first (`thread::retire`).
+        if thread::retire(c, now)? > 0 {
+            threads_moved(&app, id);
+        }
         Ok((
             thread::for_desk(c, id)?,
-            thread::turns(c, id, now - ANSWERED_SHOWN)?,
+            thread::turns(c, id, now - ANSWERED_SHOWN, now)?,
             thread::suggestions(c, id)?,
+            thread::put_away_lately(c, id, now)?,
         ))
     });
     match r {
-        Ok((threads, turns, suggestions)) => {
-            Json(json!({ "threads": threads, "turns": turns, "suggestions": suggestions }))
-                .into_response()
-        }
+        Ok((threads, turns, suggestions, away)) => Json(json!({
+            "threads": threads, "turns": turns, "suggestions": suggestions, "away": away,
+        }))
+        .into_response(),
         Err(e) => err(e),
     }
 }
@@ -747,6 +1078,8 @@ fn row_act(app: &Arc<App>, id: i64, what: &str, row: i64, act: &str, body: &[u8]
             ("threads", "restore") => thread::restore(c, id, row)?,
             ("turns", "remove") => thread::remove_turn(c, id, row, now)?,
             ("turns", "restore") => thread::restore_turn(c, id, row)?,
+            // Send now typed it into the panel: told there, not again.
+            ("turns", "sent") => thread::sent_turn(c, id, row, now)?,
             // Not now on a panel's box is the reader's answer: later pushes
             // of it are refused, until its Undo takes the answer back.
             ("suggestions", "dismiss") => match thread::settle(c, id, row, "dismissed", now)? {
@@ -893,12 +1226,31 @@ pub(crate) async fn desk_answer_turn(
         .clocked(|c, now| thread::answer(c, id, t, &b.answer, "snyvi", now))
     {
         Ok(Some(turn)) => {
+            log_answered(&app, &turn);
             threads_moved(&app, id);
             Json(json!({ "turn": turn })).into_response()
         }
         Ok(None) => refused(StatusCode::CONFLICT, "it was answered already, or put away"),
         Err(e) => err(e),
     }
+}
+
+/// An answered turn, in Lately: what was asked and what the reader said, so
+/// "what did I tell it?" has an answer once the card is gone. The reader's
+/// own doing, so it lights nothing (`lately::unseen`).
+fn log_answered(app: &App, t: &thread::Turn) {
+    lately_log(
+        app,
+        crate::lately::New {
+            kind: "answered",
+            text: t.text.clone(),
+            who: t.by.clone(),
+            from: crate::receive::pane_origin(&app.store, Some(t.pane.as_str())),
+            data: json!({ "answer": t.answer, "turn": t.id, "desk": t.desk_id, "kind": t.kind }),
+            lit: false,
+            ..Default::default()
+        },
+    );
 }
 
 #[cfg(test)]
@@ -921,7 +1273,7 @@ mod tests {
         };
         assert_eq!(
             band_line(Some(&t), &[w.clone(), w]),
-            "▸ Home + friends · building · claude/asides · 3 commits · your turn: Try it on 7871 (+1)"
+            "▸ Home + friends · building · claude/asides · 3 commits · on you: Try it on 7871 (+1)"
         );
         assert_eq!(band_line(None, &[]), "");
     }

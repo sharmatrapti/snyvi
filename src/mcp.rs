@@ -5,7 +5,7 @@
 //! suggest_desk_note, offering one for the reader to keep, offer_document, asking that one go to a friend,
 //! leave_off, saying where the work was left, and name_panel, which names the
 //! panel the agent runs in; and the #90 six, filing the work as a thread and
-//! putting what only the reader can do on their Your turn (`threads`). And four prompts, the loop's own slash commands
+//! putting what only the reader can do on their On you list (`threads`). And four prompts, the loop's own slash commands
 //! (`PROMPTS`). Newline-delimited JSON-RPC 2.0, as the MCP stdio transport
 //! specifies.
 
@@ -15,6 +15,7 @@ use crate::receive::Payload;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
+mod cards;
 mod threads;
 mod widgets;
 
@@ -30,7 +31,8 @@ or a structure rather than describing it. Images in Markdown show only when the 
 `![take 2](take2.mp4)`, so several takes can be shown in one document to choose from.\n\
 - Something visual or interactive -- a mockup, a comparison, a chart, a clickable prototype: one \
 self-contained HTML file. It opens as a real page and its scripts run, but it cannot make network requests, \
-so inline its CSS, JS and images (data: URIs); a <script src> from a CDN does load.\n\
+so inline its CSS, JS and images (data: URIs); a <script src> from a CDN does load. Files beside it are not \
+loaded: a page of pictures or clips from beside it goes as Markdown, as above.\n\
 - A screenshot or a recording: the image (png, jpg, gif, webp, svg, avif) or the video or audio file, by `path`.\n\
 - A PDF you produced: the PDF, by `path`.\n\
 - Source files and diffs are highlighted; a diff can be read split.\n\n\
@@ -45,8 +47,8 @@ a question. Ground every one in something that happened here -- a note, a commit
 not send it: a line that reads the person rather than the record is wrong the first time it is slightly off. Use \
 it rarely -- a few times in a long session at most, never as a status update, never a summary of a document you \
 just sent, never advice about anything but this project, never mid-task. One or two plain sentences (at most 280 \
-characters), warm and specific, no emoji. It glows quietly at the foot of snyvi's sidebar until they look; sent \
-from a snyvi panel, a click on it brings them to that panel, so a reply is theirs to make. It is not a to-do and \
+characters), warm and specific, no emoji. It rises quietly in snyvi's corner and is kept there until they \
+remove it; sent from a snyvi panel, a click on it brings them to that panel, so a reply is theirs to make. It is not a to-do and \
 goes on no list of the user's. Do not mention the aside to the user in your reply; it speaks for itself. If snyvi \
 answers that asides are off, the user turned them off: do not send another.";
 
@@ -62,20 +64,25 @@ desk's list and no other. A line can carry pictures -- a screenshot of what it i
 files you can open and look at.";
 
 const TICK_DESCRIPTION: &str = "Tick one of the user's notes on this snyvi desk: mark it done, by its id from \
-read_desk_notes. Tick a note only when the work it names is finished in this session and you have checked it -- \
+read_desk_notes, or several by `ids` when the same work finished each. Tick a note only when the work it names is finished in this session and you have checked it -- \
 built, tested, merged or whatever finished means for it -- or when the user asks you to. Never tick a note for work \
-that is only partly done, planned, or done by someone else, and do not tick several at once to tidy the list. The \
+that is only partly done, planned, or done by someone else, and do not tick notes to tidy the list. The \
 tick shows your name beside the line, and the user can untick it. If the work went into a commit, pass its hash as \
 `commit` (as git log prints it); if you sent a document about it with send_document, pass its id as `about`; and \
 if the finished work can be seen somewhere -- a pull request, a deploy, a store page -- pass that URL as \
-`evidence`. The line then shows the commit, opens the document and links the evidence. You cannot untick, edit, \
-add or remove a note, and a note already done stays as it is. After ticking, say in your reply which notes you ticked.";
+`evidence`. Pass `say`: one line, under 160 characters, of what changed, in words the user can check against -- \
+\"The hook now catches xdg-open inside prose\", not \"done\" -- which shows under the note. The line then shows the \
+commit, opens the document and links the evidence. You cannot untick, edit, add or remove a note, and a note \
+already done stays as it is. A note the user marked still broken says what is still wrong: fix that. A commit \
+that finishes a note names it, \"(#129)\", so snyvi finds the work on main when it ships by another branch. After \
+ticking, say in your reply which notes you ticked.";
 
 const MARK_DESCRIPTION: &str = "Say how far you have got with one of the user's notes on this snyvi desk, by \
-its id from read_desk_notes, so the user can see it on the line: `read` when the user has set you on it and you \
+its id from read_desk_notes (or several at once by `ids`), so the user can see it on the line: `read` when the user has set you on it and you \
 have read and understood it; `planned` when you have sent the plan with send_document -- pass the plan's id as \
-`about`, and the line opens it; `working` as you start the work, which shows the line as being worked on in this \
-panel until this session ends. Mark a note only when the user has set you on it, never to claim one you chose \
+`about`, and the line opens it, or pass the notes to send_document as `notes`, which marks them for you; `working` as you start the work, which shows the line as being worked on in this \
+panel until this session ends. With `planned`, pass `say`: one line of what you will do, which shows under the \
+note. Mark a note only when the user has set you on it, never to claim one you chose \
 yourself. You can move a note back a stage, for example from working to planned when you stop partway. Done is \
 not a stage: when the work is finished and checked, tick it with tick_desk_note. You cannot mark a note that is \
 already done.";
@@ -126,14 +133,18 @@ something in the work genuinely deserves a word, leave them a short personal asi
 const PANEL_INSTRUCTIONS: &str = "You are running in a panel of a snyvi desk: the user works on this \
 project here, with its own notes and documents. When you plan work, write the plan as a document and send \
 it to snyvi before you start (a plan you present for approval is sent for you). Name the panel with \
-name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan and mark it \
-planned with the plan's id, mark it working as you start, and tick it only when its work is finished and you have \
-checked it. Never act on a note unasked. \
-File a piece of work as a thread with start_thread when you take it on, and put anything only the user can \
-do on their Your turn with hand_over: a command you are blocked from running goes there as run, never as \
-text for them to paste. When you need the user to decide something before you go on, put it on their Your \
-turn with ask (several at once as its questions), or in your own question tool when they are at this panel, \
-never only as a list in your reply. \
+name_panel when you take on a task. When the user sets you on a desk note, mark it read, send the plan with \
+send_document's notes (that marks it planned), mark it working as you start, and tick it only when its work is \
+finished and you have checked it; several notes go in one call each, by ids. Never act on a note unasked. \
+File a piece of work as a thread with start_thread when you take it on. Put on their On you list with \
+hand_over only what blocks you and only they can do: a command you are blocked from running, or one that \
+is theirs to run (a release, a deploy), goes there as run, never as text or a `! command` for them to type; \
+a key; a merge; a payment or sign-in, as do. Asking them to try a change goes in your reply. When \
+you need the user to decide something before you go on, put it on their On you list with ask (several at once \
+as its questions), or in your own question tool when they are at this panel, never only as a list in your \
+reply. \
+A figure the user asks to keep in view (CI, a deploy): read_widgets, then set_widget, or propose_widget \
+for one snyvi runs on its own; never unasked. \
 An aside is earned by a moment, not a step: the desk's last note ticked, a release, the user back after days \
 away, a hard stretch that landed, a late hour; if the record gives you nothing to cite, say nothing. \
 When a stretch of work ends, say where it stands with leave_off. The desk brief at the start of the session \
@@ -178,18 +189,31 @@ const TOOLS: &[(&str, Tool)] = &[
     ("move_thread", Session::move_thread),
     ("ask", Session::ask),
     ("hand_over", Session::hand_over),
+    ("settle_asks", Session::settle_asks),
+    ("remove_card", Session::remove_card),
     ("suggest_panel", Session::suggest_panel),
     ("suggest_desk", Session::suggest_desk),
+    ("read_widgets", Session::read_widgets),
     ("set_widget", Session::set_widget),
     ("propose_widget", Session::propose_widget),
+    ("add_to_gallery", Session::add_to_gallery),
+    ("show_card", Session::show_card),
+    ("clear_card", Session::clear_card),
+    ("pin_link", Session::pin_link),
 ];
 
 pub fn run(paths: Paths) -> anyhow::Result<()> {
     let mut s = Session {
         paths,
-        cwd: std::env::current_dir()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string()),
+        // The session's project, as the hook files by (`hook::project_dir`),
+        // so a draft and the agent's own send of it are one document.
+        cwd: crate::hook::project_dir()
+            .filter(|d| !d.trim().is_empty())
+            .or_else(|| {
+                std::env::current_dir()
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            }),
         key: session_key(),
         pane: std::env::var("SNYVI_SESSION")
             .ok()
@@ -247,6 +271,7 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
         ]);
         tools.extend(threads::specs());
         tools.extend(widgets::specs());
+        tools.extend(cards::specs());
         if friends != Some(false) {
             tools.push(offer_spec());
             tools.push(offer_line_spec());
@@ -258,6 +283,54 @@ fn tools(panel: bool, friends: Option<bool>) -> Vec<Value> {
 /// A tool's answer: one text for the agent, and whether it is an error.
 fn said(text: impl Into<String>, bad: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text.into() }], "isError": bad })
+}
+
+/// The notes a call names (#121): `ids`, a list, and `id`, one, so a
+/// batch is one call rather than one a note. Each goes on its own, through
+/// the same per-note route as ever, and one that fails does not stop the
+/// rest; Err when the call names none at all.
+#[allow(clippy::type_complexity)]
+fn each_note(
+    args: &Value,
+    mut one: impl FnMut(i64) -> anyhow::Result<()>,
+) -> Result<(Vec<i64>, Vec<(i64, String)>), &'static str> {
+    let mut ids: Vec<i64> = args
+        .get("ids")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_i64).collect())
+        .unwrap_or_default();
+    ids.extend(args.get("id").and_then(Value::as_i64));
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|n| seen.insert(*n));
+    if ids.is_empty() {
+        return Err("needs the note's id, or ids for several, numbers from read_desk_notes.");
+    }
+    let (mut done, mut failed) = (vec![], vec![]);
+    for n in ids {
+        match one(n) {
+            Ok(()) => done.push(n),
+            Err(e) => failed.push((n, e.to_string())),
+        }
+    }
+    Ok((done, failed))
+}
+
+/// "Note 117" or "Notes 117, 120 and 121".
+fn notes_named(ids: &[i64]) -> String {
+    let n: Vec<String> = ids.iter().map(i64::to_string).collect();
+    match n.as_slice() {
+        [one] => format!("Note {one}"),
+        [rest @ .., last] => format!("Notes {} and {last}", rest.join(", ")),
+        [] => String::new(),
+    }
+}
+
+/// What did not go, note by note, after what did.
+fn failed_said(failed: &[(i64, String)], verb: &str) -> String {
+    failed
+        .iter()
+        .map(|(n, e)| format!(" snyvi did not {verb} note {n}: {e}"))
+        .collect()
 }
 
 /// A string argument, trimmed; empty when it is missing.
@@ -350,11 +423,46 @@ impl Session {
             self.pane.as_deref(),
         ) {
             Ok(sent) => json!({
-                "content": [{ "type": "text", "text": sent.say() }],
+                "content": [{ "type": "text", "text": format!("{}{}", sent.say(), self.planned_by(args, &sent.id)) }],
                 "structuredContent": { "id": sent.id, "url": sent.url, "app_url": sent.app_url, "window": sent.window, "title": sent.title },
                 "isError": false
             }),
             Err(e) => said(format!("snyvi could not receive the document: {e}"), true),
+        }
+    }
+
+    /// A plan sent for desk notes marks them planned with itself (#121): the
+    /// plan and its marks in one call rather than one a note. Said after
+    /// what the send said; nothing when the send named no notes.
+    fn planned_by(&self, args: &Value, doc: &str) -> String {
+        if args
+            .get("notes")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+        {
+            return String::new();
+        }
+        let Some(p) = self.pane.as_deref() else {
+            return " The notes were not marked: this session is not running in a snyvi desk."
+                .into();
+        };
+        let ids = json!({ "ids": args["notes"] });
+        match each_note(&ids, |n| {
+            client::mark_desk_note(&self.paths, p, n, "planned", self.by(), doc, "").map(|_| ())
+        }) {
+            Err(why) => format!(" The notes were not marked: notes {why}"),
+            Ok((done, failed)) => {
+                let marked = if done.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " {} {} marked planned with it.",
+                        notes_named(&done),
+                        if done.len() == 1 { "is" } else { "are" }
+                    )
+                };
+                format!("{marked}{}", failed_said(&failed, "mark"))
+            }
         }
     }
 
@@ -391,60 +499,75 @@ impl Session {
     }
 
     fn tick_desk_note(&self, args: &Value) -> Value {
-        let note = args.get("id").and_then(Value::as_i64);
         let (commit, about, evidence) = (
             arg(args, "commit"),
             arg(args, "about"),
             arg(args, "evidence"),
         );
-        match (self.pane.as_deref(), note) {
-            (None, _) => said(
+        let Some(p) = self.pane.as_deref() else {
+            return said(
                 "This session is not running in a snyvi desk, so there is no desk list to tick.",
                 true,
+            );
+        };
+        let mut desk = None;
+        let body = json!({ "by": self.by(), "commit": commit, "about": about, "evidence": evidence, "say": arg(args, "say") });
+        let did = each_note(args, |n| {
+            client::tick_desk_note(&self.paths, p, n, &body).map(|v| {
+                desk = v.get("desk").and_then(Value::as_str).map(str::to_string);
+            })
+        });
+        match did {
+            Err(why) => said(format!("tick_desk_note {why}"), true),
+            Ok((done, failed)) => said(
+                format!(
+                    "{}{}",
+                    if done.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "Ticked {} on the desk \"{}\". Tell the user which notes you ticked.",
+                            notes_named(&done).to_lowercase(),
+                            desk.as_deref().unwrap_or("this desk")
+                        )
+                    },
+                    failed_said(&failed, "tick")
+                )
+                .trim_start(),
+                done.is_empty(),
             ),
-            (_, None) => said(
-                "tick_desk_note needs the note's id, a number from read_desk_notes.",
-                true,
-            ),
-            (Some(p), Some(n)) => match client::tick_desk_note(
-                &self.paths,
-                p,
-                n,
-                self.by(),
-                &commit,
-                &about,
-                &evidence,
-            ) {
-                Ok(v) => said(
-                    format!(
-                        "Ticked note {n} on the desk \"{}\". Tell the user which note you ticked.",
-                        v.get("desk").and_then(Value::as_str).unwrap_or("this desk")
-                    ),
-                    false,
-                ),
-                Err(e) => said(format!("snyvi did not tick the note: {e}"), true),
-            },
         }
     }
 
     fn mark_desk_note(&self, args: &Value) -> Value {
-        let note = args.get("id").and_then(Value::as_i64);
-        let (stage, about) = (arg(args, "stage"), arg(args, "about"));
-        match (self.pane.as_deref(), note) {
-            (None, _) => said(
+        let (stage, about, say) = (arg(args, "stage"), arg(args, "about"), arg(args, "say"));
+        let Some(p) = self.pane.as_deref() else {
+            return said(
                 "This session is not running in a snyvi desk, so there is no desk list to mark.",
                 true,
+            );
+        };
+        match each_note(args, |n| {
+            client::mark_desk_note(&self.paths, p, n, &stage, self.by(), &about, &say).map(|_| ())
+        }) {
+            Err(why) => said(format!("mark_desk_note {why}"), true),
+            Ok((done, failed)) => said(
+                format!(
+                    "{}{}",
+                    if done.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "{} {} marked {stage}.",
+                            notes_named(&done),
+                            if done.len() == 1 { "is" } else { "are" }
+                        )
+                    },
+                    failed_said(&failed, "mark")
+                )
+                .trim_start(),
+                done.is_empty(),
             ),
-            (_, None) => said(
-                "mark_desk_note needs the note's id, a number from read_desk_notes.",
-                true,
-            ),
-            (Some(p), Some(n)) => {
-                match client::mark_desk_note(&self.paths, p, n, &stage, self.by(), &about) {
-                    Ok(_) => said(format!("Note {n} is marked {stage}."), false),
-                    Err(e) => said(format!("snyvi did not mark the note: {e}"), true),
-                }
-            }
         }
     }
 
@@ -548,7 +671,8 @@ fn tool_spec() -> Value {
                 "content": { "type": "string", "description": "Inline document text, for documents that are not files." },
                 "title": { "type": "string", "description": "Title shown in the viewer. Defaults to the first heading or the file name." },
                 "workflow": { "type": "string", "description": "Optional name grouping related documents, e.g. 'auth refactor'. Defaults to this session." },
-                "lang": { "type": "string", "description": "Format hint when it cannot be inferred from the path: md, diff, rs, py, ts, ..." }
+                "lang": { "type": "string", "description": "Format hint when it cannot be inferred from the path: md, diff, rs, py, ts, ..." },
+                "notes": { "type": "array", "items": { "type": "integer" }, "description": "When this is the plan for desk notes the user set you on: their ids, from read_desk_notes. Each is marked planned with this document, as mark_desk_note would." }
             },
             "additionalProperties": false
         },
@@ -593,11 +717,12 @@ fn tick_spec() -> Value {
             "type": "object",
             "properties": {
                 "id": { "type": "integer", "description": "The note's id, from read_desk_notes." },
+                "ids": { "type": "array", "items": { "type": "integer" }, "description": "Several notes' ids at once, in place of id, when the same work finished each of them." },
                 "commit": { "type": "string", "description": "Optional hash of the commit the work went into, as git log prints it (7 to 40 hex digits)." },
                 "about": { "type": "string", "description": "Optional id of a document sent with send_document (its result's structuredContent.id) about the work; the line opens it." },
-                "evidence": { "type": "string", "description": "Optional http(s) URL where the finished work can be seen: a pull request, a deploy, a store page." }
+                "evidence": { "type": "string", "description": "Optional http(s) URL where the finished work can be seen: a pull request, a deploy, a store page." },
+                "say": { "type": "string", "description": "One line, under 160 characters, of what changed, shown under the note for the user to check against." }
             },
-            "required": ["id"],
             "additionalProperties": false
         },
         "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
@@ -613,10 +738,12 @@ fn mark_spec() -> Value {
             "type": "object",
             "properties": {
                 "id": { "type": "integer", "description": "The note's id, from read_desk_notes." },
+                "ids": { "type": "array", "items": { "type": "integer" }, "description": "Several notes' ids at once, in place of id, all to the same stage." },
                 "stage": { "type": "string", "enum": ["read", "planned", "working"], "description": "read, planned or working. Done is tick_desk_note." },
-                "about": { "type": "string", "description": "The id of the plan sent with send_document (its result's structuredContent.id). Needed with planned." }
+                "about": { "type": "string", "description": "The id of the plan sent with send_document (its result's structuredContent.id). Needed with planned." },
+                "say": { "type": "string", "description": "Optional one line, under 160 characters, about the note: with planned, what you will do. Shown under the note." }
             },
-            "required": ["id", "stage"],
+            "required": ["stage"],
             "additionalProperties": false
         },
         "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
@@ -646,7 +773,7 @@ fn leave_off_spec() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "text": { "type": "string", "description": "One sentence, at most 200 characters: the next step and its condition." },
+                "text": { "type": "string", "description": "One short sentence, best under 80 characters (at most 200): the next step and its condition. The desk's head shows about 40." },
                 "about": { "type": "string", "description": "Optional id of a document sent with send_document that the next step is written up in." }
             },
             "required": ["text"],
@@ -678,7 +805,7 @@ struct Prompt {
     text: &'static str,
 }
 
-const PROMPTS: [Prompt; 4] = [
+const PROMPTS: [Prompt; 5] = [
     Prompt {
         name: "wrap-up",
         title: "Wrap up",
@@ -721,6 +848,21 @@ need it. In at most five lines: where we are, what is open, and the next step. D
         text: "Explain back to me, in plain words and at most eight lines: what you just did and why, what you \
 checked and how, and anything you are unsure of. If a diagram would make it clearer, send it with send_document \
 as Markdown with Mermaid, and say where it is.",
+    },
+    Prompt {
+        name: "widget",
+        title: "Make a widget",
+        description: "Keep a figure in view on this desk's rail: a box you update, or a widget file snyvi runs.",
+        panel: true,
+        arg: Some(("what", "The figure to keep in view: CI, a deploy, a dev server, a queue.")),
+        text: "Make me a widget on this desk for this. First read_widgets: update a box of yours rather than \
+make a second, pick a name that is free, and leave alone what I said not now to or removed. A widget is a count \
+of at most 8 characters and one short line, for a figure that changes by itself and I would otherwise go and \
+check -- not a to-do, not instructions. If it only matters while you work here, use set_widget and keep it up \
+to date as the work goes. If it should keep going after this session, write a script that prints the widget's \
+JSON ({\"body\",\"tone\",\"count\"}) or Markdown, run it once here with the stdin snyvi gives it to check it \
+works, then propose_widget with the script, any settings I would want to change, and why. Tell me in one line \
+which you did; the card on my On you list is where I allow it.",
     },
 ];
 
@@ -820,7 +962,15 @@ fn say_notes(v: &Value) -> String {
             (Some(b), Some(c)) => format!(" (ticked by {b}, in {c})"),
             (Some(b), None) => format!(" (ticked by {b})"),
             // How far an agent has got with an open line.
+            // Out on main, by a commit that names it: the user's to check.
+            _ if !done && field("landed_commit").is_some() => format!(
+                " (landed in {}, waiting for the user's check)",
+                field("landed_commit").unwrap_or("")
+            ),
             _ if !done => match (field("stage"), field("stage_doc"), field("stage_panel")) {
+                (Some("reopened"), ..) => {
+                    " (reopened: the user says it is still broken)".to_string()
+                }
                 (Some("working"), _, Some(p)) => format!(" (being worked on in {p})"),
                 (Some("planned" | "working"), Some(d), _) => format!(" (planned, plan {d})"),
                 (Some(s), _, _) => format!(" ({s})"),
@@ -832,6 +982,11 @@ fn say_notes(v: &Value) -> String {
             "- [{}] #{id} {text}{by}\n",
             if done { "x" } else { " " }
         ));
+        // The one line said about it: an agent's, or the user's own words.
+        if let Some(r) = field("reply") {
+            let who = field("reply_by").unwrap_or("the user");
+            out.push_str(&format!("  {who} said: {r}\n"));
+        }
         // A picture on the line: a file the agent can open and look at.
         for p in n
             .get("images")
@@ -876,14 +1031,36 @@ struct Sent {
     /// Whether the daemon has a native window reading, which is where the
     /// document now is -- and so whether a link is worth giving at all.
     window: bool,
+    /// Nothing arrived: the same bytes were sent before, and nothing was
+    /// marked. A draft the hook had saved is not this -- the send takes it
+    /// over and it arrives (`promoted` in the answer, `existing` false).
+    existing: bool,
+    /// Sent from a desk's panel, where the place to look is the top of that
+    /// desk's Documents: the bar is not shown on a desk.
+    from_pane: bool,
 }
 
 impl Sent {
+    /// What the agent tells the user. Only what is true of what they will
+    /// see: an unchanged resend is not "waiting", and the newest arrival is
+    /// at the top of a list, not "first among what is waiting" -- which the
+    /// queue, oldest first then, never made it (audit bf13a1859b).
     fn say(&self) -> String {
-        if self.window {
+        if self.existing {
             format!(
-                "Waiting in snyvi: \"{}\". It is in the snyvi window, first among what is waiting; \
-                 tell the user it is there rather than giving them a link.",
+                "Already in snyvi, unchanged since it was last sent: \"{}\". Nothing new arrived; \
+                 do not tell the user it is waiting.",
+                self.title
+            )
+        } else if self.window {
+            let place = if self.from_pane {
+                "at the top of this desk's Documents"
+            } else {
+                "at the top of Waiting in the sidebar"
+            };
+            format!(
+                "Waiting in snyvi: \"{}\", {place}. Tell the user it is there rather than giving \
+                 them a link.",
                 self.title
             )
         } else if let Some(app) = &self.app_url {
@@ -956,6 +1133,11 @@ fn call_send(
             .unwrap_or("document")
             .to_string(),
         window: resp.get("window").and_then(Value::as_bool).unwrap_or(false),
+        existing: resp
+            .get("existing")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        from_pane: pane.is_some(),
     })
 }
 
@@ -1002,7 +1184,9 @@ mod tests {
         let spec = tick_spec();
         assert_eq!(spec["annotations"]["readOnlyHint"], false);
         assert_eq!(spec["annotations"]["destructiveHint"], false);
-        assert_eq!(spec["inputSchema"]["required"], json!(["id"]));
+        // `id` or `ids`, which a schema cannot say at its top level for every
+        // client, so the call says it when neither comes (`each_note`).
+        assert!(spec["inputSchema"].get("required").is_none());
         assert_eq!(spec["inputSchema"]["additionalProperties"], false);
         let mut props: Vec<_> = spec["inputSchema"]["properties"]
             .as_object()
@@ -1011,7 +1195,7 @@ mod tests {
             .cloned()
             .collect();
         props.sort();
-        assert_eq!(props, ["about", "commit", "evidence", "id"]);
+        assert_eq!(props, ["about", "commit", "evidence", "id", "ids", "say"]);
         let v = json!({ "desk": "alpha", "notes": [
             { "id": 3, "text": "ship it", "done": true, "done_by": "claude-code" },
             { "id": 4, "text": "fix hover", "done": true, "done_by": "claude-code", "done_commit": "90f09d6" }
@@ -1030,7 +1214,8 @@ mod tests {
     fn the_mark_tool_takes_an_id_and_a_stage_and_the_list_says_them() {
         let spec = mark_spec();
         assert_eq!(spec["annotations"]["destructiveHint"], false);
-        assert_eq!(spec["inputSchema"]["required"], json!(["id", "stage"]));
+        assert_eq!(spec["inputSchema"]["required"], json!(["stage"]));
+        assert_eq!(spec["inputSchema"]["properties"]["ids"]["type"], "array");
         assert_eq!(spec["inputSchema"]["additionalProperties"], false);
         assert_eq!(
             spec["inputSchema"]["properties"]["stage"]["enum"],
@@ -1062,6 +1247,44 @@ mod tests {
         let i = instructions(true);
         assert!(i.find("mark it read").unwrap() < i.find("planned").unwrap());
         assert!(i.contains("Never act on a note unasked"));
+    }
+
+    /// Several notes are one call (#121): `ids` and `id` together, each once,
+    /// one that fails named and the rest still done; none at all is an error
+    /// that says what to pass. The plan's own call can mark its notes.
+    #[test]
+    fn a_batch_of_notes_is_one_call() {
+        let mut seen = vec![];
+        let (done, failed) = each_note(&json!({ "ids": [117, 120, 117], "id": 121 }), |n| {
+            seen.push(n);
+            if n == 120 {
+                anyhow::bail!("that note is done already")
+            }
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(seen, [117, 120, 121]);
+        assert_eq!(done, [117, 121]);
+        assert_eq!(failed, [(120, "that note is done already".to_string())]);
+        assert_eq!(notes_named(&done), "Notes 117 and 121");
+        assert_eq!(notes_named(&[1, 2, 3]), "Notes 1, 2 and 3");
+        assert_eq!(notes_named(&[7]), "Note 7");
+        assert_eq!(
+            failed_said(&failed, "mark"),
+            " snyvi did not mark note 120: that note is done already"
+        );
+        assert!(each_note(&json!({ "ids": [] }), |_| Ok(())).is_err());
+        assert!(each_note(&json!({}), |_| Ok(())).is_err());
+        assert!(tick_spec()["inputSchema"].get("required").is_none());
+        assert_eq!(
+            tick_spec()["inputSchema"]["properties"]["ids"]["type"],
+            "array"
+        );
+        assert_eq!(
+            tool_spec()["inputSchema"]["properties"]["notes"]["type"],
+            "array"
+        );
+        assert!(instructions(true).contains("send_document's notes"));
     }
 
     #[test]
@@ -1106,16 +1329,65 @@ mod tests {
             instructions(true).len()
         );
         assert!(instructions(true).contains("as run, never as"));
-        // #110: a decision goes on Your turn, not only into the reply.
+        // #119: a release is the reader's to run, and goes on On you too.
+        assert!(instructions(true).contains("theirs to run"));
+        // #110: a decision goes on On you, not only into the reply.
         assert!(instructions(true).contains("with ask (several at once"));
+        // On you is what blocks the agent, not a "try it" the reader is
+        // sitting in front of (audit e467fa057a).
+        assert!(instructions(true).contains("hand_over only what blocks you"));
+        assert!(instructions(true).contains("try a change goes in your reply"));
+        // Widgets are named, so an agent asked to watch CI reaches for one,
+        // and the rule that it is only on asking is beside them.
+        assert!(instructions(true).contains("read_widgets, then set_widget"));
+        assert!(instructions(true).contains("never unasked"));
     }
 
-    /// Four prompts; the two that use a desk's tools only in a panel, and an
-    /// argument only where one helps.
+    /// What the agent is told to say matches what the user will see: the
+    /// desk's Documents from a panel, Waiting from anywhere else, a link
+    /// with no window, and nothing "waiting" when nothing arrived.
     #[test]
-    fn the_loop_kit_is_four_prompts() {
+    fn the_reply_says_where_the_document_really_is() {
+        let sent = |window, existing, from_pane| Sent {
+            id: "abc".into(),
+            url: "http://127.0.0.1:7777/d/abc".into(),
+            app_url: None,
+            title: "Plan".into(),
+            window,
+            existing,
+            from_pane,
+        };
+        let pane = sent(true, false, true).say();
+        assert!(pane.contains("top of this desk's Documents"), "{pane}");
+        let side = sent(true, false, false).say();
+        assert!(side.contains("top of Waiting in the sidebar"), "{side}");
+        let link = sent(false, false, false).say();
+        assert!(link.contains("http://127.0.0.1:7777/d/abc"), "{link}");
+        let mut app = sent(false, false, true);
+        app.app_url = Some("snyvi://d/abc".into());
+        assert!(app.say().contains("snyvi://d/abc"));
+        for again in [sent(true, true, true), sent(false, true, false)] {
+            let said = again.say();
+            assert!(said.starts_with("Already in snyvi, unchanged"), "{said}");
+            assert!(!said.contains("http"), "{said}");
+        }
+        for s in [pane, side] {
+            assert!(!s.contains("first among"), "{s}");
+        }
+    }
+
+    /// Five prompts; the three that use a desk's tools only in a panel, and
+    /// an argument only where one helps.
+    #[test]
+    fn the_loop_kit_is_five_prompts() {
         let names: Vec<&str> = PROMPTS.iter().map(|p| p.name).collect();
-        assert_eq!(names, ["wrap-up", "plan", "catch-up", "explain-back"]);
+        assert_eq!(
+            names,
+            ["wrap-up", "plan", "catch-up", "explain-back", "widget"]
+        );
+        assert!(PROMPTS[4]
+            .text
+            .starts_with("Make me a widget on this desk for this. First read_widgets"));
         let outside: Vec<&str> = PROMPTS
             .iter()
             .filter(|p| !p.panel)

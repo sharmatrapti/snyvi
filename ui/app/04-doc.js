@@ -280,7 +280,7 @@
     if (push) { swapIn(); main.scrollTo({ top: 0, behavior: "instant" }); }
     afterRender();
     if (items?.length) removedLine(push);
-    // The inbox lists every waiting row, and the page opened with the oldest
+    // The inbox lists every waiting row, and the page opened with the newest
     // few: the rest come after the page is on screen, not before the sidebar is.
     if (items && state.waiting > state.queue.length) {
       try {
@@ -306,7 +306,8 @@
   const peerUse = () => import(`/assets/peer.js${boot.v ? `?v=${boot.v}` : ""}`);
   // Saved into a folder: Copy path has a file here to give now (#99).
   const savedHere = (id, path) => { state.cache.delete(id); if (state.doc && state.doc.id === id) { state.doc.local_path = path; renderMeta(); } };
-  const peerCtx = { esc, rel, sayErr, toast, state, refreshDoc, saved: savedHere, peer: peerUse, home: () => showHome(true) };
+  const peerCtx = { esc, rel, sayErr, toast, state, refreshDoc, saved: savedHere, peer: peerUse, home: () => showHome(true),
+    showDoc: id => showDoc(id, true), rise: card => corner(m => m.rise(card)) };
   const removedLine = fresh => homeUse().then(m => m.removedLine(fresh, { view: () => state.view, capability, deskApi, docEl, esc, rel, post, loadDesks, toast }), () => { homeLoading = null; });
 
   // ---------- connect an agent ----------
@@ -322,7 +323,11 @@
   let panelLoading = null, pagesMod = null;
   const panelMod = () => (panelLoading ||= import(`/assets/about.js${boot.v ? `?v=${boot.v}` : ""}`));
   const pagesCtx = () => ({ state, docEl, main, boot, capability, esc, rel, toast, sayErr, leave, offDesk, swapIn, afterRender, loadDesks, deskApi, mascotHead,
-    places: () => (capability ? deskPlaces() : []), tilde });
+    places: () => (capability ? deskPlaces() : []), tilde,
+    // Welcome's ways to a desk (about.js): one made goes to Got another
+    // project? unless `welcome` is false (Start something new), and its Open
+    // goes to the desk.
+    make: (f, welcome = true) => act("make", f, welcome), go: id => showDesk(id, true) });
   const pages = () => pagesMod ? Promise.resolve(pagesMod) : panelMod().then(m => (pagesMod ||= m.pages(pagesCtx())), e => { panelLoading = null; toast("Could not open that page", { sub: e }); throw e; });
   const showConnect = (push = true) => pages().then(m => m.showConnect(push), () => {});
   const showStart = (push = true, at = location.hash) => pages().then(m => m.showStart(push, at), () => {});
@@ -365,8 +370,8 @@
     catch { homeLoading = null; if (state.view === "home") docEl.innerHTML = `<div class="inbox-head"><h1>Home</h1>${noReach("home")}</div>`; return; }
     if (state.view !== "home") return;
     if (push) main.scrollTo({ top: 0, behavior: "instant" });
-    await homeMod.show({ view: () => state.view, esc, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates, peerCtx,
-      next: openNext, newDesk: b => askWhere(b, b.matches(":focus-visible")), notes: () => state.notes });
+    await homeMod.show({ view: () => state.view, esc, who: whoIco, rel, relShort, plural, capability, deskApi, docEl, card: panelMod, updCtx, checkUpdates, peerCtx,
+      next: openNext, newDesk: b => askWhere(b, b.matches(":focus-visible")), corner: cornerUse });
     if (push) swapIn();
     afterRender();
   }
@@ -378,11 +383,21 @@
     const b = e.target.closest("[data-w]");
     if (!b || !docEl.contains(b)) return;
     const w = b.dataset.w;
-    if (w === "pick") act("pick", true);
-    else if (w === "place") { const f = pagesMod && pagesMod.place(+b.dataset.i); if (f) act("make", f); }
+    if (w === "pick") act("pick", b.closest(".welcome") ? "welcome" : true);
+    else if (w === "place") { const f = pagesMod && pagesMod.place(+b.dataset.i); if (f) act("make", f, true); }
+    else if (w.startsWith("w-")) pages().then(m => m.welcomeAct(b), () => {});
     else if (w === "connect") connectClaude(b);
     // A friend's buttons in a document's head: Send to…, Keep on a desk…, Save.
     else if (w === "send") peerUse().then(m => m.head(peerCtx, b), () => toast("Could not open that"));
+    // A song or a video is a button until it is pressed, its player waiting
+    // inert in the template beside it (render.rs `player`, #117 #120): the
+    // press puts the player in the button's box, plays it and hands it the
+    // keyboard. Made here, on the press, it sounds in half a second in the
+    // Linux window, where one made with the page took 8.6 s.
+    else if (w === "play") {
+      const t = b.nextElementSibling, m = t && t.content && t.content.firstElementChild;
+      if (m) { b.replaceWith(m); t.remove(); m.play().catch(() => {}); m.focus(); }
+    }
   });
   /** The count beside the brand mark: how many agents hold a stream on the
    *  daemon now, by the name each gave. Zero is drawn too, dim -- "no agent
@@ -397,7 +412,7 @@
     const tip = n ? `${plural(n, "agent")} connected` : "No agent connected", who = names.map(([k, c]) => c > 1 ? `${k} ×${c}` : k).join(", ");
     const rl = $("#rail-live");
     for (const el of [liveEl, rl]) { el.dataset.tip = tip; el.ariaLabel = tip; who ? (el.dataset.tipSub = who) : delete el.dataset.tipSub; }
-    rl.classList.toggle("on", n > 0); badge("#rail-live", n, " live");
+    rl.classList.toggle("on", n > 0); badge("#rail-live", n, " q");
   }
   function setOnline(map) {
     state.online = map && typeof map === "object" ? map : {};
@@ -415,10 +430,7 @@
    *  (about.js's `checkUpdates`). */
   const checkUpdates = at => panelMod().then(m => m.checkUpdates(at, { ...updCtx(), setUpd }), () => { panelLoading = null; });
   /** What the update surfaces need from the page: about.js's `pill` and `card`. */
-  const updCtx = () => ({ capability, deskApi, toast, plural, esc, copied, version: boot.version, panel, peek: mascotPeek, landed });
-  /** An update landed in the last hour (about.js): the hover line answers
-   *  with the version for that long (look.js's SAYS), and nothing opens. */
-  const landed = (v, at) => { state.landed = { v, at }; };
+  const updCtx = () => ({ capability, deskApi, toast, plural, esc, copied, version: boot.version, panel, peek: mascotPeek });
   /** The version at the sidebar's foot: About, on a click, and the one place
    *  an update waiting shows as a dot. */
   const verEl = $("#foot-ver");
@@ -484,14 +496,9 @@
 
   /** Where a document's row stands, as a place that outlives the row: the
    *  row that was clicked, or -- for the meta pane and Del, which have none --
-   *  the tree's row before the queue's. Null when neither is drawn. */
+   *  the tree's. Null when it is not drawn. */
   function rowOf(id, from) {
     const sel = `a[data-id="${id}"]`;
-    const inQueue = from ? !!from.closest("#queue") : !treeEl.querySelector(sel) && !!queueEl.querySelector(sel);
-    if (inQueue) {
-      const at = lastQueue.findIndex(x => x.id === id);
-      return at < 0 ? null : { where: "queue", at };
-    }
     if (!from && !treeEl.querySelector(sel)) return null;
     for (const [pid, wfs] of state.sub) for (const [wfAt, w] of wfs.entries()) {
       const at = w.docs.findIndex(x => x.id === id);
@@ -547,18 +554,15 @@
     // the last thing that happened.
     if (gone) { gone.clock.stop(); unoffer(gone.undo); gone = null; }
     const g = { ...(place || { where: null }), id: d.id, d, here, waiting: waitingRow(d), drawn: false, made: Date.now() };
-    g.clock = undoClock("#tree .t-gone .t-ghost, #queue .t-gone .t-ghost", () => ghostSettle(g));
+    g.clock = undoClock("#tree .t-gone .t-ghost", () => ghostSettle(g));
     g.undo = () => undoGone(g);
     // What stands around the ghost stands with it until the offer ends, so
     // nothing above it moves the row out from under the pointer either: the
-    // project, which leaves the daemon's tree with its last document, and the
-    // same document's row in Waiting.
+    // project, which leaves the daemon's tree with its last document.
     if (g.where === "proj") {
       g.projAt = state.tree.findIndex(p => String(p.id) === g.pid);
       g.proj = g.projAt >= 0 ? state.tree[g.projAt] : null;
-      g.qAt = lastQueue.findIndex(x => x.id === d.id);
-      g.qDoc = g.qAt >= 0 ? lastQueue[g.qAt] : null;
-    } else if (g.where !== "queue") depart([d.id]);
+    }
     state.queue = state.queue.filter(x => x.id !== d.id);
     state.waiting = Math.max(0, state.waiting - (g.waiting ? 1 : 0));
     for (const wfs of state.sub.values()) for (const w of wfs) {
@@ -676,6 +680,7 @@
     markActive();
     buildToc();
     renderMeta(false);
+    turnLine();
     prepareMermaid();
     enhanceCode();
     find?.clear();

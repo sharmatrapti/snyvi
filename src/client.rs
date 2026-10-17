@@ -818,7 +818,69 @@ fn send_within(paths: &Paths, payload: &Payload, within: Duration) -> Result<Val
 /// runs inside a Claude Code hook, on every prompt and tool call, so it never
 /// starts a daemon, never waits more than half a second, and a daemon that is
 /// not there means no status, and nothing more.
-pub fn agent_state(paths: &Paths, pane: &str, state: Option<&str>, session: Option<&str>) {
+///
+/// `stopped` is why a turn ended without its answer (`StopFailure`), with
+/// `done`; a daemon from before it takes the `done` alone.
+pub fn agent_state(
+    paths: &Paths,
+    pane: &str,
+    state: Option<&str>,
+    session: Option<&str>,
+    stopped: Option<&str>,
+) {
+    let body = serde_json::json!({ "state": state, "session": session, "stopped": stopped });
+    tell_agent(paths, pane, body);
+}
+
+/// A turn's end in a panel: the state, and what a pipeline's runner reads
+/// of it (`server::pipeline_run`) -- the transcript's path, the reply and
+/// whether a Stop hook already kept this turn going. The answer is a reason
+/// to keep going when the panel's pipeline asks for one: its stage is past
+/// the context limit, and is to say where it is (`leave_off`) before a
+/// fresh session takes it on. A daemon from before 1.40 answers nothing,
+/// and a slow one is not waited on past a second and a half.
+pub fn agent_stop(
+    paths: &Paths,
+    pane: &str,
+    session: Option<&str>,
+    transcript: Option<&str>,
+    reply: Option<&str>,
+    active: bool,
+) -> Option<String> {
+    let token = config::read_token(paths)?;
+    let reply: String = reply
+        .unwrap_or("")
+        .chars()
+        .rev()
+        .take(6000)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let body = serde_json::json!({
+        "state": "done",
+        "session": session,
+        "stop": { "transcript": transcript.unwrap_or(""), "reply": reply, "active": active },
+    });
+    let mut resp = agent()
+        .post(&format!("{}/api/panes/{pane}/agent", config::base_url()))
+        .header("Authorization", &format!("Bearer {token}"))
+        .config()
+        .timeout_global(Some(Duration::from_millis(1500)))
+        .http_status_as_error(false)
+        .build()
+        .send_json(body)
+        .ok()?;
+    if resp.status().as_u16() != 200 {
+        return None;
+    }
+    let v: Value = resp.body_mut().read_json().ok()?;
+    v.get("handoff")?.as_str().map(str::to_string)
+}
+
+/// One word about a pane's agent to `/api/panes/{pane}/agent`, waited on
+/// for half a second at most: a hook runs inside Claude's turn.
+fn tell_agent(paths: &Paths, pane: &str, body: serde_json::Value) {
     let Some(token) = config::read_token(paths) else {
         return;
     };
@@ -829,7 +891,7 @@ pub fn agent_state(paths: &Paths, pane: &str, state: Option<&str>, session: Opti
         .timeout_global(Some(Duration::from_millis(500)))
         .http_status_as_error(false)
         .build()
-        .send_json(serde_json::json!({ "state": state, "session": session }));
+        .send_json(body);
 }
 
 /// What Claude's status line said, for the panel it runs in: the model, how
@@ -864,6 +926,17 @@ pub fn agent_context(paths: &Paths, pane: &str, seen: &crate::statusline::Seen) 
 /// a daemon: a pane only runs while one does, so none answering means the
 /// shell this came from is already gone.
 pub fn desk_notes(paths: &Paths, pane: &str) -> Result<Value> {
+    pane_read(paths, pane, "notes")
+}
+
+/// The widgets on the desk `pane` is on, and where each stands (`read_widgets`),
+/// read as the notes are.
+pub fn desk_widgets(paths: &Paths, pane: &str) -> Result<Value> {
+    pane_read(paths, pane, "widgets")
+}
+
+/// A read of the desk `pane` is on, by the pane route after its id.
+fn pane_read(paths: &Paths, pane: &str, what: &str) -> Result<Value> {
     let token = config::read_token(paths).ok_or_else(|| {
         anyhow!(
             "no token at {}; is the daemon running as this user?",
@@ -871,7 +944,7 @@ pub fn desk_notes(paths: &Paths, pane: &str) -> Result<Value> {
         )
     })?;
     let mut resp = agent()
-        .get(&format!("{}/api/panes/{pane}/notes", config::base_url()))
+        .get(&format!("{}/api/panes/{pane}/{what}", config::base_url()))
         .header("Authorization", &format!("Bearer {token}"))
         .config()
         .timeout_global(Some(Duration::from_secs(5)))
@@ -889,21 +962,11 @@ pub fn desk_notes(paths: &Paths, pane: &str) -> Result<Value> {
 }
 
 /// Tick a line on the list of the desk this pane is on, as `by`, with the
-/// commit the work went into and a document about it when there are those.
-pub fn tick_desk_note(
-    paths: &Paths,
-    pane: &str,
-    note: i64,
-    by: &str,
-    commit: &str,
-    about: &str,
-    evidence: &str,
-) -> Result<Value> {
-    let mut resp = pane_post(
-        paths,
-        &format!("{pane}/notes/{note}/tick"),
-        serde_json::json!({ "by": by, "commit": commit, "about": about, "evidence": evidence }),
-    )?;
+/// commit the work went into, a document about it, where it can be seen, and
+/// one line about what changed, when there are those: `{ by, commit, about,
+/// evidence, say }`.
+pub fn tick_desk_note(paths: &Paths, pane: &str, note: i64, body: &Value) -> Result<Value> {
+    let mut resp = pane_post(paths, &format!("{pane}/notes/{note}/tick"), body.clone())?;
     match resp.status().as_u16() {
         200 => Ok(resp.body_mut().read_json()?),
         409 => bail!("there is no open note with id {note} on this desk -- read_desk_notes lists them, and a note already done stays done"),
@@ -916,7 +979,8 @@ pub fn tick_desk_note(
 }
 
 /// Say how far this agent has got with a note on its pane's desk:
-/// `mark_desk_note`. `about` is the plan's document id, needed with `planned`.
+/// `mark_desk_note`. `about` is the plan's document id, needed with
+/// `planned`; `say` its one line about the note, or empty.
 pub fn mark_desk_note(
     paths: &Paths,
     pane: &str,
@@ -924,11 +988,12 @@ pub fn mark_desk_note(
     stage: &str,
     by: &str,
     about: &str,
+    say: &str,
 ) -> Result<Value> {
     let mut resp = pane_post(
         paths,
         &format!("{pane}/notes/{note}/mark"),
-        serde_json::json!({ "stage": stage, "by": by, "about": about }),
+        serde_json::json!({ "stage": stage, "by": by, "about": about, "say": say }),
     )?;
     match resp.status().as_u16() {
         200 => Ok(resp.body_mut().read_json()?),
@@ -1229,7 +1294,7 @@ fn said(resp: &mut ureq::http::Response<ureq::Body>) -> String {
         .unwrap_or_else(|| "snyvi refused it".to_string())
 }
 
-/// Leave an aside at the foot of the sidebar.
+/// Leave an aside in the corner (`ui/corner.js`).
 pub fn aside(paths: &Paths, aside: &crate::aside::NewAside) -> Result<Value> {
     ensure_daemon()?;
     let token = config::read_token(paths).ok_or_else(|| {
@@ -1436,6 +1501,44 @@ pub fn widget(
                 .http_status_as_error(false)
                 .build()
                 .send_json(serde_json::json!({ "name": name, "body": body, "desk": desk, "writer": "snyvi widget set" }))
+                .context("asking snyvi")?
+        }
+    };
+    match resp.status().as_u16() {
+        200 | 202 => Ok(resp.body_mut().read_json()?),
+        400 | 404 | 409 => bail!("{}", said(&mut resp)),
+        s => bail!("snyvi answered {s}"),
+    }
+}
+
+/// Add an output to a desk's gallery (`snyvi gallery add`): inside a snyvi
+/// panel its own desk's, as the agent's tool does, asking first with a
+/// card; with `desk` that desk's, from anywhere, as a script.
+pub fn gallery(paths: &Paths, mut body: Value, desk: Option<i64>) -> Result<Value> {
+    ensure_daemon()?;
+    let pane = std::env::var("SNYVI_SESSION")
+        .ok()
+        .filter(|p| crate::pane::valid_id(p));
+    let mut resp = match pane {
+        Some(p) if desk.is_none() => pane_post(paths, &format!("{p}/gallery"), body)?,
+        _ => {
+            let token = config::read_token(paths).ok_or_else(|| {
+                anyhow!(
+                    "no token at {}; is the daemon running as this user?",
+                    paths.token_path.display()
+                )
+            })?;
+            body["desk"] = serde_json::json!(desk);
+            body["writer"] = serde_json::json!("snyvi gallery add");
+            agent()
+                .post(&format!("{}/api/gallery", config::base_url()))
+                .header("Authorization", &format!("Bearer {token}"))
+                .config()
+                // A clip is copied in before the answer: up to a gigabyte.
+                .timeout_global(Some(Duration::from_secs(300)))
+                .http_status_as_error(false)
+                .build()
+                .send_json(body)
                 .context("asking snyvi")?
         }
     };

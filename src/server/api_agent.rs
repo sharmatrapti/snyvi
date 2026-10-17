@@ -75,6 +75,10 @@ pub(crate) struct AgentBody {
     /// `SessionStart`, which only names the conversation).
     #[serde(default)]
     pub(crate) state: Option<String>,
+    /// Why a turn ended without its answer, with `done`: a `StopFailure`'s
+    /// error (`crate::pane::STOP_REASONS`).
+    #[serde(default)]
+    pub(crate) stopped: Option<String>,
     /// The Claude Code session id, a UUID, when the event carried one.
     #[serde(default)]
     pub(crate) session: Option<String>,
@@ -88,6 +92,9 @@ pub(crate) struct AgentBody {
     /// (`crate::statusline::Limit`): Home's quota.
     #[serde(default)]
     pub(crate) limits: Option<LimitsBody>,
+    /// A turn's end, for the panel's pipeline (`pipeline_run::heard`).
+    #[serde(default)]
+    pub(crate) stop: Option<super::pipeline_run::StopBody>,
 }
 
 #[derive(Deserialize, Default)]
@@ -138,11 +145,31 @@ pub(crate) async fn pane_agent(
         return StatusCode::BAD_REQUEST.into_response();
     }
     let mut live = match &b.state {
-        Some(state) => app.panes.set_agent(&id, state),
+        Some(state) => app
+            .panes
+            .set_agent_stopped(&id, state, b.stopped.as_deref().unwrap_or("")),
         // A session named with no state is a SessionStart: an agent is in.
         None if b.session.is_some() => app.panes.agent_in(&id),
         None => app.panes.is_running(&id),
     };
+    // A turn that ended because the account's sign-in no longer works: the
+    // panel offers Renew (`Usage::broke`), until a status line comes from it.
+    let auth = b
+        .stopped
+        .as_deref()
+        .and_then(|w| crate::accounts::AUTH_REASONS.into_iter().find(|r| *r == w));
+    // A turn that ended with its answer says the sign-in works again.
+    if live && b.state.as_deref() == Some("done") {
+        let account = app.panes.status(&id).account;
+        let moved = match auth {
+            Some(why) => app.usage.broke(account, why),
+            None if b.stopped.as_deref().unwrap_or("").is_empty() => app.usage.mended(account),
+            None => false,
+        };
+        if moved {
+            super::api_accounts::accounts_moved(&app);
+        }
+    }
     if live && (b.model.is_some() || b.ctx.is_some()) {
         let c = b.ctx.unwrap_or_default();
         let pct = c
@@ -173,19 +200,34 @@ pub(crate) async fn pane_agent(
     if !live {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if let Some(l) = &b.limits {
-        if l.five_hour.is_some() || l.seven_day.is_some() {
-            *app.quota.lock().unwrap_or_else(|e| e.into_inner()) = Some(json!({
-                "five_hour": l.five_hour,
-                "seven_day": l.seven_day,
-                "at": crate::store::now(),
-            }));
+    // The windows are the account's the panel runs as, not the panel's.
+    // Claude Code has them from an answer, so they also say the account's
+    // sign-in works; a model's name alone does not, being the panel's own.
+    if let Some(l) = b
+        .limits
+        .as_ref()
+        .filter(|l| l.five_hour.is_some() || l.seven_day.is_some())
+    {
+        let account = app.panes.status(&id).account;
+        if app
+            .usage
+            .heard(account, l.five_hour, l.seven_day, crate::store::now())
+        {
+            emit(&app, "quota", json!({ "account": account }));
+        }
+        if app.usage.mended(account) {
+            super::api_accounts::accounts_moved(&app);
         }
     }
     if let Some(session) = &b.session {
         if let Ok(true) = app.store.set_pane_session(&id, session) {
             desks_moved(&app);
         }
+    }
+    let (session, stopped) = (b.session.as_deref(), b.stopped.as_deref());
+    if let Some(handoff) = super::pipeline_run::heard(&app, &id, session, stopped, b.stop.as_ref())
+    {
+        return Json(handoff).into_response();
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -292,6 +334,9 @@ pub(crate) struct TickBody {
     /// Where the finished work can be seen: a PR, a deploy, a store page.
     #[serde(default)]
     pub(crate) evidence: String,
+    /// One line about what changed, shown under the note.
+    #[serde(default)]
+    pub(crate) say: String,
 }
 
 /// An agent ticks a line on its own desk's list: `tick_desk_note`. The same
@@ -341,6 +386,7 @@ pub(crate) async fn pane_tick_note(
         doc: doc.into(),
         evidence: evidence.into(),
         pane: id.clone(),
+        say: b.say,
     };
     match app.store.tick_desk_note(placed.desk_id, note, &tick) {
         Ok(true) => {
@@ -368,6 +414,9 @@ pub(crate) struct MarkBody {
     /// The plan's document id: needed with `planned`.
     #[serde(default)]
     pub(crate) about: String,
+    /// One line about the line, shown under it.
+    #[serde(default)]
+    pub(crate) say: String,
 }
 
 /// An agent says how far it has got with a line on its own desk's list:
@@ -403,6 +452,7 @@ pub(crate) async fn pane_mark_note(
         doc: doc.into(),
         pane: id.clone(),
         session: placed.pane.agent_session.clone(),
+        say: b.say,
     };
     match app.store.mark_desk_note(placed.desk_id, note, &mark) {
         Ok(true) => {
@@ -432,6 +482,85 @@ pub(crate) async fn pane_name(
         return *no;
     }
     renamed(&app, &id, &b.name)
+}
+
+/// A card above the rail's foot, put or taken off by the agent in pane `id`
+/// (`crate::card`, MCP `show_card`): the same gate as its name, and the one
+/// thing it touches is that pane's own cards. Nothing is asked of the
+/// reader first: a card only shows, and goes with the session.
+pub(crate) async fn pane_card(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    if let Err(no) = agent_pane(&app, &headers, &id) {
+        return *no;
+    }
+    let op = match crate::card::parse(&b, crate::store::now()) {
+        Ok(op) => op,
+        Err(why) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": why })),
+            )
+                .into_response()
+        }
+    };
+    // A card the reader closed stays closed, put again or not: the agent is
+    // told, so it stops putting it.
+    match app.panes.put_card(&id, op) {
+        Some((changed, closed)) => {
+            Json(serde_json::json!({ "ok": true, "changed": changed, "closed": closed }))
+                .into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// A link in the rail's foot, pinned by the agent in pane `id` on that pane's
+/// desk (`crate::links`, MCP `pin_link`). Nothing is asked of the reader
+/// first: a link only shows, opens on their click, and carries the host
+/// snyvi read from it. One they hid stays hidden, and the agent is told.
+pub(crate) async fn pane_pin_link(
+    State(app): S,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<serde_json::Value>,
+) -> Response {
+    let placed = match agent_pane(&app, &headers, &id) {
+        Ok(p) => p,
+        Err(no) => return *no,
+    };
+    let (label, url, host) = match crate::links::parse(&b) {
+        Ok(l) => l,
+        Err(why) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": why }))).into_response()
+        }
+    };
+    let by = b
+        .get("by")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    use crate::links::Pinned;
+    match app.store.pin_desk_link(placed.desk_id, (&label, &url, &host), by) {
+        Ok(Some(Pinned::Full)) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": format!("this desk shows {} links already; the user can take one out with its ✕", crate::links::SHOWN) })),
+        )
+            .into_response(),
+        Ok(Some(Pinned::New(n) | Pinned::Updated(n))) => {
+            desks_moved(&app);
+            Json(json!({ "ok": true, "id": n, "hidden": false, "desk": placed.desk_name }))
+                .into_response()
+        }
+        Ok(Some(Pinned::Hidden(n))) => {
+            Json(json!({ "ok": true, "id": n, "hidden": true, "desk": placed.desk_name }))
+                .into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
 }
 
 /// The running pane `id`, placed on its desk, for the routes an agent reaches
@@ -497,8 +626,8 @@ pub(crate) async fn pane_brief(
             n
         })
         .collect();
-    let docs = app.store.desk_docs(desk.id, 1, false).unwrap_or_default();
-    let last = docs.first().map(|d| crate::brief::LastDoc {
+    let last = app.store.desk_last(desk.id);
+    let last = last.as_ref().map(|d| crate::brief::LastDoc {
         id: &d.id,
         title: &d.title,
         at: d.received_at,
@@ -517,12 +646,13 @@ pub(crate) async fn pane_brief(
         .collect();
     let (threads, waiting) = app
         .store
-        .clocked(|c, _| {
+        .clocked(|c, now| {
             Ok((
                 crate::thread::for_desk(c, desk.id)?,
                 // This desk's own, dialog turns kept: the brief says what
-                // waits here, not the first thirty across every desk.
-                crate::thread::waiting_on(c, desk.id, true)?,
+                // waits here, not the first thirty across every desk; the
+                // stale ones only counted (`brief::brief_of`).
+                crate::thread::waiting_on(c, desk.id, true, now)?,
             ))
         })
         .unwrap_or_default();
@@ -643,9 +773,12 @@ pub(crate) async fn pane_changes(
     let Ok(Some(desk)) = app.store.desk(placed.desk_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    // The reader's answers on Your turn reach the panel whatever else is
+    // The reader's answers on On you reach the panel whatever else is
     // said: they are the reader speaking, not context snyvi adds, so the
     // brief's switch and a daemon that has just started do not hold them.
+    // So do this panel's questions still open as the reader prompts it,
+    // which go quiet now (`thread::quiet_asks`): the message may be their
+    // answer, and the agent is the one who can tell.
     let live: Vec<String> = desk
         .panes
         .iter()
@@ -654,8 +787,15 @@ pub(crate) async fn pane_changes(
         .collect();
     let answers = app
         .store
-        .clocked(|c, now| crate::thread::take_untold(c, desk.id, &id, &live, now))
+        .clocked(|c, now| {
+            let mut a = crate::thread::take_untold(c, desk.id, &id, &live, now)?;
+            a.extend(crate::thread::quiet_asks(c, desk.id, &id, now)?);
+            Ok(a)
+        })
         .unwrap_or_default();
+    if answers.iter().any(|t| t.answered_at == 0) {
+        super::api_thread::threads_moved(&app, desk.id);
+    }
     if !brief_on(&app) {
         let context = crate::brief::answers_only(&answers);
         return Json(json!({ "context": context, "state": state })).into_response();
@@ -696,7 +836,7 @@ pub(crate) async fn pane_changes(
         .unwrap_or_default();
     let docs = app
         .store
-        .desk_docs(desk.id, crate::brief::DOCS_LOOKED_AT, false)
+        .desk_sent(desk.id, crate::brief::DOCS_LOOKED_AT)
         .unwrap_or_default();
     let context = crate::brief::changes(&crate::brief::Changes {
         slot: placed.pane.slot,

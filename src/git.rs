@@ -229,6 +229,157 @@ pub fn print(root: &Path) -> Option<Print> {
     (repo.is_some() || remote.is_some()).then_some(Print { repo, remote })
 }
 
+/// The merge that brought `branch` into the main line, and its time: the
+/// thread whose PR was merged on GitHub, or from another checkout, where no
+/// panel's mod saw it (audit 7c0fc42885). A merge commit counts only when the
+/// branch's tip is one of its later parents, the side that was merged in, so
+/// a branch made and never committed to -- its tip a commit main already had
+/// -- is not taken for merged. A squash leaves no such commit and is missed,
+/// which leaves the thread where it was. Blocking, through `run`; the branch
+/// is `thread::branch_ok`'s, so it is never an option to git.
+pub fn merge_of(root: &Path, branch: &str) -> Option<(String, i64)> {
+    let main = main_ref(root)?;
+    // The local branch and the pushed one: either may be the tip that went
+    // in, when one was moved after the merge or never caught up.
+    [branch.to_string(), format!("origin/{branch}")]
+        .iter()
+        .find_map(|b| {
+            let tip = run(
+                root,
+                &["rev-parse", "--verify", "-q", &format!("{b}^{{commit}}")],
+            )?;
+            let tip = tip.trim();
+            let out = run(
+                root,
+                &[
+                    "log",
+                    "--merges",
+                    "-n500",
+                    "--format=%H %ct %P",
+                    &format!("{tip}..{main}"),
+                ],
+            )?;
+            merge_line(&out, tip)
+        })
+}
+
+/// The oldest line of `git log --merges --format="%H %ct %P"` with `tip`
+/// among its later parents: the merge that took the branch in, rather than
+/// one that merged main back into it after.
+fn merge_line(out: &str, tip: &str) -> Option<(String, i64)> {
+    out.lines().rev().find_map(|l| {
+        let mut f = l.split_whitespace();
+        let (sha, at) = (f.next()?, f.next()?.parse().ok()?);
+        f.skip(1).any(|p| p == tip).then(|| (sha.to_string(), at))
+    })
+}
+
+/// The main line, as a merge or a landing is looked for on it: the pushed
+/// one first, since that is where a PR merged on GitHub is.
+fn main_ref(root: &Path) -> Option<&'static str> {
+    ["origin/main", "main", "origin/master", "master"]
+        .into_iter()
+        .find(|m| run(root, &["rev-parse", "--verify", "-q", m]).is_some())
+}
+
+/// The commits on the main line since `since` whose messages name desk
+/// notes, newest first: `(note, commit, its time)` for every note a message
+/// names (`named_in`). How a line whose work went out by another branch than
+/// its thread's -- a release branch that gathered several, a branch reused,
+/// a worktree with none -- is found: by what the commit says it finishes,
+/// "(#129-#131, #153)". Blocking, through `run`; at most the last 500.
+pub fn notes_named(root: &Path, since: i64) -> Vec<(i64, String, i64)> {
+    let Some(main) = main_ref(root) else {
+        return Vec::new();
+    };
+    let since = format!("--since=@{}", since.max(0));
+    let out = run(
+        root,
+        &["log", "-n500", &since, "--format=%H%x1f%ct%x1f%B%x1e", main],
+    )
+    .unwrap_or_default();
+    let mut found = Vec::new();
+    for rec in out.split('\x1e') {
+        let mut f = rec.trim_start().splitn(3, '\x1f');
+        let (Some(sha), Some(at), Some(msg)) = (f.next(), f.next(), f.next()) else {
+            continue;
+        };
+        let Ok(at) = at.trim().parse::<i64>() else {
+            continue;
+        };
+        found.extend(
+            named_in(msg)
+                .into_iter()
+                .map(|n| (n, sha.trim().to_string(), at)),
+        );
+    }
+    found
+}
+
+/// The note numbers a commit message names: `#129`, a run `#129-#131` (or
+/// `#129-131`, `#129–#131`) up to fifty long, each of a list. Not a pull
+/// request's number -- "PR #79", "pull request #81", a merge's own line --
+/// nor a trailer's, so a merge of the PR that carried the work does not
+/// land a line whose number happens to be the PR's.
+pub fn named_in(msg: &str) -> Vec<i64> {
+    let mut ids = Vec::new();
+    for line in msg.lines() {
+        let low = line.trim().to_ascii_lowercase();
+        if low.starts_with("merge ")
+            || low.starts_with("co-authored-by")
+            || low.starts_with("signed-off-by")
+        {
+            continue;
+        }
+        let b = low.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] != b'#' {
+                i += 1;
+                continue;
+            }
+            let before = low[..i].trim_end();
+            let pr =
+                before.ends_with("pr") || before.ends_with("request") || before.ends_with("issue");
+            let (a, end) = digits(b, i + 1);
+            i = end.max(i + 1);
+            let Some(a) = a else { continue };
+            // A run: "-" or an en dash, an optional "#", the last number.
+            let rest = &low[i..];
+            let dash = rest.strip_prefix('-').or_else(|| rest.strip_prefix('–'));
+            let mut last = a;
+            if let Some(r) = dash {
+                let skip = low.len() - r.len();
+                let from = skip + usize::from(r.starts_with('#'));
+                if let (Some(z), e) = digits(b, from) {
+                    if z > a && z - a <= 50 {
+                        last = z;
+                        i = e;
+                    }
+                }
+            }
+            if !pr {
+                ids.extend(a..=last);
+            }
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+/// The number at `b[from..]`, if one starts there, and where it ends.
+fn digits(b: &[u8], from: usize) -> (Option<i64>, usize) {
+    let end = (from..b.len())
+        .find(|&j| !b[j].is_ascii_digit())
+        .unwrap_or(b.len());
+    let n = std::str::from_utf8(&b[from.min(end)..end])
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .filter(|_| end > from && end - from <= 9);
+    (n, end)
+}
+
 /// `git rev-list --max-parents=0 HEAD`, one hash a line, as one print: sorted,
 /// so the order git walks them in does not matter.
 fn roots_print(out: &str) -> Option<String> {
@@ -266,12 +417,30 @@ fn same(a: &Path, b: &Path) -> bool {
 
 /// One git command in `dir`, its output when it succeeded within `WAIT`.
 fn run(dir: &Path, args: &[&str]) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.args(["-c", "core.fsmonitor=false", "--no-optional-locks"])
-        .args(args)
+    let mut all = vec!["-c", "core.fsmonitor=false", "--no-optional-locks"];
+    all.extend_from_slice(args);
+    run_for("git", dir, &all, WAIT)
+}
+
+/// The branch a worktree has out, or None on a detached head or outside a
+/// repository: what a thread's own folder says its branch is, when the
+/// folder is a worktree made for it (`thread::repair_branch`).
+pub fn branch_of(dir: &Path) -> Option<String> {
+    let b = run(dir, &["branch", "--show-current"])?;
+    let b = b.trim();
+    (!b.is_empty()).then(|| b.to_string())
+}
+
+/// One command in `dir`, its output when it succeeded within `wait`: git's
+/// care -- no prompt, no window on Windows, no stall on a full pipe -- for
+/// `gh` too (`crate::gh`).
+pub(crate) fn run_for(program: &str, dir: &Path, args: &[&str], wait: Duration) -> Option<String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args)
         // Plain, not `\\?\`: git's own runtime reads its working directory.
         .current_dir(dunce::simplified(dir))
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -293,7 +462,7 @@ fn run(dir: &Path, args: &[&str]) -> Option<String> {
     let status = loop {
         match child.try_wait() {
             Ok(Some(st)) => break st,
-            Ok(None) if start.elapsed() < WAIT => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) if start.elapsed() < wait => std::thread::sleep(Duration::from_millis(10)),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -350,6 +519,41 @@ fn parse_log(out: &str) -> Vec<Commit> {
 
 #[cfg(test)]
 mod tests {
+    /// Today's own subjects: the 1.35 commit that finished five notes, a
+    /// release's merge, a PR named in passing, a trailer.
+    #[test]
+    fn a_commit_message_names_its_notes_and_not_its_pr() {
+        use super::named_in;
+        assert_eq!(
+            named_in("Folded rails read as one, a closed panel leaves no blank ones, a page to look at goes to snyvi (#129-#131, #153, #155)"),
+            [129, 130, 131, 153, 155]
+        );
+        assert_eq!(
+            named_in("Ctrl+F / ⌘F finds in the document, as in every other app (#156)"),
+            [156]
+        );
+        assert_eq!(
+            named_in("Merge pull request #81 from snymrova/claude/release-1-36"),
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            named_in("Fixes from PR #79 and pull request #80, issue #12"),
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            named_in("Shipped #96–#98 and #99-100\n\nCo-Authored-By: x #5"),
+            [96, 97, 98, 99, 100]
+        );
+        assert_eq!(
+            named_in("A run too long to be one: #1-#900, and #x, and #"),
+            [1, 900]
+        );
+        assert_eq!(
+            named_in("1.34.0: a batch of notes is one call"),
+            Vec::<i64>::new()
+        );
+    }
+
     use super::*;
 
     #[test]
@@ -546,6 +750,50 @@ mod tests {
             print(&b).and_then(|p| p.remote),
             Some(remote_print("https://github.com/o/r"))
         );
+    }
+
+    #[test]
+    fn a_merged_branch_is_found_and_a_new_one_is_not() {
+        let dir = crate::store::tempdir::Dir::new("snyvi-git-merge");
+        let r = &dir.path;
+        let git = |args: &[&str]| {
+            let mut a = vec![
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ];
+            a.extend_from_slice(args);
+            run(r, &a).is_some()
+        };
+        if !git(&["init", "-q", "-b", "main"]) {
+            return; // no git here
+        }
+        assert!(git(&["commit", "-q", "--allow-empty", "-m", "one"]));
+        assert!(git(&["branch", "fresh"]));
+        assert!(git(&["checkout", "-q", "-b", "work"]));
+        assert!(git(&["commit", "-q", "--allow-empty", "-m", "the work"]));
+        assert!(git(&["checkout", "-q", "main"]));
+        assert_eq!(merge_of(r, "work"), None, "not merged yet");
+        assert!(git(&["merge", "-q", "--no-ff", "-m", "Merge work", "work"]));
+        let merged = merge_of(r, "work").expect("the merge is found");
+        assert_eq!(
+            Some(merged.0.trim()),
+            run(r, &["rev-parse", "HEAD"]).as_deref().map(str::trim)
+        );
+        // Made and never committed to: its tip is main's own first parent.
+        assert_eq!(merge_of(r, "fresh"), None);
+        assert_eq!(merge_of(r, "gone"), None);
+    }
+
+    #[test]
+    fn the_merge_is_the_one_that_took_the_tip_in() {
+        let log = "m3 30 m2 x\nm2 20 a1 tip\nm1 10 tip b1\n";
+        assert_eq!(merge_line(log, "tip"), Some(("m2".into(), 20)));
+        assert_eq!(merge_line("m1 10 tip b1\n", "tip"), None);
+        assert_eq!(merge_line("", "tip"), None);
     }
 
     #[test]

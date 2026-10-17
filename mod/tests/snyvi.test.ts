@@ -17,14 +17,17 @@ test('the checks are one word', () => {
   expect(ciOf([{ status: 'COMPLETED', conclusion: 'FAILURE' }, { status: 'IN_PROGRESS' }])).toBe('failing')
 })
 
-test('a PR sighting is filed only when the checks or the merge differ, and a closed PR settles the watch', () => {
+test('a PR sighting is filed only when the checks, the state or the merge differ, and a closed PR settles the watch', () => {
   const running = { state: 'OPEN', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { status: 'IN_PROGRESS' }] }
-  expect(prSighting(running, {})).toEqual({ seen: { ci: '1/2' }, settled: false })
-  expect(prSighting(running, { ci: '1/2' })).toEqual({ seen: null, settled: false })
-  const merged = { state: 'MERGED', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }], mergeCommit: { oid: 'abc1234' } }
-  expect(prSighting(merged, { ci: '1/2' })).toEqual({ seen: { ci: 'passing', merged: 'abc1234' }, settled: true })
-  expect(prSighting(merged, { ci: 'passing', merged: 'abc1234' })).toEqual({ seen: null, settled: true })
-  expect(prSighting({ state: 'CLOSED', statusCheckRollup: [] }, {})).toEqual({ seen: null, settled: true })
+  expect(prSighting(running, {})).toEqual({ seen: { ci: '1/2', state: 'open' }, settled: false })
+  expect(prSighting(running, { ci: '1/2', pr_state: 'open' })).toEqual({ seen: null, settled: false })
+  const merged = { state: 'MERGED', statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'SUCCESS' }], mergeCommit: { oid: 'abc1234' }, mergedBy: { login: 'snymrova' } }
+  expect(prSighting(merged, { ci: '1/2', pr_state: 'open' })).toEqual({
+    seen: { ci: 'passing', state: 'merged', merged: 'abc1234', merged_by: 'snymrova' },
+    settled: true,
+  })
+  expect(prSighting(merged, { ci: 'passing', merged: 'abc1234', pr_state: 'merged' })).toEqual({ seen: null, settled: true })
+  expect(prSighting({ state: 'CLOSED', statusCheckRollup: [] }, {})).toEqual({ seen: { state: 'closed' }, settled: true })
 })
 
 test('a round goes again at once on a band or a held call, and waits out a failure', () => {

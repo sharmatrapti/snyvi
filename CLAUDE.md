@@ -15,6 +15,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | the library API, the receive endpoint, asides, folders | `src/server/api_docs.rs` | — |
 | the page's side of a desk: Home, desks, panels, notes, keys | `src/server/api_desk.rs` | skip `refuse_desk` |
 | the agent's side: `/api/panes/{id}/*`, agents | `src/server/api_agent.rs` | reach the store before `agent_pane` |
+| pipelines: rows (`src/pipeline.rs`), planner, transcript reader; the runner (`src/server/pipeline_run.rs`); the window's routes (`src/server/api_pipeline.rs`) | | start one from a token route; put a step through a shell |
 | a friend's snyvi: pairing, Send to…, offers, the link | `src/server/api_peer.rs`, `src/server/peer_link.rs` (the socket to the relay), `src/peer.rs` (keys, code, frame, relay client, tables), `relay/` (the Worker) | send on an agent's word; parse a frame before its key is pinned; wait at the relay with anything but the one socket |
 | the desk socket · SSE · browse mode · restart, update, reset | `src/server/{ws,events,api_browse,lifecycle}.rs` | — |
 | the route table test | `src/server/tests.rs` | lag the router: the count must match |
@@ -23,11 +24,12 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 | a PTY, its process, its screen | `src/pane.rs`, `src/screen.rs` | touch the store |
 | every transport's way in | `src/receive.rs` → `render.rs` | be bypassed; hook, MCP, CLI, watch all call it |
 | who may call what | `src/capability.rs`, `src/config.rs` (token), `src/secrets.rs` (desk key values) | be duplicated in `server.rs` |
-| Claude Code side | `src/hook.rs`, `src/brief.rs`, `src/session.rs`, `src/statusline.rs`, `src/setup.rs` | write hooks for another binary |
+| Claude Code side | `src/hook.rs`, `src/brief.rs`, `src/session.rs`, `src/statusline.rs`, `src/setup.rs`, `src/skill/` (the skill `init-claude` writes) | write hooks for another binary |
 | MCP tools | `src/mcp.rs`, `src/agents.rs` (which agent has what) | reach the store directly; they go through `client.rs` |
 | CLI → daemon | `src/client.rs`, `src/main.rs` | be the only path a test knows |
 | self-update, restart | `src/update.rs`, `src/platform.rs`, `src/desktop.rs` | — |
 | the window | `src/bin/app.rs` | hold daemon logic |
+| every message from outside: the corner's card, pill and tray (On you, Lately) | `ui/corner.js`, `src/lately.rs` (kept, `lately_log` beside each event), `ui/desk/10-onyou.js` (the desk's corner) | put a message anywhere else, or let one go on a timer (`docs/DESIGN.md` §4.5) |
 | first paint | `ui/index.html`, `ui/boot.js`, `ui/app/*.js` (joined into `app.js`), `ui/app.css`, `ui/themes.css` | grow past the budget (`bench/bytes.mjs`) |
 | lazy chunks | `ui/desk/*.js` (joined into `desk.js`), `ui/home.js`, `ui/about.js`, `ui/mmd.js`, `ui/menu.js`, `ui/peer.js`, … | be imported by first paint |
 | the strip, the join, the embed | `build.rs`, `src/strip.rs` (`source` joins `ui/app/*.js` and `ui/desk/*.js` in name order; `SNYVI_UI_DIR` serves the same join) | serve a part on its own |
@@ -43,7 +45,7 @@ Read this, then `docs/MODULES.md` when you need the longer map.
 
 - Local only. Bind 127.0.0.1; every route checks `Host`/`Origin`; no accounts, no telemetry. The one thing that leaves the machine is a frame the reader pressed Send on, sealed to a friend's pinned key (`docs/PEER.md`); the relay reads none of it.
 - **Capability ≠ token.** The capability is the window's (desk routes, reader actions). The token is the agent's (`send`, `aside`, `panes/{id}/*`). A token never mints a capability and never starts a command.
-- snyvi never makes input from content it received. Agents send, snyvi shows. No command runner.
+- snyvi never makes input from content it received. Agents send, snyvi shows. No command runner. A pipeline (1.40) is the one place a model's text becomes a prompt: made and started only from the window, each step one argv entry of a new session in a worktree, never keystrokes (`docs/TERMINAL.md` §9a).
 - Nothing is deleted. A ✕ removes from view and stays recoverable. Documents are immutable; a resend is a new version.
 - No layout shift: nothing that comes and goes may move the page.
 - First paint ≤ the budget in `bench/bytes.mjs`. Files ≤ 2,500 lines, functions ≤ 120 (`bench/size.mjs`); what is over may only shrink.
@@ -68,3 +70,4 @@ Review in a test window on a spare port (`SNYVI_PORT=78xx`, `SNYVI_UI_DIR=ui` ho
 - `app.js` and `desk.js` are parts: add code to the part it belongs to, or a new numbered part; never recreate the whole file.
 - A new route goes in its `api_*.rs`, the router, and the table in `tests.rs`, or the count test fails.
 - Plans and docs for the maker go to snyvi (`send_document`), with Mermaid flows and a before/after.
+- A commit that finishes a desk note names it, `(#129)` or `(#129-#131)`: once it is on main, snyvi marks the note "check it" whatever branch carried it (`git::named_in`). Never write a PR's number as a bare `#N`; write `PR #79`.

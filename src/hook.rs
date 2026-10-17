@@ -24,7 +24,18 @@ use std::path::{Path, PathBuf};
 /// would be read by whatever snyvi the entry names, and one from before the
 /// flag existed fails on it, on every tool call. So whether a written file
 /// is sent is not the entry's to say but `auto_send`'s.
-const STATUS_EVENTS: [&str; 4] = ["UserPromptSubmit", "Notification", "Stop", "SessionEnd"];
+///
+/// `StopFailure` is the end of a turn that ended on an API error -- a usage
+/// limit, an outage -- which Claude Code says in place of `Stop`. Without it a
+/// panel stopped at its limit said `working` until the next prompt, and a
+/// switch to another account waited on it (note #127).
+const STATUS_EVENTS: [&str; 5] = [
+    "UserPromptSubmit",
+    "Notification",
+    "Stop",
+    "StopFailure",
+    "SessionEnd",
+];
 
 /// The tools the status entry runs after. It used to be every tool (`*`),
 /// which is one process started per Read, Grep and Glob of every turn, and
@@ -70,6 +81,19 @@ struct Event {
     source: Str,
     /// SessionStart: the title the session already has, if any.
     session_title: Str,
+    /// StopFailure: the error that ended the turn, `rate_limit` and the rest
+    /// (`crate::pane::STOP_REASONS`).
+    error: Str,
+    /// Stop: the text of the reply that just ended the turn.
+    last_assistant_message: Str,
+    /// Every event: the session's transcript, which Stop reads back to the
+    /// reader's last prompt for a `send_document` (`sent_this_turn`), and a
+    /// pipeline's runner for its `/goal` (`crate::pipeline::transcript`).
+    transcript_path: Str,
+    /// Stop: true when Claude Code is already going on because a Stop hook
+    /// asked it to. Taken as any value, so a shape nobody expected is only
+    /// this field missing.
+    stop_hook_active: Option<Value>,
 }
 
 /// The few fields of a tool's input or response this reads. `plan` and
@@ -239,13 +263,13 @@ pub fn run(paths: &Paths) -> Result<()> {
         // without taking it, and one that did not answer at all -- slow,
         // or the pane unknown to it -- may not have taken it either: both
         // are told the way they know, after. Telling twice sets it twice.
-        let asks = starting || name == "UserPromptSubmit";
+        let asks = starting || name == "UserPromptSubmit" || name == "Stop";
         if said && !asks {
-            client::agent_state(paths, pane, state, session);
+            client::agent_state(paths, pane, state, session, stop_reason(&event));
         }
         let tell_anyway = |heard: Option<&client::Said>| {
             if said && heard.is_none_or(|h| !h.applied) {
-                client::agent_state(paths, pane, state, session);
+                client::agent_state(paths, pane, state, session, None);
             }
         };
         // The desk brief, on every start -- a new session, a resume, a
@@ -270,6 +294,10 @@ pub fn run(paths: &Paths) -> Result<()> {
         // when something did: most prompts get nothing, and nothing is
         // printed. It rides on the reader's own message, so snyvi still
         // never starts a turn.
+        if name == "Stop" {
+            stopped(paths, pane, session, &event);
+            return Ok(());
+        }
         if name == "UserPromptSubmit" {
             let c = client::changes(paths, pane, state, session);
             tell_anyway(c.as_ref());
@@ -302,7 +330,7 @@ pub fn run(paths: &Paths) -> Result<()> {
     }
     let payload = Payload {
         path: Some(file.to_string()),
-        cwd: event.cwd.get().map(str::to_string),
+        cwd: anchor(project_dir(), event.cwd.get()),
         session: event.session_id.get().map(crate::session::workflow_key),
         origin: Some("hook".into()),
         sender: Some("claude-code".into()),
@@ -315,6 +343,23 @@ pub fn run(paths: &Paths) -> Result<()> {
     // stored and finishes rendering after the hook has gone.
     let _ = client::send_quick(paths, &payload, AUTO_SEND_WITHIN);
     Ok(())
+}
+
+/// The folder a send is filed by: the project the session started in, which
+/// Claude Code gives every hook as `CLAUDE_PROJECT_DIR` and which stays put
+/// when Claude runs `cd`. The event's `cwd` moves with it, and a draft filed
+/// by it landed in a subfolder's project while the agent's own send of the
+/// same file landed in the session's: two rows for one document, 48 times
+/// in a month (audit bf13a1859b). `snyvi mcp` files by the same variable.
+fn anchor(project_dir: Option<String>, cwd: Option<&str>) -> Option<String> {
+    project_dir
+        .filter(|d| !d.trim().is_empty())
+        .or_else(|| cwd.map(str::to_string))
+}
+
+/// `CLAUDE_PROJECT_DIR`, as Claude Code sets it for hooks and MCP servers.
+pub fn project_dir() -> Option<String> {
+    std::env::var("CLAUDE_PROJECT_DIR").ok()
 }
 
 /// How long a Markdown write's send waits for the daemon's answer. Claude's
@@ -408,6 +453,257 @@ fn prompt_output(event: &Event, context: &str, title: &str, desk: &str) -> Optio
     Some(json!({ "hookSpecificOutput": out }).to_string())
 }
 
+/// What a Stop hook in a panel prints: once, when the reply that ended the
+/// turn asked the reader to type a `! command` themselves (#119). In a panel
+/// that command belongs on their On you list, where Run types it for them on
+/// one click; printed in the reply, they copy it out by hand. The agent is
+/// told so and carries on, and it is the agent that hands it over -- snyvi
+/// makes no card of what an agent wrote. Not again on the turn this one
+/// kept going (`stop_hook_active`), and only for Claude Code, which is where
+/// Run types and the only client known to take the field.
+///
+/// A command that only opens a file -- `xdg-open review.html` -- is a thing
+/// to look at, and that goes to snyvi, not to a Run that opens a browser
+/// beside it (#153: a page of clips was left as `! xdg-open`, and once
+/// nudged to hand it over the agent opened it in the browser itself).
+///
+/// And when the reply is a document (`document_shaped`) and the turn sent
+/// nothing to snyvi (`sent_this_turn`): the instructions say to send one, and
+/// a long turn forgets them -- three replies with Mermaid and tables stayed in
+/// the chat in one session. Both words in one message when both apply.
+fn stop_output(event: &Event) -> Option<String> {
+    if event.stop_hook_active.as_ref().and_then(Value::as_bool) == Some(true)
+        || !event
+            .session_id
+            .get()
+            .is_some_and(crate::desk::valid_session)
+    {
+        return None;
+    }
+    let reply = event.last_assistant_message.get()?;
+    let bang = bang_line(reply).map(|cmd| match opened_file(cmd) {
+        Some(file) => format!(
+            "Your reply asks the user to open `{file}` themselves (`! {cmd}`). In a snyvi panel \
+             a page, a picture, a clip or a document for them to look at goes to snyvi: send it \
+             with send_document by path, then say it is waiting in snyvi, and do not open it in \
+             a browser for them. An HTML file there must be self-contained -- files beside it \
+             are not loaded -- so a page of clips or pictures from beside it goes as Markdown, \
+             `![step](clip.mp4)`. If you already sent it, end your turn without repeating it."
+        ),
+        None => format!(
+            "Your reply asks the user to type `! {cmd}` themselves. In a snyvi panel a command \
+             that is theirs to run goes on their On you list: call hand_over with kind run and cmd \
+             set to that command, so they can press Run, then end your turn. If you already \
+             handed it over, end your turn without repeating it."
+        ),
+    });
+    let doc = (document_shaped(reply) && !event.transcript_path.get().is_some_and(sent_this_turn))
+        .then_some(
+            "Your reply is a document -- a Mermaid diagram, tables, sections -- and nothing went \
+         to snyvi this turn. In a snyvi panel a document goes to snyvi: send it with \
+         send_document (Markdown; Mermaid is drawn), then say in a line that it is waiting in \
+         snyvi. If you already sent it, end your turn without repeating it.",
+        );
+    let context = [bang.as_deref(), doc]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(
+            "
+
+",
+        );
+    if context.is_empty() {
+        return None;
+    }
+    Some(
+        json!({ "hookSpecificOutput": { "hookEventName": "Stop", "additionalContext": context } })
+            .to_string(),
+    )
+}
+
+/// How long a reply with headings is before it is a document on its length
+/// alone: a page, not an answer.
+const DOC_CHARS: usize = 2500;
+
+/// Whether a reply is a document left in the chat: a Mermaid diagram, which
+/// only snyvi draws; sections with a table; or sections at a page's length.
+/// An answer, a code block, a list of what changed, is not.
+fn document_shaped(reply: &str) -> bool {
+    let lines = || reply.lines().map(str::trim_start);
+    let mut fenced = false;
+    let (mut heads, mut table) = (0, false);
+    for l in lines() {
+        if l.starts_with("```") {
+            if !fenced
+                && l.trim_start_matches('`')
+                    .trim()
+                    .eq_ignore_ascii_case("mermaid")
+            {
+                return true;
+            }
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        if l.starts_with("## ") || l.starts_with("# ") || l.starts_with("### ") {
+            heads += 1;
+        }
+        if l.starts_with('|') && l.contains("---") {
+            table = true;
+        }
+    }
+    heads >= 2 && (table || reply.chars().count() >= DOC_CHARS)
+}
+
+/// How much of a transcript's end is read back for this turn: a turn's tool
+/// calls, not a day's conversation.
+const TURN_TAIL: u64 = 4 << 20;
+
+/// Whether the agent called `send_document` since the reader's last prompt,
+/// read back from the end of the session's transcript (JSON lines). A tool's
+/// result comes back as a `user` line too, and a hook's context as a meta
+/// one; only a line the reader typed ends the turn. A transcript that cannot
+/// be read is a turn that sent nothing: the word to send says to end the
+/// turn if it already went.
+fn sent_this_turn(path: &str) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    // From a byte offset, which may fall inside a character: lossily, and
+    // the line it cut is skipped as not JSON.
+    let mut bytes = Vec::new();
+    if f.seek(SeekFrom::Start(len.saturating_sub(TURN_TAIL)))
+        .is_err()
+        || f.read_to_end(&mut bytes).is_err()
+    {
+        return false;
+    }
+    for line in String::from_utf8_lossy(&bytes).lines().rev() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let content = &v["message"]["content"];
+        match v["type"].as_str() {
+            Some("assistant") => {
+                let sent = content.as_array().is_some_and(|c| {
+                    c.iter().any(|b| {
+                        b["type"] == "tool_use"
+                            && b["name"]
+                                .as_str()
+                                .is_some_and(|n| n.ends_with("send_document"))
+                    })
+                });
+                if sent {
+                    return true;
+                }
+            }
+            Some("user") if v["isMeta"] != true => {
+                let typed = content.is_string()
+                    || content
+                        .as_array()
+                        .is_some_and(|c| c.iter().any(|b| b["type"] == "text"));
+                if typed {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// A turn's end in a panel: the daemon told in one request that also
+/// carries what a pipeline's runner reads, and its answer -- the panel's
+/// stage is to hand over -- keeps the turn going for that; otherwise the
+/// nudge about a `! command`, when the reply had one.
+fn stopped(paths: &Paths, pane: &str, session: Option<&str>, event: &Event) {
+    let active = event.stop_hook_active.as_ref().and_then(Value::as_bool) == Some(true);
+    let handoff = client::agent_stop(
+        paths,
+        pane,
+        session,
+        event.transcript_path.get(),
+        event.last_assistant_message.get(),
+        active,
+    );
+    if let Some(out) = handoff
+        .map(|said| stop_feedback(&said))
+        .or_else(|| stop_output(event))
+    {
+        println!("{out}");
+    }
+}
+
+/// What a Stop hook prints to keep the turn going with `said` as what
+/// Claude is told: a pipeline's handoff (`server::pipeline_run`). Feedback
+/// rather than a `block`, which Claude Code shows the reader as a "Stop hook
+/// error"; this continues the turn the same way and reads as "Stop hook
+/// feedback" (hooks.md, Stop decision control).
+fn stop_feedback(said: &str) -> String {
+    json!({ "hookSpecificOutput": { "hookEventName": "Stop", "additionalContext": said } })
+        .to_string()
+}
+
+/// A `! command` for the reader to type, as Claude Code's shell mode takes
+/// it: `!`, a space, and a command word. First a line that is one, bare or
+/// in backticks; failing that, one in backticks inside a line of prose --
+/// "**Watch them:** `! xdg-open …`" was missed (#153). Inside prose it takes
+/// a word after the command: a bare `! command` or `! something` there is a
+/// reply talking about commands, not one for the reader to type. The
+/// command, without its `!`.
+fn bang_line(reply: &str) -> Option<&str> {
+    fn whole(l: &str) -> Option<&str> {
+        bang(l.trim().trim_matches('`').trim())
+    }
+    fn inline(l: &str) -> Option<&str> {
+        l.split('`')
+            .skip(1)
+            .step_by(2)
+            .filter_map(bang)
+            .find(|cmd| cmd.contains(char::is_whitespace))
+    }
+    reply
+        .lines()
+        .find_map(whole)
+        .or_else(|| reply.lines().find_map(inline))
+}
+
+fn bang(s: &str) -> Option<&str> {
+    let cmd = s.strip_prefix("! ")?.trim();
+    let word = cmd.split_whitespace().next()?;
+    word.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "._/-~".contains(c))
+        .then_some(cmd)
+}
+
+/// The file a command only opens for looking at -- `xdg-open`, `open`,
+/// `gio open`, a browser -- or `None`: a URL is not a file snyvi can take
+/// (a test window's address stays a Run), and anything else is a command.
+fn opened_file(cmd: &str) -> Option<&str> {
+    let mut words = cmd.split_whitespace();
+    let first = words.next()?;
+    let opener = match first.rsplit('/').next()? {
+        "gio" => words.next() == Some("open"),
+        w => matches!(
+            w,
+            "xdg-open"
+                | "open"
+                | "sensible-browser"
+                | "firefox"
+                | "google-chrome"
+                | "chromium"
+                | "chromium-browser"
+        ),
+    };
+    let file = words.last()?.trim_matches(|c| c == '"' || c == '\'');
+    (opener && !file.is_empty() && !file.starts_with('-') && !file.contains("://")).then_some(file)
+}
+
 /// A title snyvi gave, and so one it may give again: the old
 /// "<desk> · panel <n>" on any desk, or anything after this desk's
 /// "<desk> · " (`crate::brief::title`), a panel's name included.
@@ -466,7 +762,7 @@ fn send_plan(paths: &Paths, event: &Event, in_pane: bool) {
         },
         path: file,
         lang: Some("md".into()),
-        cwd: event.cwd.get().map(str::to_string),
+        cwd: anchor(project_dir(), event.cwd.get()),
         session: event.session_id.get().map(crate::session::workflow_key),
         origin: Some("plan".into()),
         sender: Some("claude-code".into()),
@@ -509,7 +805,7 @@ const PLAN_MATCHER: &str = "ExitPlanMode";
 fn agent_state(event: &Event) -> Option<&'static str> {
     match event.hook_event_name.get()? {
         "UserPromptSubmit" | "PostToolUse" => Some("working"),
-        "Stop" => Some("done"),
+        "Stop" | "StopFailure" => Some("done"),
         "SessionEnd" => Some(""),
         // Codex asks for an approval through this event; Claude Code says the
         // same thing with a `Notification`.
@@ -528,6 +824,13 @@ fn agent_state(event: &Event) -> Option<&'static str> {
     }
 }
 
+/// Why a turn ended without its answer: a `StopFailure`'s error, which goes
+/// with its `done` so a panel stopped at its limit can offer another account.
+fn stop_reason(event: &Event) -> Option<&str> {
+    (event.hook_event_name.get() == Some("StopFailure"))
+        .then(|| event.error.get().unwrap_or("unknown"))
+}
+
 /// Whether the reader asked for every file Claude writes to be sent: the
 /// Write/Edit entry `init-claude --auto` installs is there. Asked only for a
 /// write of a file that would be sent, so the settings are read rarely.
@@ -539,6 +842,11 @@ fn auto_send() -> bool {
 }
 
 /// Extensions to send, comma separated. Default: Markdown only.
+///
+/// Never what an agent keeps for itself: Claude's memory and plans under
+/// `.claude`, gstack's, Codex's. A quarter of what the hook sent in a month
+/// was memory files (audit bf13a1859b), each one a notification and, once,
+/// the brief's "last document" for the next panel.
 fn wanted(path: &Path) -> bool {
     let exts = std::env::var("SNYVI_HOOK_EXT").unwrap_or_else(|_| "md,markdown".into());
     let ext = path
@@ -548,7 +856,7 @@ fn wanted(path: &Path) -> bool {
     let skip = path.components().any(|c| {
         matches!(
             c.as_os_str().to_str(),
-            Some(".git" | "node_modules" | "target" | ".snyvi")
+            Some(".git" | "node_modules" | "target" | ".snyvi" | ".claude" | ".gstack" | ".codex")
         )
     });
     !skip && exts.split(',').any(|e| e.trim().eq_ignore_ascii_case(&ext))
@@ -817,6 +1125,7 @@ pub fn installed(settings: &Value) -> Vec<(&'static str, String)> {
         "UserPromptSubmit",
         "Notification",
         "Stop",
+        "StopFailure",
         "SessionEnd",
         "PostToolUse",
     ] {
@@ -1004,12 +1313,29 @@ mod tests {
     }
 
     #[test]
+    fn a_send_is_filed_by_the_sessions_project_not_where_claude_cd_to() {
+        assert_eq!(
+            anchor(Some("/p".into()), Some("/p/docs/reel")).as_deref(),
+            Some("/p")
+        );
+        assert_eq!(anchor(None, Some("/p/docs")).as_deref(), Some("/p/docs"));
+        assert_eq!(anchor(Some(" ".into()), Some("/q")).as_deref(), Some("/q"));
+        assert_eq!(anchor(None, None), None);
+    }
+
+    #[test]
     fn extension_filter() {
         assert!(wanted(Path::new("/p/PLAN.md")));
         assert!(wanted(Path::new("/p/notes.MD")));
         assert!(!wanted(Path::new("/p/main.rs")));
         assert!(!wanted(Path::new("/p/node_modules/x/README.md")));
         assert!(!wanted(Path::new("/p/.git/x.md")));
+        assert!(!wanted(Path::new(
+            "/home/u/.claude/projects/-home-u-p/memory/plan.md"
+        )));
+        assert!(!wanted(Path::new("/home/u/.claude/plans/x.md")));
+        assert!(!wanted(Path::new("/home/u/.gstack/projects/p/plan.md")));
+        assert!(!wanted(Path::new("/home/u/.codex/AGENTS.md")));
     }
 
     #[test]
@@ -1018,6 +1344,22 @@ mod tests {
         assert_eq!(state_of(&ev("UserPromptSubmit")), Some("working"));
         assert_eq!(state_of(&ev("PostToolUse")), Some("working"));
         assert_eq!(state_of(&ev("Stop")), Some("done"));
+        // A turn ended by a usage limit or an outage is over all the same,
+        // and says why; nothing else does.
+        assert_eq!(state_of(&ev("StopFailure")), Some("done"));
+        let why = |v: Value| {
+            let e: Event = serde_json::from_slice(v.to_string().as_bytes()).unwrap();
+            stop_reason(&e).map(str::to_string)
+        };
+        assert_eq!(
+            why(json!({ "hook_event_name": "StopFailure", "error": "rate_limit" })).as_deref(),
+            Some("rate_limit")
+        );
+        assert_eq!(why(ev("StopFailure")).as_deref(), Some("unknown"));
+        assert_eq!(
+            why(json!({ "hook_event_name": "Stop", "error": "x" })),
+            None
+        );
         assert_eq!(state_of(&ev("SessionEnd")), Some(""));
         assert_eq!(state_of(&ev("SessionStart")), None);
         assert_eq!(
@@ -1041,11 +1383,12 @@ mod tests {
         );
     }
 
-    const ALL: [&str; 5] = [
+    const ALL: [&str; 6] = [
         "SessionStart",
         "UserPromptSubmit",
         "Notification",
         "Stop",
+        "StopFailure",
         "SessionEnd",
     ];
 
@@ -1082,7 +1425,7 @@ mod tests {
             install_into(&mut s, "/opt/snyvi hook", true).unwrap(),
             (true, false)
         );
-        assert_eq!(installed(&s).len(), 6);
+        assert_eq!(installed(&s).len(), 7);
         assert_eq!(s["hooks"]["PostToolUse"].as_array().unwrap().len(), 3);
         assert_eq!(
             install_into(&mut s, "/opt/snyvi hook", true).unwrap(),
@@ -1121,9 +1464,28 @@ mod tests {
                 .unwrap()
                 .0
         );
-        assert_eq!(installed(&old).len(), 6);
+        assert_eq!(installed(&old).len(), 7);
         assert_eq!(old["hooks"]["PostToolUse"].as_array().unwrap().len(), 2);
         assert_eq!(old["hooks"]["PostToolUse"][1]["matcher"], STATUS_TOOLS);
+    }
+
+    /// An install from before `StopFailure` gains it at the next daemon
+    /// start, beside the four it had, and nothing else moves (note #127).
+    #[test]
+    fn an_install_without_stop_failure_gains_it() {
+        let mut s = json!({});
+        install_into(&mut s, "/usr/bin/snyvi hook", false).unwrap();
+        s["hooks"].as_object_mut().unwrap().remove("StopFailure");
+        assert!(!installed(&s).iter().any(|(e, _)| *e == "StopFailure"));
+        assert_eq!(
+            install_into(&mut s, "/usr/bin/snyvi hook", false).unwrap(),
+            (true, false)
+        );
+        assert_eq!(
+            installed(&s),
+            ALL.map(|e| (e, "/usr/bin/snyvi hook".to_string())).to_vec()
+        );
+        assert_eq!(s["hooks"]["StopFailure"][0]["hooks"][0]["timeout"], 10);
     }
 
     /// An install from 1.12 ran the status entry on every tool. The next
@@ -1271,7 +1633,16 @@ mod tests {
     #[test]
     fn the_hook_never_reaches_a_function_that_starts_a_daemon() {
         let src = include_str!("hook.rs");
-        let allowed = ["send_quick", "agent_state", "brief", "changes", "Said"];
+        // `agent_stop` starts nothing and waits a second and a half at most:
+        // a pipeline's handoff is decided in that request (1.40).
+        let allowed = [
+            "send_quick",
+            "agent_state",
+            "agent_stop",
+            "brief",
+            "changes",
+            "Said",
+        ];
         for (i, line) in src.lines().enumerate() {
             let mut rest = line;
             while let Some(at) = rest.find("client::") {
@@ -1302,18 +1673,247 @@ mod tests {
             { "matcher": "Bash", "hooks": [{ "type": "command", "command": "other --x" }] } ] } });
         let mut s = before.clone();
         install_into(&mut s, "/opt/snyvi hook", true).unwrap();
-        assert_eq!(remove_from(&mut s), 8);
+        assert_eq!(remove_from(&mut s), 9);
         assert_eq!(s, before);
         // A file that had only ours goes back to having no hooks key at all.
         let mut s = json!({ "theme": "dark" });
         install_into(&mut s, "snyvi hook", true).unwrap();
-        assert_eq!(remove_from(&mut s), 8);
+        assert_eq!(remove_from(&mut s), 9);
         assert_eq!(s, json!({ "theme": "dark" }));
         assert_eq!(remove_from(&mut s), 0);
     }
 
     fn event(v: Value) -> Event {
         serde_json::from_slice(v.to_string().as_bytes()).unwrap()
+    }
+
+    /// A reply that leaves the reader a `! command` to type is answered once
+    /// with a word to hand it over (#119); prose with a `!` in it, a turn a
+    /// Stop hook already kept going, and a client that is not Claude Code
+    /// are left alone.
+    #[test]
+    fn a_bang_command_in_a_reply_is_sent_back_to_hand_over() {
+        let sid = "0a1b2c3d-4e5f-4061-8728-394a5b6c7d8e";
+        let stop = |msg: &str, active: Value| {
+            event(json!({ "hook_event_name": "Stop", "session_id": sid,
+                "last_assistant_message": msg, "stop_hook_active": active }))
+        };
+        let reply = "PR #75 is merged.\n\n! gh workflow run release.yml -f version=1.33.0\n\nOnce it starts, I'll watch.";
+        let out: Value =
+            serde_json::from_str(&stop_output(&stop(reply, json!(false))).unwrap()).unwrap();
+        assert_eq!(out["hookSpecificOutput"]["hookEventName"], "Stop");
+        let said = out["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(
+            said.contains("`! gh workflow run release.yml -f version=1.33.0`"),
+            "{said}"
+        );
+        assert!(said.contains("hand_over with kind run"), "{said}");
+
+        assert_eq!(
+            bang_line("Run `! cargo test` -- no, this:\n`! cargo test --all`"),
+            Some("cargo test --all")
+        );
+        assert_eq!(
+            bang_line("  ! ./install.sh --port 7801"),
+            Some("./install.sh --port 7801")
+        );
+        for prose in [
+            "Done! All green.",
+            "! Careful: this is a warning",
+            "!cargo test",
+            "a ! b",
+        ] {
+            assert_eq!(bang_line(prose), None, "{prose}");
+        }
+        // In backticks inside prose, caught too (#153); a whole line still wins.
+        assert_eq!(
+            bang_line("**Watch them:** `! xdg-open /tmp/vid/review.html`\n\nThat page shows…"),
+            Some("xdg-open /tmp/vid/review.html")
+        );
+        assert_eq!(bang_line("Say `hi`, then `!x`"), None);
+        // A bare word in prose is a reply about commands, not one to type;
+        // on a line of its own it is still one.
+        for about in [
+            "The hook takes the `! command` check as a command.",
+            "A whole line that is `! something`, bare or in backticks.",
+        ] {
+            assert_eq!(bang_line(about), None, "{about}");
+        }
+        assert_eq!(bang_line("Then:\n\n`! ls`"), Some("ls"));
+        assert_eq!(
+            bang_line("Skip `! cmd` and run `! cargo test --all` here."),
+            Some("cargo test --all")
+        );
+
+        // A file to look at goes to snyvi; a URL, or any other command, to a Run.
+        let said = |msg: &str| -> String {
+            let out: Value =
+                serde_json::from_str(&stop_output(&stop(msg, json!(false))).unwrap()).unwrap();
+            out["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let opens = said("**Watch them:** `! xdg-open /tmp/vid/review.html`");
+        assert!(opens.contains("open `/tmp/vid/review.html`"), "{opens}");
+        assert!(opens.contains("send_document by path"), "{opens}");
+        assert!(!opens.contains("hand_over"), "{opens}");
+        assert_eq!(opened_file("gio open shot.png"), Some("shot.png"));
+        assert_eq!(
+            opened_file("/usr/bin/open -a Preview out.pdf"),
+            Some("out.pdf")
+        );
+        assert_eq!(opened_file("xdg-open http://127.0.0.1:7861/"), None);
+        assert_eq!(opened_file("cargo test"), None);
+        assert!(said("! xdg-open http://127.0.0.1:7861/").contains("hand_over with kind run"));
+
+        assert!(stop_output(&stop(reply, json!(true))).is_none());
+        assert!(stop_output(&stop("All done.", json!(false))).is_none());
+        assert!(stop_output(&stop(reply, json!("odd"))).is_some());
+        let codex = event(json!({ "hook_event_name": "Stop", "session_id": "codex-1",
+            "last_assistant_message": reply }));
+        assert!(stop_output(&codex).is_none());
+    }
+
+    /// A reply that is a document -- Mermaid, or sections with a table or at a
+    /// page's length -- is sent back to go to snyvi, unless the turn already
+    /// sent one; an answer is left alone, and a reply that also leaves a
+    /// `! command` gets both words at once.
+    #[test]
+    fn a_document_left_in_the_chat_is_sent_back_to_snyvi() {
+        let sid = "0a1b2c3d-4e5f-4061-8728-394a5b6c7d8e";
+        let dir = crate::store::tempdir::Dir::new("snyvi-stop-doc");
+        let transcript = |name: &str, lines: &[Value]| {
+            let p = dir.path.join(name);
+            let body: Vec<String> = lines.iter().map(Value::to_string).collect();
+            std::fs::write(
+                &p,
+                body.join(
+                    "
+",
+                ),
+            )
+            .unwrap();
+            p.to_string_lossy().to_string()
+        };
+        let typed =
+            |t: &str| json!({ "type": "user", "message": { "role": "user", "content": t } });
+        let tool = |name: &str| {
+            json!({ "type": "assistant", "message": { "content": [
+            { "type": "tool_use", "name": name, "input": {} } ] } })
+        };
+        let result = json!({ "type": "user", "message": { "content": [ { "type": "tool_result", "content": "ok" } ] } });
+        let meta = json!({ "type": "user", "isMeta": true, "message": { "content": [ { "type": "text", "text": "reminder" } ] } });
+        let stop = |msg: &str, path: &str| {
+            event(json!({ "hook_event_name": "Stop", "session_id": sid,
+                "last_assistant_message": msg, "transcript_path": path, "stop_hook_active": false }))
+        };
+        let said = |msg: &str, path: &str| -> Option<String> {
+            let out: Value = serde_json::from_str(&stop_output(&stop(msg, path))?).unwrap();
+            Some(
+                out["hookSpecificOutput"]["additionalContext"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            )
+        };
+
+        let mermaid = "Found it.
+
+```mermaid
+flowchart LR
+  A --> B
+```
+
+That is why.";
+        let tables = "## Why
+
+Because.
+
+| a | b |
+|---|---|
+| 1 | 2 |
+
+## Fix
+
+This.";
+        let none = transcript(
+            "none.jsonl",
+            &[typed("check this"), tool("Bash"), result.clone()],
+        );
+        for doc in [mermaid, tables] {
+            let s = said(doc, &none).expect(doc);
+            assert!(s.contains("send it with send_document"), "{s}");
+        }
+        assert!(document_shaped(&format!(
+            "# One
+
+## Two
+
+{}",
+            "word ".repeat(DOC_CHARS / 5)
+        )));
+
+        // Sent this turn, with tool results and a hook's word after it: quiet.
+        let sent = transcript(
+            "sent.jsonl",
+            &[
+                typed("check this"),
+                tool("mcp__snyvi__send_document"),
+                result.clone(),
+                meta.clone(),
+            ],
+        );
+        assert_eq!(said(mermaid, &sent), None);
+        // Sent last turn, not this one: the reader's prompt ends the look back.
+        let before = transcript(
+            "before.jsonl",
+            &[
+                tool("mcp__snyvi__send_document"),
+                result,
+                typed("and this?"),
+                meta,
+            ],
+        );
+        assert!(said(mermaid, &before).is_some());
+        // No transcript is a turn that sent nothing.
+        assert!(said(mermaid, "/nowhere/t.jsonl").is_some());
+
+        // An answer, code, a list of changes: not documents.
+        for answer in [
+            "Done. 447 tests pass.",
+            "## Changed
+
+- one
+- two",
+            "```rust
+fn main() {}
+```",
+            "```
+## not a head
+| x |---|
+## nor this
+```",
+        ] {
+            assert_eq!(said(answer, &none), None, "{answer}");
+        }
+
+        // Both at once.
+        let s = said(
+            &format!(
+                "{mermaid}
+
+! cargo test"
+            ),
+            &none,
+        )
+        .unwrap();
+        assert!(
+            s.contains("hand_over with kind run") && s.contains("send_document"),
+            "{s}"
+        );
     }
 
     /// A resume or a fork is handed this binary's rules ahead of the brief,

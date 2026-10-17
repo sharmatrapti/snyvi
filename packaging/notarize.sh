@@ -85,6 +85,16 @@ if [ "$status" != "Accepted" ]; then
 fi
 
 # The ticket goes inside the bundle, so Gatekeeper need not ask Apple.
-xcrun stapler staple "$app"
+# stapler fetches it from Apple's CloudKit, and on the Intel runner that
+# fetch has dropped its connection (error 68) after an Accepted verdict, or
+# found no ticket yet in the seconds after one: five tries, a longer wait
+# each time, before the release fails on the network rather than the app.
+stapled=
+for try in 1 2 3 4 5; do
+  if xcrun stapler staple "$app"; then stapled=1; break; fi
+  echo "notarize.sh: staple try $try failed, again in $((try * 20))s" >&2
+  sleep $((try * 20))
+done
+[ -n "$stapled" ] || { echo "notarize.sh: no ticket stapled after 5 tries" >&2; exit 1; }
 xcrun stapler validate "$app"
 spctl --assess --type execute --verbose=2 "$app"

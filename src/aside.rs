@@ -1,18 +1,21 @@
 //! Asides: a line an agent leaves beside the work, the way a friend at the next
 //! desk would -- not a document, not a notification.
 //!
-//! Kept in memory and only the last few: an aside is about now, and one that
-//! outlived a daemon restart would be about some other now. Rare by
-//! construction as well as by asking: an aside that comes within `QUIET_SECS` of
-//! the last one that lit up joins the trail without lighting up itself, so an
-//! agent that sends one per edit costs the reader nothing.
+//! Kept, as rows of `crate::lately`: they lived in memory, five at most, and
+//! every update restarts the daemon, so what Claude said an hour ago had no
+//! answer anywhere (plan b0bca0a11f). An aside stays until the reader removes
+//! it, like a document. Rare by construction as well as by asking: an aside
+//! that comes within `QUIET_SECS` of the last one that lit up joins the list
+//! without lighting up itself, so an agent that sends one per edit costs the
+//! reader nothing.
 
 use anyhow::{bail, Result};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
-use std::sync::Mutex;
 
-/// How many are kept: the one showing and the trail under it.
+use crate::lately;
+
+/// How many `/api/notes` lists: the newest and the few before it.
 pub const KEEP: usize = 5;
 /// A sentence or two. Past this it is a document and `send_document` is for it.
 pub const MAX_CHARS: usize = 280;
@@ -21,7 +24,7 @@ const QUIET_SECS: i64 = 600;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Aside {
-    pub id: u64,
+    pub id: i64,
     pub text: String,
     /// The agent's name from its MCP `initialize`.
     pub sender: Option<String>,
@@ -38,9 +41,31 @@ pub struct Aside {
     pub lit: bool,
     /// Whether a reader has looked at it.
     pub seen: bool,
-    /// Closed by a reader. Kept, flagged, so an Undo has it to put back; the
-    /// ring still lets it go in its turn.
+    /// Removed by a reader. Still listed, flagged, so an Undo has it to put
+    /// back.
     pub dismissed: bool,
+}
+
+impl From<lately::Row> for Aside {
+    fn from(r: lately::Row) -> Aside {
+        let project = r
+            .data
+            .get("project")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        Aside {
+            id: r.id,
+            text: r.text,
+            sender: Some(r.who).filter(|s| !s.is_empty()),
+            project,
+            about: Some(r.doc).filter(|s| !s.is_empty()),
+            from: r.from,
+            at: r.at,
+            lit: r.lit,
+            seen: r.seen,
+            dismissed: r.removed,
+        }
+    }
 }
 
 /// What a sender posts.
@@ -59,98 +84,70 @@ pub struct NewAside {
     pub pane: Option<String>,
 }
 
-#[derive(Default)]
-struct Inner {
-    asides: VecDeque<Aside>,
-    next: u64,
-    last_lit: Option<i64>,
+/// The text as it is kept, or why it is refused.
+fn text_of(n: &NewAside) -> Result<String> {
+    let text = n.text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.is_empty() {
+        bail!("an aside needs some text");
+    }
+    if text.chars().count() > MAX_CHARS {
+        bail!("an aside is a sentence or two (at most {MAX_CHARS} characters); send anything longer with send_document");
+    }
+    Ok(text)
 }
 
-#[derive(Default)]
-pub struct Asides(Mutex<Inner>);
-
-impl Asides {
-    pub fn add(&self, n: NewAside, from: Option<crate::desk::Origin>, now: i64) -> Result<Aside> {
-        let text = n.text.split_whitespace().collect::<Vec<_>>().join(" ");
-        if text.is_empty() {
-            bail!("an aside needs some text");
-        }
-        if text.chars().count() > MAX_CHARS {
-            bail!("an aside is a sentence or two (at most {MAX_CHARS} characters); send anything longer with send_document");
-        }
-        let project = n
-            .cwd
-            .as_deref()
-            .filter(|c| !c.is_empty())
-            .map(|c| crate::project::resolve(std::path::Path::new(c)).name);
-        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let lit = g.last_lit.is_none_or(|t| now - t >= QUIET_SECS);
-        if lit {
-            g.last_lit = Some(now);
-        }
-        g.next += 1;
-        let aside = Aside {
-            id: g.next,
+pub fn add(
+    conn: &Connection,
+    n: NewAside,
+    from: Option<crate::desk::Origin>,
+    now: i64,
+) -> Result<(Aside, lately::Row)> {
+    let text = text_of(&n)?;
+    let project = n
+        .cwd
+        .as_deref()
+        .filter(|c| !c.is_empty())
+        .map(|c| crate::project::resolve(std::path::Path::new(c)).name);
+    let lit = lately::last_lit_aside(conn)?.is_none_or(|t| now - t >= QUIET_SECS);
+    let row = lately::add(
+        conn,
+        &lately::New {
+            kind: "aside",
             text,
-            sender: n.sender.filter(|s| !s.trim().is_empty()),
-            project,
-            about: n.about.filter(|s| !s.trim().is_empty()),
+            who: n
+                .sender
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_default(),
             from,
-            at: now,
+            doc: n.about.filter(|s| !s.trim().is_empty()).unwrap_or_default(),
+            data: project
+                .map(|p| serde_json::json!({ "project": p }))
+                .unwrap_or_default(),
             lit,
-            seen: false,
-            dismissed: false,
-        };
-        g.asides.push_front(aside.clone());
-        g.asides.truncate(KEEP);
-        Ok(aside)
-    }
+        },
+        now,
+    )?;
+    Ok((row.clone().into(), row))
+}
 
-    /// Newest first.
-    pub fn list(&self) -> Vec<Aside> {
-        let g = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        g.asides.iter().cloned().collect()
-    }
-
-    /// Everything kept has been looked at. True when that changed anything.
-    pub fn see(&self) -> bool {
-        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let mut changed = false;
-        for n in g.asides.iter_mut().filter(|n| !n.seen) {
-            n.seen = true;
-            changed = true;
-        }
-        changed
-    }
-
-    /// A reader closed these. True when that changed anything.
-    pub fn dismiss(&self, ids: &[u64]) -> bool {
-        self.set_dismissed(ids, true)
-    }
-
-    /// Undo: the closed ones are back where they were.
-    pub fn restore(&self, ids: &[u64]) -> bool {
-        self.set_dismissed(ids, false)
-    }
-
-    fn set_dismissed(&self, ids: &[u64], to: bool) -> bool {
-        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let mut changed = false;
-        for n in g
-            .asides
-            .iter_mut()
-            .filter(|n| ids.contains(&n.id) && n.dismissed != to)
-        {
-            n.dismissed = to;
-            changed = true;
-        }
-        changed
-    }
+/// The newest few, removed ones flagged, newest first.
+pub fn list(conn: &Connection) -> Vec<Aside> {
+    lately::of_kind(conn, "aside", KEEP)
+        .unwrap_or_default()
+        .into_iter()
+        .map(Aside::from)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn db() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(lately::SCHEMA).unwrap();
+        c
+    }
 
     fn new(text: &str) -> NewAside {
         NewAside {
@@ -160,90 +157,97 @@ mod tests {
     }
 
     #[test]
-    fn keeps_the_last_few_newest_first() {
-        let asides = Asides::default();
+    fn lists_the_last_few_newest_first() {
+        let c = db();
         for i in 0..7 {
-            asides
-                .add(new(&format!("aside {i}")), None, 1000 + i)
-                .unwrap();
+            add(&c, new(&format!("aside {i}")), None, 1000 + i).unwrap();
         }
-        let l = asides.list();
+        let l = list(&c);
         assert_eq!(l.len(), KEEP);
         assert_eq!(l[0].text, "aside 6");
         assert_eq!(l[KEEP - 1].text, "aside 2");
+        assert_eq!(
+            lately::list(&c, 0, 2000).unwrap().len(),
+            7,
+            "all of them are kept"
+        );
     }
 
     #[test]
     fn lights_up_rarely() {
-        let asides = Asides::default();
-        assert!(asides.add(new("a"), None, 0).unwrap().lit);
-        assert!(!asides.add(new("b"), None, 60).unwrap().lit);
-        assert!(asides.add(new("c"), None, QUIET_SECS).unwrap().lit);
+        let c = db();
+        assert!(add(&c, new("a"), None, 0).unwrap().0.lit);
+        assert!(!add(&c, new("b"), None, 60).unwrap().0.lit);
+        assert!(add(&c, new("c"), None, QUIET_SECS).unwrap().0.lit);
     }
 
     #[test]
     fn refuses_empty_and_long() {
-        let asides = Asides::default();
-        assert!(asides.add(new("   "), None, 0).is_err());
-        assert!(asides
-            .add(new(&"x".repeat(MAX_CHARS + 1)), None, 0)
-            .is_err());
+        let c = db();
+        assert!(add(&c, new("   "), None, 0).is_err());
+        assert!(add(&c, new(&"x".repeat(MAX_CHARS + 1)), None, 0).is_err());
         assert_eq!(
-            asides.add(new("  two\n  lines "), None, 0).unwrap().text,
+            add(&c, new("  two\n  lines "), None, 0).unwrap().0.text,
             "two lines"
         );
     }
 
     #[test]
     fn keeps_where_it_came_from() {
-        let asides = Asides::default();
+        let c = db();
         let at = crate::desk::Origin {
             id: 3,
             name: "ledger".into(),
             slot: 2,
         };
-        let a = asides
-            .add(new("from a panel"), Some(at.clone()), 0)
-            .unwrap();
+        let (a, _) = add(&c, new("from a panel"), Some(at.clone()), 0).unwrap();
         assert_eq!(a.from.as_ref(), Some(&at));
-        let json = serde_json::to_value(&asides.list()[0]).unwrap();
+        let json = serde_json::to_value(&list(&c)[0]).unwrap();
         assert_eq!(json["from"]["slot"], 2);
         assert_eq!(json["from"]["name"], "ledger");
-        let b = asides.add(new("from nowhere"), None, 60).unwrap();
+        let (b, _) = add(&c, new("from nowhere"), None, 60).unwrap();
         assert!(b.from.is_none());
         assert!(serde_json::to_value(&b).unwrap()["from"].is_null());
+        let n = NewAside {
+            about: Some("abc".into()),
+            sender: Some("claude-code".into()),
+            ..new("about one")
+        };
+        let (d, _) = add(&c, n, None, 61).unwrap();
+        assert_eq!(d.about.as_deref(), Some("abc"));
+        assert_eq!(d.sender.as_deref(), Some("claude-code"));
     }
 
     #[test]
     fn seeing_is_once() {
-        let asides = Asides::default();
-        asides.add(new("a"), None, 0).unwrap();
-        assert!(asides.see());
-        assert!(!asides.see());
-        assert!(asides.list()[0].seen);
+        let c = db();
+        add(&c, new("a"), None, 0).unwrap();
+        assert!(lately::see(&c).unwrap());
+        assert!(!lately::see(&c).unwrap());
+        assert!(list(&c)[0].seen);
     }
 
     #[test]
     fn closing_keeps_it_for_undo() {
-        let asides = Asides::default();
-        let a = asides.add(new("a"), None, 0).unwrap();
-        let b = asides.add(new("b"), None, 60).unwrap();
-        assert!(asides.dismiss(&[b.id]));
-        assert!(!asides.dismiss(&[b.id]), "closing twice changes nothing");
-        let l = asides.list();
+        let c = db();
+        let (a, _) = add(&c, new("a"), None, 0).unwrap();
+        let (b, _) = add(&c, new("b"), None, 60).unwrap();
+        assert!(lately::remove(&c, &[b.id], Some("aside"), 1).unwrap());
+        assert!(
+            !lately::remove(&c, &[b.id], Some("aside"), 2).unwrap(),
+            "closing twice changes nothing"
+        );
+        let l = list(&c);
         assert_eq!(l.len(), 2, "a closed aside is still listed");
         assert!(l[0].dismissed && !l[1].dismissed);
-        assert!(asides.restore(&[b.id]));
-        assert!(!asides.list()[0].dismissed);
-        assert!(asides.dismiss(&[a.id, b.id]));
-        let c = asides.add(new("c"), None, 120).unwrap();
+        assert!(lately::restore(&c, &[b.id], Some("aside")).unwrap());
+        assert!(!list(&c)[0].dismissed);
+        assert!(lately::remove(&c, &[a.id, b.id], Some("aside"), 3).unwrap());
+        let (d, _) = add(&c, new("c"), None, 120).unwrap();
+        assert!(!list(&c)[0].dismissed, "a new aside after a close shows");
+        assert_eq!(list(&c)[0].id, d.id);
         assert!(
-            !asides.list()[0].dismissed,
-            "a new aside after a close shows"
-        );
-        assert_eq!(asides.list()[0].id, c.id);
-        assert!(
-            !asides.dismiss(&[999]),
+            !lately::remove(&c, &[999], Some("aside"), 4).unwrap(),
             "an id that is gone changes nothing"
         );
     }

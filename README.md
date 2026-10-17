@@ -20,6 +20,7 @@
 </p>
 
 <p align="center">
+  <a href="https://snyvi.com"><b>snyvi.com</b></a> &nbsp;·&nbsp;
   <a href="#install"><b>Install</b></a> &nbsp;·&nbsp;
   <a href="#one-desk-for-each-project">Tour</a> &nbsp;·&nbsp;
   <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
@@ -43,9 +44,11 @@ you can finally build them all, at the same time.
 But the work scatters. Plans get lost in terminal scrollback. What's left to
 do lives in your head. And every project pulls you away from the last.
 
-**snyvi keeps it all in order.** One desk for each project, its agents side
-by side, and everything they write kept where you can read it. It runs on
-your machine, with no account and nothing to configure.
+Agents make it easy to start. **snyvi helps you finish.**
+
+One desk for each project, its agents side by side, and everything they
+write kept where you can read it. It runs on your machine, with no account
+and nothing to configure.
 
 ## Install
 
@@ -53,7 +56,7 @@ your machine, with no account and nothing to configure.
 |---|---|
 | **macOS** | `brew install --cask snymrova/snyvi/snyvi` |
 | **Linux** | `curl -fsSL https://raw.githubusercontent.com/snymrova/snyvi/main/install.sh \| sh` |
-| **Windows** | `winget install snymrova.snyvi`, or `scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi` then `scoop install snyvi`, or the [installer][win] |
+| **Windows** | `scoop bucket add snyvi https://github.com/snymrova/scoop-snyvi` then `scoop install snyvi`, or the [installer][win]; `winget install snymrova.snyvi` once Microsoft's review is through |
 
 Then open snyvi from your apps, or run `snyvi app`. It asks what you're
 working on, makes that project's first desk, and connects Claude Code from
@@ -153,11 +156,14 @@ snyvi init codex           # also cursor, claude-desktop, gemini, windsurf, vsco
 Arrange both sidebars on `/sidebars`: drag, switch off, reset. Give a desk
 a small status box an agent keeps up to date, or one a script fills, or one
 snyvi runs for you on a timer, like the branch you're on and how far ahead
-it is. [Write a widget](docs/WIDGETS.md).
+it is. [Write a widget](docs/WIDGETS.md). A desk's gallery holds what an
+image or video model made for you, as it lands: click one to see it big,
+and pick one to tell the agent ([A gallery](docs/WIDGETS.md#a-gallery)).
 
 ```
 snyvi widget set backups --tone ok "Nightly backup **done**"
 snyvi widget new git && snyvi widget check git
+snyvi gallery add out/hero.png --caption "warm" --model flux --cost 0.04 --desk 3
 ```
 
 ## How it works
@@ -219,7 +225,9 @@ stay shared. [How](docs/GUIDE.md#claude-code).
 <summary><b>Windows says it "protected your PC".</b></summary>
 
 The Windows installer isn't signed yet, so SmartScreen asks once: *More
-info*, then *Run anyway*. Scoop installs without the prompt.
+info*, then *Run anyway*. Scoop installs without the prompt. Signing is on
+its way; the [code signing policy](CODE-SIGNING.md) says what will be
+signed, and how.
 </details>
 
 <details>
@@ -239,5 +247,6 @@ them for anything about snyvi.
   <a href="docs/DESK.md">Desks</a> ·
   <a href="docs/ROADMAP.md">Roadmap</a> ·
   <a href="film/README.md">The film</a> ·
+  <a href="CODE-SIGNING.md">Code signing</a> ·
   MIT
 </p>

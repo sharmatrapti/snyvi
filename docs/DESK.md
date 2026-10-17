@@ -22,6 +22,7 @@ the questions the design left open.
 | A pane's last screen, as plain text | `panes/<id>.txt` beside the store | yes, shown greyed |
 | The PTY, the process, the live screen | memory, `src/pane.rs` | **no** |
 | The agent's model and context-window use | memory, from `snyvi statusline` | no |
+| A desk's links in the rail's foot, the hidden ones too | `desks.links`, JSON, `src/links.rs` | yes |
 
 **The daemon never respawns a process; the window does.** A daemon that starts
 finds every pane stopped and leaves them so. A daemon that respawned eight
@@ -136,8 +137,18 @@ which types `claude --resume <id>` at the prompt without Enter. A crash or a
 3. **snyvi never makes input from content it received.** There is no fan-out
    and no run-this-block, and nothing derived from a document is ever typed.
    Bytes reach a PTY from exactly one place: `input()` in `ui/desk.js`, which
-   is called only from a key event or a paste event. The daemon accepts `in`
-   only for a pane that socket is watching (`desk_session`).
+   is called from a key event, a paste event, or the reader's click on a
+   control that shows them, whole, exactly what it will type: Send now and
+   Send answers (the reader's own answer), and Run (an agent's `run` command,
+   or the one step of a `run` in steps whose turn it is, #164, into the
+   agent's prompt or into the walk's own shell panel at its prompt). What a click
+   types is one line with no control character, refused at the door
+   otherwise (`thread::command`, `thread::steps`); one click types one line,
+   and nothing that finishes starts the next. The daemon accepts `in` only for
+   a pane that socket is watching (`desk_session`). A pipeline's
+   stage (1.40) is not input: it is a new process with the step as one argv
+   entry, started by the runner (`server/pipeline_run.rs`) for a pipeline the
+   window made and started. `docs/TERMINAL.md` §9a has the rule as rewritten.
 4. **The query string is refused as a transport for the capability.** A
    request path lands in logs. The fragment never leaves the browser, but it
    is not unlogged either: it arrives as `snyvi-app` argv, where `ps` can see
@@ -357,8 +368,7 @@ amber rule under the pane. There is no modal, and focus is not moved.
 hooks run `snyvi hook`, and inside a pane that command knows the pane by
 `SNYVI_SESSION`. So a prompt or a tool call marks the pane *working*, a
 permission prompt marks it *needs you*, and the end of a turn marks it
-*done*. The pane's header says so, the rail marks it with `●`, `!` or `✓`,
-and the rail's footer says how long ago. *Needs you* counts as blocked, so
+*done*. The pane's header says so, and the rail marks it with `●`, `!` or `✓`. *Needs you* counts as blocked, so
 the `!` and the count beside `Desks` show it too. The state is held in
 memory, like the rest of a pane's status, and it goes with the process. The
 hook posts it with the token, never starts a daemon, and waits at most half
@@ -430,7 +440,11 @@ the hook's: `POST /api/panes/{id}/agent` takes `model` and `ctx: {pct, size,
 input}` from `snyvi statusline` for a running pane, and the pane's status
 carries them as `model`, `ctx_pct`, `ctx_size`, `ctx_in`. The `name_panel`
 MCP tool writes the same name through `POST /api/panes/{id}/name`, behind the
-token and a running pane.
+token and a running pane. The `pin_link` MCP tool pins a link in the rail's
+foot through `POST /api/panes/{id}/links` `{label, url}` (the token and a
+running pane; http or https, 32 characters of label, six shown, the same url
+relabels it, one the reader hid stays hidden), and the reader's ✕ and Undo are
+`POST /api/desks/{id}/links/{link}/hide` and `/show`.
 
 ## 7. Gaps, stated
 

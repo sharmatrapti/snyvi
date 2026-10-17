@@ -149,8 +149,11 @@ fn a_code_is_three_words_a_check_and_ten_minutes_of_room() {
 
 #[test]
 fn yo_yo_is_never_minted_and_joins_however_it_is_typed() {
+    // By its words, not as text: `yoyo` before `yodel` is a fair code that
+    // reads "…yo-yo…", and failed this one run in about fourteen.
     for _ in 0..20_000 {
-        assert!(!mint_code().unwrap().contains("yo-yo"));
+        let code = mint_code().unwrap();
+        assert!(!code.split('-').any(|w| w == "yo"), "{code}");
     }
     // A code a 1.28 maker could still print, with yo-yo first and in the middle.
     for w in ["yo-yo-ocean-acorn", "ocean-yo-yo-acorn"] {

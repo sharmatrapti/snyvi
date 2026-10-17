@@ -35,6 +35,8 @@ fn version_of<'a>(path: &'a str, title: &'a str, src: &'a str, wf: &'a str) -> N
         branch: None,
         origin: "cli",
         sender: "",
+        quiet: false,
+        session: "",
         desk: None,
         source: src.as_bytes(),
         staged: None,
@@ -107,6 +109,51 @@ const OLD_1_30: &str = "ALTER TABLE desks DROP COLUMN account;
      ALTER TABLE widget_prefs DROP COLUMN desks;
      ALTER TABLE widget_prefs DROP COLUMN until;
      ALTER TABLE widget_prefs DROP COLUMN until_pane;";
+
+/// And of 1.31's: a widget file's title on its seat (step 17).
+const OLD_1_31: &str = "ALTER TABLE widget_bodies DROP COLUMN title;";
+
+/// And of 1.32's: a widget file's owner (step 18), `widget_prefs` keyed by
+/// name again. Before `OLD_1_30`, which takes 1.30's columns off this shape.
+const OLD_1_32: &str = "CREATE TABLE widget_prefs_old (
+       name TEXT PRIMARY KEY,
+       hidden INTEGER NOT NULL DEFAULT 0,
+       settings TEXT NOT NULL DEFAULT '{}',
+       trusted_hash TEXT NOT NULL DEFAULT '',
+       rerun_edits INTEGER NOT NULL DEFAULT 0,
+       updated_at INTEGER NOT NULL,
+       desks TEXT NOT NULL DEFAULT '',
+       until INTEGER NOT NULL DEFAULT 0,
+       until_pane TEXT NOT NULL DEFAULT '');
+     DROP TABLE widget_prefs;
+     ALTER TABLE widget_prefs_old RENAME TO widget_prefs;
+     ALTER TABLE widget_bodies DROP COLUMN owner;";
+
+/// And of 1.33's: the conversation a document came from (step 19).
+const OLD_1_33: &str = "ALTER TABLE docs DROP COLUMN session;";
+
+/// And of 1.35's: a panel held for the reader's first Start (step 20).
+const OLD_1_35: &str = "ALTER TABLE panes DROP COLUMN held;";
+
+/// And of 1.36's: a question quieted by its panel's prompt, and a key
+/// turn's key (step 21, `thread::ON_YOU_1_36`).
+const OLD_1_36: &str =
+    "ALTER TABLE turns DROP COLUMN quiet_at; ALTER TABLE turns DROP COLUMN key_name;";
+
+/// And of 1.37's: a line landed by a commit, and its reply (step 22,
+/// `desk::LOOP_COLUMNS_1_37`).
+const OLD_1_37: &str = "ALTER TABLE desk_notes DROP COLUMN landed_commit;
+     ALTER TABLE desk_notes DROP COLUMN landed_at; ALTER TABLE desk_notes DROP COLUMN reply;
+     ALTER TABLE desk_notes DROP COLUMN reply_by; ALTER TABLE desk_notes DROP COLUMN reply_at;";
+
+/// And of 1.42's: where a thread's PR is (step 23, `thread::PR_STATE_1_43`),
+/// and a desk's links (step 24, `links::COLUMN_1_43`).
+const OLD_1_42: &str =
+    "ALTER TABLE threads DROP COLUMN pr_state; ALTER TABLE desks DROP COLUMN links;";
+
+/// And of 1.43's: why an agent put an On you card away (step 25,
+/// `thread::AWAY_COLUMN_1_44`).
+const OLD_1_43: &str = "ALTER TABLE turns DROP COLUMN away;";
 
 #[test]
 fn insert_get_previous_search() {
@@ -348,7 +395,7 @@ fn a_desk_is_not_a_document_and_a_reset_still_takes_it() {
     s.insert(&new_id("a"), new_doc("A", "aaa", "w")).unwrap();
     let desk = s.create_desk("/home/p/snyvi", None).unwrap();
     assert!(matches!(
-        s.open_pane(desk.id, "/home/p/snyvi", "").unwrap(),
+        s.open_pane(desk.id, "/home/p/snyvi", "", false).unwrap(),
         Opened::Pane(_)
     ));
 
@@ -420,7 +467,7 @@ fn a_moved_pane_takes_its_documents_slot_with_it() {
     let desk = s.create_desk("/home/p/snyvi", None).unwrap();
     for _ in 0..2 {
         assert!(matches!(
-            s.open_pane(desk.id, "/home/p/snyvi", "").unwrap(),
+            s.open_pane(desk.id, "/home/p/snyvi", "", false).unwrap(),
             Opened::Pane(_)
         ));
     }
@@ -568,12 +615,8 @@ fn a_file_sent_again_is_one_row_with_its_versions_behind_it() {
     let titles = |v: Vec<Doc>| v.into_iter().map(|d| d.title).collect::<Vec<_>>();
     assert_eq!(titles(s.inbox(10).unwrap()), vec!["Notes", "Script v3"]);
     let wfs = s.project_tree(first.project_id, 0, 0).unwrap();
-    assert_eq!(titles(s.queue(10).unwrap()), vec!["Script v3", "Notes"]);
-    // Home's Arrived reads the same rows the other way: newest first.
-    assert_eq!(
-        titles(s.newest_unread(10).unwrap()),
-        vec!["Notes", "Script v3"]
-    );
+    // The queue, newest first, as Home's Arrived and the rail read it.
+    assert_eq!(titles(s.queue(10).unwrap()), vec!["Notes", "Script v3"]);
     assert_eq!(
         wfs[0]
             .docs
@@ -745,7 +788,7 @@ fn a_delete_can_be_taken_back_until_prune() {
     assert_eq!(s.get(&a.id).unwrap().unwrap().title, "A");
 }
 
-/// The queue is the unread set in arrival order: every insert joins it,
+/// The queue is the unread set, newest first: every insert joins it,
 /// an open leaves it once, an overwrite changes nothing about it, and a
 /// clear empties it and says what left.
 #[test]
@@ -757,8 +800,8 @@ fn the_queue_is_what_arrived_and_was_not_opened() {
     let ids = |q: Vec<Doc>| q.into_iter().map(|d| d.id).collect::<Vec<_>>();
     assert_eq!(
         ids(s.queue(10).unwrap()),
-        vec![a.id.clone(), b.id.clone()],
-        "oldest first"
+        vec![b.id.clone(), a.id.clone()],
+        "newest first"
     );
     assert_eq!(s.waiting().unwrap(), 2);
     assert!(s.mark_read(&a.id).unwrap());
@@ -776,7 +819,7 @@ fn the_queue_is_what_arrived_and_was_not_opened() {
     assert_eq!(cleared, vec![b.id, c.id]);
     assert!(s.queue(10).unwrap().is_empty());
     assert!(s.mark_all_read().unwrap().is_empty());
-    // And taken back: both wait again, in the order they came, and one
+    // And taken back: both wait again, and one
     // removed in between stays gone.
     s.delete(&cleared[1]).unwrap();
     let back = s.mark_unread(&cleared).unwrap();
@@ -786,6 +829,12 @@ fn the_queue_is_what_arrived_and_was_not_opened() {
         s.mark_unread(&cleared).unwrap().is_empty(),
         "already waiting"
     );
+    // A desk's own, read without being opened: only those, and once.
+    let d = s.insert(&new_id("d"), new_doc("D", "ddd", "w")).unwrap();
+    let read = s.mark_ids_read(&[d.id.clone(), "nope".into()]).unwrap();
+    assert_eq!(read, vec![d.id.clone()]);
+    assert_eq!(ids(s.queue(10).unwrap()), vec![cleared[0].clone()]);
+    assert!(s.mark_ids_read(&[d.id]).unwrap().is_empty(), "already read");
 }
 
 #[test]
@@ -898,7 +947,9 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
     let (studio, pane) = {
         let s = Store::open(&paths).unwrap();
         let d = s.create_desk("/home/me/Studio", Some("studio")).unwrap();
-        let crate::desk::Opened::Pane(p) = s.open_pane(d.id, "/home/me/Studio", "claude").unwrap()
+        let crate::desk::Opened::Pane(p) = s
+            .open_pane(d.id, "/home/me/Studio", "claude", false)
+            .unwrap()
         else {
             panic!("a pane")
         };
@@ -912,7 +963,11 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
          DROP INDEX docs_head; DROP VIEW head_docs; ALTER TABLE docs DROP COLUMN is_head;
          {OLD_1_25}
          {OLD_1_26}
+         {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_33}
+         {OLD_1_32}
          {OLD_1_30}
+         {OLD_1_31}
              {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}
@@ -944,7 +999,7 @@ fn a_studio_desk_from_1_15_opens_as_a_desk_on_its_folder() {
     // And it takes the four panels every desk holds.
     for _ in 1..crate::desk::PER_DESK {
         assert!(matches!(
-            s.open_pane(studio, "/home/me/Studio", "").unwrap(),
+            s.open_pane(studio, "/home/me/Studio", "", false).unwrap(),
             crate::desk::Opened::Pane(_)
         ));
     }
@@ -1134,9 +1189,9 @@ fn the_head_of_a_file_is_a_column_every_write_keeps() {
 fn a_desks_list_is_read_through_its_index() {
     let (s, _d) = temp_store();
     let conn = s.conn.lock().unwrap();
-    for off in [false, true] {
+    for (off, sent) in [(false, false), (true, false), (false, true)] {
         let plan: Vec<String> = conn
-            .prepare(&format!("EXPLAIN QUERY PLAN {}", desk_docs_sql(off)))
+            .prepare(&format!("EXPLAIN QUERY PLAN {}", desk_docs_sql(off, sent)))
             .unwrap()
             .query_map(params![1i64, 10i64], |r| r.get::<_, String>(3))
             .unwrap()
@@ -1145,7 +1200,7 @@ fn a_desks_list_is_read_through_its_index() {
         assert!(
             plan.iter()
                 .any(|l| l.contains("docs USING INDEX docs_desk")),
-            "off={off}: {plan:?}"
+            "off={off} sent={sent}: {plan:?}"
         );
     }
 }
@@ -1197,7 +1252,11 @@ fn a_1_16_database_comes_forward_once() {
              UPDATE docs SET workflow_id = (SELECT id FROM workflows WHERE key = 'W') WHERE id = '{loose}';
              {OLD_1_25}
              {OLD_1_26}
+         {OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35}
+         {OLD_1_33}
+         {OLD_1_32}
          {OLD_1_30}
+         {OLD_1_31}
              {OLD_1_19}
          {OLD_1_20}
          {OLD_1_21}
@@ -1602,4 +1661,143 @@ fn how_long_a_big_save_holds_the_lock() {
         let fts = t.elapsed();
         eprintln!("round {round}: replace {whole:?}, of which the page write {write:?} and the search re-index {fts:?}");
     }
+}
+
+/// 1.33: a desk's brief and its neighbours name what the desk sent, not the
+/// hook's drafts. The rail still lists both; a file whose newest row is a
+/// draft is named by its newest send. A desk with only drafts names one.
+#[test]
+fn a_desks_brief_names_its_sends_not_its_drafts() {
+    let (s, _d) = temp_store();
+    let here = Origin {
+        id: 7,
+        name: "snyvi".into(),
+        slot: 1,
+    };
+    fn at<'a>(mut d: NewDoc<'a>, o: &'a Origin, origin: &'a str) -> NewDoc<'a> {
+        d.desk = Some(o);
+        d.origin = origin;
+        d.quiet = origin == "hook";
+        d
+    }
+    let sent = s
+        .insert(
+            &new_id("a"),
+            at(version_of("/p/PLAN.md", "Plan", "v1", "w"), &here, "mcp"),
+        )
+        .unwrap();
+    s.insert(
+        &new_id("b"),
+        at(version_of("/p/.mem.md", "memory", "m", "w"), &here, "hook"),
+    )
+    .unwrap();
+    let draft = s
+        .insert(
+            &new_id("c"),
+            at(version_of("/p/PLAN.md", "Plan", "v2", "w"), &here, "hook"),
+        )
+        .unwrap();
+
+    assert_eq!(
+        s.desk_docs(7, 10, false).unwrap().len(),
+        2,
+        "the rail lists both files"
+    );
+    let named = s.desk_sent(7, 10).unwrap();
+    assert_eq!(
+        named.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(),
+        [sent.id.as_str()]
+    );
+    assert_eq!(s.desk_last(7).map(|d| d.id), Some(sent.id.clone()));
+    // The draft followed a send nobody had opened, so it holds the mark.
+    assert!(s
+        .desk_docs(7, 10, false)
+        .unwrap()
+        .iter()
+        .any(|d| d.id == draft.id && d.unread));
+    assert_eq!(s.waiting().unwrap(), 1);
+
+    let there = Origin {
+        id: 9,
+        ..here.clone()
+    };
+    let only = s
+        .insert(
+            &new_id("d"),
+            at(
+                version_of("/q/x.md", "Only a draft", "x", "w"),
+                &there,
+                "hook",
+            ),
+        )
+        .unwrap();
+    assert!(s.desk_sent(9, 10).unwrap().is_empty());
+    assert_eq!(s.desk_last(9).map(|d| d.id), Some(only.id));
+    assert_eq!(s.waiting().unwrap(), 1, "a draft of its own does not wait");
+}
+
+/// The workflow a conversation named, for its next draft: its own sends'
+/// newest named one in that project, not the conversation's key, and not
+/// another conversation's.
+#[test]
+fn a_conversations_named_workflow_is_found_for_its_drafts() {
+    let (s, _d) = temp_store();
+    let mut d = new_doc("A", "aaa", "claude 1234abcd");
+    d.origin = "mcp";
+    d.session = "claude 1234abcd";
+    s.insert(&new_id("a"), d).unwrap();
+    assert_eq!(
+        s.named_workflow("/p", "claude 1234abcd").unwrap(),
+        None,
+        "its own key is no name"
+    );
+    let mut d = new_doc("B", "bbb", "send paths");
+    d.origin = "mcp";
+    d.session = "claude 1234abcd";
+    s.insert(&new_id("b"), d).unwrap();
+    assert_eq!(
+        s.named_workflow("/p", "claude 1234abcd").unwrap(),
+        Some(("send paths".into(), "send paths".into()))
+    );
+    assert_eq!(s.named_workflow("/p", "claude ffff0000").unwrap(), None);
+    assert_eq!(
+        s.named_workflow("/elsewhere", "claude 1234abcd").unwrap(),
+        None
+    );
+    assert_eq!(s.named_workflow("/p", "").unwrap(), None);
+}
+
+/// A 1.32 database gains the conversation column on its first open, and
+/// the documents in it keep working as they were.
+#[test]
+fn a_1_32_database_gains_the_session_column() {
+    let dir = tempdir::Dir::new("snyvi-store-1-32");
+    let paths = Paths {
+        data_dir: dir.path.clone(),
+        config_dir: dir.path.clone(),
+        docs_dir: dir.path.join("docs"),
+        db_path: dir.path.join("t.db"),
+        token_path: dir.path.join("token"),
+    };
+    let id = {
+        let s = Store::open(&paths).unwrap();
+        s.insert(&new_id("a"), new_doc("A", "aaa", "w")).unwrap().id
+    };
+    let conn = Connection::open(&paths.db_path).unwrap();
+    conn.execute_batch(&format!(
+        "{OLD_1_43} {OLD_1_42} {OLD_1_37} {OLD_1_36} {OLD_1_35} {OLD_1_33} PRAGMA user_version = 18;"
+    ))
+    .unwrap();
+    drop(conn);
+    let s = Store::open(&paths).unwrap();
+    assert_eq!(s.get(&id).unwrap().unwrap().title, "A");
+    let conn = s.conn.lock().unwrap();
+    let (version, session): (i64, String) = conn
+        .query_row(
+            "SELECT (SELECT user_version FROM pragma_user_version), session FROM docs WHERE id = ?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((version, session.as_str()), (25, ""));
 }

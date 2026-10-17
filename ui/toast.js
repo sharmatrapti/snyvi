@@ -5,8 +5,11 @@
  * that takes where the reader acted at the moment they act and hands it
  * here, and `hush()`, which asks this. */
 
+/* The corner's toasts sit above its pill and its card (ui/corner.js and
+ * ui/desk/10-onyou.js set --oy-h while they show), never on them. What came
+ * from outside is not a toast: it rises in the corner, and settles there. */
 const CSS = `
-#toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; z-index: var(--z-toast);
+#toasts { position: fixed; right: 20px; bottom: calc(20px + var(--oy-h, 0px)); display: flex; flex-direction: column; z-index: var(--z-toast);
   align-items: flex-end; pointer-events: none; }
 #toasts[data-side="right"], #toasts[data-side="below"] { align-items: flex-start; }
 .toast { pointer-events: auto; position: relative;
@@ -105,7 +108,7 @@ const followAnchor = () => {
  * the old one's place, wherever that was, and the old one is simply gone.
  * Clicking the accent eight times running is eight bobs of the same head
  * in eight colours, which is the setting itself, said. */
-let said = null, held = null;
+let said = null;
 /** Clear whatever is being said now, without ceremony. */
 function hush() {
   if (!said) return;
@@ -114,11 +117,9 @@ function hush() {
   said.anchor?.classList?.remove("said");
   said = null;
 }
-/** The answer has gone: the news it held back can be said now. */
+/** The answer has gone. */
 function unsay() {
   hush(); placeToasts(null);
-  const h = held; held = null;
-  if (h) say(h[0], h[1], null);
 }
 
 /** snyvi's answer (docs/DESIGN.md §4): toast(title, { sub, at, kind,
@@ -128,22 +129,20 @@ function unsay() {
  *    `null` for the corner. Left out, it is where the reader last acted.
  *  - `kind`: "answer", the default; "error", which a "Could not…" title is
  *    on its own -- it stays until its ✕, with `retry` as its button;
- *    "undo", an offer, which `action` makes on its own; "news", from the
- *    background, which goes to the corner and never takes the place of an
- *    error or an offer still standing: it waits for them to go.
+ *    "undo", an offer, which `action` makes on its own. News from the
+ *    background is not a toast: it rises in the corner (ui/corner.js).
  *  - `action` ({label, run}) is a button in it; `go` makes it one.
  *  - `face`: the mascot's, from the kind unless given; `null` for none. It
  *    is never read off the title's words. */
 function say(title, o, acted) {
   let { sub, action, face } = o, raw = "";
   if (sub && typeof sub === "object") ({ why: sub, raw } = sayErr(sub));
-  const kind = o.kind || (/^Could not /.test(title) ? "error" : o.at === null ? "news" : action ? "undo" : "answer");
-  const err = kind === "error", news = kind === "news";
-  if (news && said?.keep) return void (held = [title, o]);
-  const at = news ? null : acted;
+  const kind = o.kind || (/^Could not /.test(title) ? "error" : action ? "undo" : "answer");
+  const err = kind === "error";
+  const at = acted;
   hush();
   if (o.retry) action = { label: "Retry", run: o.retry };
-  if (!("face" in o)) face = err ? null : news ? "whoa" : "rest";
+  if (!("face" in o)) face = err ? null : "rest";
   if (face && quiet()) face = "rest";
   // One expressive face at a time: while this one speaks, the bar's rests.
   if (face && face !== "rest") c.rest();

@@ -255,16 +255,20 @@ pub(crate) async fn removed_list(
         Ok(v) => v,
         Err(e) => return err(e),
     };
-    for a in app.asides.list().into_iter().filter(|a| a.dismissed) {
+    let gone = app
+        .store
+        .clocked(|c, _| crate::lately::removed(c, ROWS))
+        .unwrap_or_default();
+    for r in gone {
         items.push(crate::store::Removed {
-            kind: "aside",
-            id: a.id.to_string(),
-            title: a.text,
-            from: a.sender.unwrap_or_default(),
+            kind: if r.kind == "aside" { "aside" } else { "lately" },
+            id: r.id.to_string(),
+            title: r.text,
+            from: r.who,
             desk: None,
-            at: a.at,
+            at: r.removed_at,
             versions: 1,
-            restore: "/api/notes/restore".into(),
+            restore: "/api/lately/restore".into(),
         });
     }
     items.sort_by_key(|a| std::cmp::Reverse(a.at));
@@ -466,15 +470,30 @@ pub(crate) async fn mark_read(
     }
 }
 
-/// Everything waiting, read without being opened.
-pub(crate) async fn clear_queue(State(app): S, headers: HeaderMap) -> Response {
+/// Everything waiting, read without being opened; or, sent `{"ids": [..]}`,
+/// only those: a desk's Mark these read (1.32), which leaves every other
+/// desk's waiting. A body that is not that list is no list, so the page's
+/// bare POST is still everything. `unread` takes either back.
+pub(crate) async fn clear_queue(
+    State(app): S,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
-    match app.store.mark_all_read() {
+    let read = match serde_json::from_slice::<IdsBody>(&body) {
+        Ok(b) => app.store.mark_ids_read(&b.ids),
+        Err(_) => app.store.mark_all_read(),
+    };
+    match read {
         Ok(ids) => {
             if !ids.is_empty() {
-                emit(&app, "read", json!({ "ids": ids, "waiting": 0 }));
+                emit(
+                    &app,
+                    "read",
+                    json!({ "ids": ids, "waiting": waiting(&app) }),
+                );
             }
             Json(json!({ "ok": true, "n": ids.len(), "ids": ids })).into_response()
         }
@@ -577,9 +596,12 @@ async fn receive_and_tell(app: Arc<App>, payload: Payload) -> Response {
     match result {
         Ok(Ok((event, received))) => {
             emit_doc(&app, event);
+            lately_doc(&app, &received);
             let doc = received.doc;
             let url = format!("{}/d/{}", config::base_url(), doc.id);
-            if !received.existing {
+            // A draft the hook saved is listed and nothing more; the send
+            // that takes it over is the one the desktop hears about.
+            if !received.existing && !received.quiet {
                 notify_desktop(&app, &doc);
             }
             // A code file past the cap, or a Markdown document big enough
@@ -613,6 +635,8 @@ async fn receive_and_tell(app: Arc<App>, payload: Payload) -> Response {
                     "app_url": crate::desktop::window_installed().then(|| crate::desktop::app_url(&doc.id)),
                     "doc": doc,
                     "existing": received.existing,
+                    // The hook's draft of these bytes became this send.
+                    "promoted": received.promoted,
                     // So the sender can say where the document went without a
                     // second round trip: a window, or a link to click.
                     "window": app.has_window(),
@@ -654,9 +678,13 @@ pub(crate) async fn receive_aside(
     }
     // Where it came from, for the click; the token above is the only gate.
     let from = crate::receive::pane_origin(&app.store, n.pane.as_deref());
-    match app.asides.add(n, from, crate::store::now()) {
-        Ok(aside) => {
-            emit(&app, "notes", json!({ "notes": app.asides.list() }));
+    match app
+        .store
+        .clocked(|c, now| crate::aside::add(c, n, from, now))
+    {
+        Ok((aside, row)) => {
+            emit_asides(&app);
+            emit(&app, "lately", json!({ "row": row }));
             (
                 StatusCode::CREATED,
                 Json(json!({ "note": aside, "window": app.has_window() })),
@@ -671,24 +699,31 @@ pub(crate) async fn receive_aside(
     }
 }
 
-pub(crate) async fn asides(State(app): S) -> Json<serde_json::Value> {
-    Json(json!({ "notes": app.asides.list() }))
+/// The newest asides, removed ones flagged: `/api/notes`, the `notes`
+/// event, and the boot payload.
+pub(crate) fn aside_list(app: &App) -> Vec<crate::aside::Aside> {
+    app.store
+        .clocked(|c, _| Ok(crate::aside::list(c)))
+        .unwrap_or_default()
 }
 
-/// A reader looked: the glow goes out in every page.
+fn emit_asides(app: &App) {
+    emit(app, "notes", json!({ "notes": aside_list(app) }));
+}
+
+pub(crate) async fn asides(State(app): S) -> Json<serde_json::Value> {
+    Json(json!({ "notes": aside_list(&app) }))
+}
+
+/// A reader looked: the glow goes out in every page, and Lately's dot with
+/// it -- one watermark for both.
 pub(crate) async fn see_asides(State(app): S, headers: HeaderMap) -> Response {
-    if let Some(no) = refuse_reader(&app, &headers) {
-        return no;
-    }
-    if app.asides.see() {
-        emit(&app, "notes", json!({ "notes": app.asides.list() }));
-    }
-    Json(json!({ "ok": true })).into_response()
+    see_lately(State(app), headers).await
 }
 
 #[derive(Deserialize)]
 pub(crate) struct AsideIds {
-    pub(crate) ids: Vec<u64>,
+    pub(crate) ids: Vec<i64>,
 }
 
 /// A reader closed an aside, or all of them: gone from the card in every
@@ -698,13 +733,7 @@ pub(crate) async fn dismiss_asides(
     headers: HeaderMap,
     Json(b): Json<AsideIds>,
 ) -> Response {
-    if let Some(no) = refuse_reader(&app, &headers) {
-        return no;
-    }
-    if app.asides.dismiss(&b.ids) {
-        emit(&app, "notes", json!({ "notes": app.asides.list() }));
-    }
-    Json(json!({ "ok": true })).into_response()
+    lately_set(&app, &headers, &b.ids, Some("aside"), true)
 }
 
 pub(crate) async fn restore_asides(
@@ -712,11 +741,152 @@ pub(crate) async fn restore_asides(
     headers: HeaderMap,
     Json(b): Json<AsideIds>,
 ) -> Response {
+    lately_set(&app, &headers, &b.ids, Some("aside"), false)
+}
+
+/// Log a message in Lately and tell every page: what each writer calls
+/// beside the event it already sends (`crate::lately`). A row that could not
+/// be written costs the reader the row, not the message.
+pub(crate) fn lately_log(app: &App, n: crate::lately::New) {
+    if let Ok(row) = app.store.clocked(|c, now| crate::lately::add(c, &n, now)) {
+        emit(app, "lately", json!({ "row": row }));
+    }
+}
+
+/// A document in, as Lately keeps it: one a sender meant, new or a newer
+/// version. A draft the hook saved, and a save folded into the last, are not
+/// news.
+pub(crate) fn lately_doc(app: &App, r: &receive::Received) {
+    if r.quiet || (r.existing && !r.promoted) {
+        return;
+    }
+    let d = &r.doc;
+    lately_log(
+        app,
+        crate::lately::New {
+            kind: if r.supersedes.is_some() {
+                "version"
+            } else {
+                "doc"
+            },
+            text: d.title.clone(),
+            who: d.sender.clone(),
+            from: d.desk.clone(),
+            doc: d.id.clone(),
+            data: json!({ "project": d.project, "origin": d.origin }),
+            lit: true,
+        },
+    );
+}
+
+/// The corner's Lately, newest first, a page at a time: `before` is the
+/// last id the page holds. With whether anything is newer than the
+/// watermark, for the dot; and, for a page holding the desk capability --
+/// the gate every desk route has -- what waits on the reader across desks,
+/// each with its desk's name and panel, for the corner off a desk.
+pub(crate) async fn lately(
+    State(app): S,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let before = q.get("before").and_then(|b| b.parse().ok()).unwrap_or(0);
+    let desks = refuse_desk(&app, &headers, &q).is_none();
+    let read = app.store.clocked(|c, now| {
+        let turns = if desks {
+            crate::thread::waiting(c, now)?
+        } else {
+            Vec::new()
+        };
+        Ok((
+            crate::lately::list(c, before, now)?,
+            crate::lately::unseen(c, now)?,
+            turns,
+        ))
+    });
+    let (rows, unseen, turns) = match read {
+        Ok(r) => r,
+        Err(e) => return err(e),
+    };
+    let turns: Vec<serde_json::Value> = turns
+        .into_iter()
+        .filter(|t| t.via != "dialog")
+        .map(|t| {
+            let at = crate::receive::pane_origin(&app.store, Some(t.pane.as_str()));
+            let mut v = json!(t);
+            v["slot"] = json!(at.as_ref().map(|o| o.slot));
+            v["desk_name"] = json!(at
+                .map(|o| o.name)
+                .or_else(|| { app.store.desk(t.desk_id).ok().flatten().map(|d| d.name) }));
+            v
+        })
+        .collect();
+    Json(json!({
+        "rows": rows,
+        "unseen": unseen,
+        "more": rows.len() == crate::lately::PAGE,
+        "turns": desks.then_some(turns),
+    }))
+    .into_response()
+}
+
+/// The reader opened the tray, or looked at an aside: the dot goes out in
+/// every page.
+pub(crate) async fn see_lately(State(app): S, headers: HeaderMap) -> Response {
     if let Some(no) = refuse_reader(&app, &headers) {
         return no;
     }
-    if app.asides.restore(&b.ids) {
-        emit(&app, "notes", json!({ "notes": app.asides.list() }));
+    match app.store.clocked(|c, _| crate::lately::see(c)) {
+        Ok(true) => {
+            emit_asides(&app);
+            emit(&app, "lately", json!({ "seen": true }));
+        }
+        Ok(false) => {}
+        Err(e) => return err(e),
+    }
+    Json(json!({ "ok": true })).into_response()
+}
+
+pub(crate) async fn remove_lately(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<AsideIds>,
+) -> Response {
+    lately_set(&app, &headers, &b.ids, None, true)
+}
+
+pub(crate) async fn restore_lately(
+    State(app): S,
+    headers: HeaderMap,
+    Json(b): Json<AsideIds>,
+) -> Response {
+    lately_set(&app, &headers, &b.ids, None, false)
+}
+
+/// A ✕ on rows, or its Undo: every page redraws its list.
+fn lately_set(
+    app: &App,
+    headers: &HeaderMap,
+    ids: &[i64],
+    kind: Option<&str>,
+    off: bool,
+) -> Response {
+    if let Some(no) = refuse_reader(app, headers) {
+        return no;
+    }
+    let changed = app.store.clocked(|c, now| {
+        if off {
+            crate::lately::remove(c, ids, kind, now)
+        } else {
+            crate::lately::restore(c, ids, kind)
+        }
+    });
+    match changed {
+        Ok(true) => {
+            emit_asides(app);
+            emit(app, "lately", json!({ "changed": ids }));
+        }
+        Ok(false) => {}
+        Err(e) => return err(e),
     }
     Json(json!({ "ok": true })).into_response()
 }
@@ -818,6 +988,10 @@ pub(crate) struct FolderBody {
     pub(crate) desk: Option<i64>,
     /// A project's root, as the sidebar's project rows know it.
     pub(crate) project: Option<i64>,
+    /// A widget file's folder, by its name and the desk it belongs to (0,
+    /// or none: shared): the reader reads what Allow would take (1.36).
+    pub(crate) widget: Option<String>,
+    pub(crate) owner: Option<i64>,
 }
 
 /// The directory Open in file manager opens for a document, if one exists.
@@ -911,7 +1085,12 @@ pub(crate) fn folder_of(app: &App, b: &FolderBody) -> Option<std::path::PathBuf>
     } else if let Some(id) = b.project {
         app.store.project_root(id).map(Into::into)
     } else {
-        None
+        b.widget
+            .as_deref()
+            .filter(|n| crate::widget::name_ok(n))
+            .map(|name| {
+                crate::widget::files::folder_of(&app.paths.config_dir, b.owner.unwrap_or(0), name)
+            })
     };
     dir.filter(|d| d.is_dir())
 }

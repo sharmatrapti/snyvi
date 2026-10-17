@@ -16,9 +16,10 @@
 //! names one that is gone.
 //!
 //! The token outranks the `/login` credentials and is outranked by
-//! `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` and an `apiKeyHelper`
-//! (Claude Code's authentication precedence), which is why the keys sheet
-//! warns when a desk has one of those as a key.
+//! `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` and more (Claude Code's
+//! authentication precedence). The keys sheet warns about the first two when
+//! a desk has one as a key, and about nothing else: an `apiKeyHelper` or a
+//! shell profile's export is the reader's own setup, and outside its sight.
 
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -55,6 +56,15 @@ pub const TOKEN_VAR: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 /// these names means the account picked is not the one that runs.
 pub const OUTRANKS: [&str; 2] = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
 
+/// Why a turn ends that says the account's sign-in no longer works, among
+/// `pane::STOP_REASONS`: the panel offers Renew until it works again.
+pub const AUTH_REASONS: [&str; 4] = [
+    "authentication_failed",
+    "oauth_org_not_allowed",
+    "account_on_hold",
+    "billing_error",
+];
+
 /// How long a `setup-token` token lasts: a year, by Claude Code's docs. The
 /// sheet says when to renew from `created_at`.
 pub const TOKEN_LIFE_SECS: i64 = 365 * 24 * 3600;
@@ -85,6 +95,17 @@ pub fn clean_label(label: &str) -> Option<String> {
         .collect();
     let one = one.trim().to_string();
     (!one.is_empty()).then_some(one)
+}
+
+/// The name a new account gets when nothing names it: "Account N" with the
+/// first N no account uses, counting from 2 since `/login` is the first.
+/// Counting the rows instead would give a second "Account 3" after one is
+/// taken away.
+pub fn next_label(taken: &[Account]) -> String {
+    (2..)
+        .map(|n| format!("Account {n}"))
+        .find(|l| !taken.iter().any(|a| a.label == *l))
+        .unwrap_or_default()
 }
 
 /// Whether a pasted value is a `setup-token` token, and if not, what to say.

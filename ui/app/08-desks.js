@@ -44,6 +44,7 @@
     api: (path, body, type) => deskApi(path, body, type),
     load: () => loadDesks(),
     show: (id, push, slot) => showDesk(id, push, slot),
+    welcomed: id => pages().then(m => m.welcomed(id), () => showDesk(id, true)),
     browse: (root, path, push) => showBrowse(root, path, push),
     drawBrowse: () => renderBrowse(),
     drawTree: () => renderTree(),
@@ -61,7 +62,6 @@
     putAway: pid => putAway(String(pid)),
     applyRename: (what, id) => applyRename(what, id),
     places: () => deskPlaces(),
-    hold: id => heldPanes.add(id),
     // The desks moved in the reader's order (menu.js, `moveDesk`).
     drawDesks: () => renderDesks(),
     focusDesk: id => deskNav.querySelector(`a[data-desk="${id}"]`)?.focus({ preventScroll: false }),
@@ -78,9 +78,6 @@
   /** A desk row's own word on what just failed on it, for a few seconds: in
    *  the row, where the reader was looking, not in a corner. */
   let deskSaid = null;
-  /** Panels made to wait for the reader's Enter: a new project desk's first,
-   *  holding `claude`. The desk view takes each once, as it draws it. */
-  const heldPanes = new Set();
   /** Where a new desk could go besides the home folder: the folders the
    *  Inbox's projects were written from, then the folders open under Folders,
    *  one row a folder, less any that already has a desk -- that one is a
@@ -111,46 +108,62 @@
     if (roots !== deskRoots) { deskRoots = roots; renderTree(); markActive(); } else renderDesks();
     if (desk && (state.view === "desk" || state.deskBehind != null)) desk.update(state.desks);
   }
-  const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.running) ? "●" : "○";
+  /** A desk's mark, one meaning per colour (audit 67d008cb6f): amber while
+   *  a panel needs the reader, green while an agent is working -- as on its
+   *  project's row and in the live pill -- a hollow ring while something
+   *  else runs (a shell, an agent between turns), and nothing when idle.
+   *  Green for any process made one desk green here and grey on its row. */
+  const mark3 = ps => ps.some(p => p.status && p.status.blocked) ? "!" : ps.some(p => p.status && p.status.agent === "working") ? "●" : ps.some(p => p.status && p.status.running) ? "◦" : "○";
+  const needYou = n => `${plural(n, "panel")} ${n === 1 ? "needs" : "need"} you`;
   /** The fullest context window among a desk's panels, as their status lines said. */
   const fullest = d => { const ps = d.panes.map(p => p.status && p.status.ctx_pct).filter(x => x != null); return ps.length ? Math.max(...ps) : null; };
-  let desksSeen = null;
   function renderDesks() {
+    // A page's foot reads the same panels: a desk's change is its change too.
+    turnLine();
     const list = state.desks ? state.desks.desks : [];
     let blocked = 0;
     for (const d of list) for (const p of d.panes) if (p.status && p.status.blocked) blocked++;
     const on = state.view === "desk" || state.deskBehind != null;   // a document read over a desk is still the desk
     badge('[data-pop="desks"]', blocked, " blk");
-    // snyvi's own moments on the way to a second project: one desk, asked
-    // for another once an agent has worked in it; two, and what that gives.
-    if (list.length === 1 && list[0].panes.some(p => p.status && p.status.agent)) snyviSays("second-desk");
-    if (desksSeen === 1 && list.length === 2) snyviSays("two-desks");
-    if (state.desks) desksSeen = list.length;
     if (blocked) snyviSays("blocked");
     // Blocked panes stay said on the head, so folding Desks cannot hide them.
     const head = secHead("desks", "Desks", {
-      count: blocked ? `!${blocked}` : "", tone: "warn", countTip: blocked ? `${plural(blocked, "panel")} waiting on you` : "",
+      count: blocked ? `${blocked}` : "", tone: "warn", countTip: blocked ? needYou(blocked) : "",
       acts: capability ? `<button type="button" data-newdesk data-tip="New desk" aria-label="New desk">${glyph("plus", 14)}</button>` : "",
     });
     const top = `<ul class="t-desks s-body">` + (!capability ? `<li class="s-empty">Open the snyvi window to run desks</li>`
-        : desksOff ? noReach("desks", "li") : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>` : "");
-    // One desk is one project; the second is when snyvi starts to earn its
-    // place, so it is asked for, under the first, until there is one.
-    const more = capability && list.length === 1 ? `<li class="t-more-desk"><button type="button" class="b-empty" data-newdesk>+ New desk</button></li>` : "";
+        : desksOff ? noReach("desks", "li") : !list.length ? `<li><button type="button" class="b-empty" data-newdesk>Give a project a desk</button></li>`
+        // The word, said while there is one desk to say it of. It stayed
+        // over ten while a first-run card waited on Home, and read as
+        // clutter at the top of the list.
+        : list.length === 1 ? `<li class="s-empty">A desk is one project: its folder, its agents, and what they write.</li>` : "");
+    // The head's + is the one way to a new desk from the list: a "+ New desk"
+    // row under a lone desk came and went with the second, and moved the
+    // sidebar as it did (audit 67d008cb6f). Welcome's Got another one? and
+    // Welcome's Got another project? asks for one now (about.js).
     const rows = list.map(d => {
       const m = mark3(d.panes), n = d.panes.length, full = fullest(d);
-      const say = m === "!" ? `${plural(d.panes.filter(p => p.status && p.status.blocked).length, "panel")} waiting on you` : m === "●" ? "Running" : "Idle";
+      const say = m === "!" ? needYou(d.panes.filter(p => p.status && p.status.blocked).length) : m === "●" ? "An agent is working" : m === "◦" ? "Running" : "Idle";
       // The row's end says only what is unusual: a panel that needs you, a
-      // context window nearly full, three panels or more (two is what most
-      // desks have, so a 2 on every row told them apart by nothing). A live
-      // desk is a dot and an idle one is nothing; the tip carries the rest.
+      // context window nearly full, documents waiting from its panels. A live
+      // desk is a dot and an idle one is nothing; the tip carries the rest,
+      // the count of panels with it: "4" beside "▣ 1" read as "1 4", so the
+      // one figure on a row is what waits for the reader (1.34).
+      // That figure wears the rail's document icon -- a bare ▣ said nothing
+      // (#125) -- and stands before the dot, whose place is kept on every
+      // row, live or idle: a count coming in moves neither the dot nor any
+      // other row's.
       const working = d.panes.filter(p => p.status && (p.status.agent === "working" || p.status.running)).length;
       const fp = full == null ? null : d.panes.find(p => p.status && p.status.ctx_pct === full);
-      const tip = [plural(n, "panel"), working ? `${working} working` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
+      // What its panels sent that waits to be read (#122): the corner card
+      // on another desk says it once and settles, and this is where it went.
+      // Not on the desk on screen, whose rail lists it already, in bold.
+      const w = on && state.deskId === d.id ? 0 : state.queue.filter(q => q.desk && q.desk.id === d.id).length;
+      const tip = [plural(n, "panel"), working ? `${working} working` : "", w ? `${w} to read` : "", full == null ? "" : `context ${full}%${fp && fp.status.model ? ` (${fp.status.model})` : ""}`].filter(Boolean).join(" · ");
       return [`<li class="t-desk"><a href="/desk/${d.id}" data-desk="${d.id}" draggable="false" class="${on && state.deskId === d.id ? "active" : ""}">` +
         `${icon("desk")}<span class="title nm">${esc(d.name)}</span>`,
         deskSaid && deskSaid.id === d.id ? `<span class="end"><span class="t-said" role="status" data-tip="${esc(deskSaid.text)}" data-tip-sub="${esc(deskSaid.why)}">${esc(deskSaid.text)}</span></span>` :
-        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${m === "!" ? `<span class="dot blk">! needs you</span>` : m === "●" ? `<span class="dot on"></span>` : ""}<span class="vh">${say}</span>${n > 2 ? `<span class="k">${n}</span>` : ""}</span>`,
+        `<span class="end" data-tip="${esc(say)}" data-tip-sub="${esc(tip)}">${full != null && full >= 85 ? `<span class="ctx hot">${full}%</span>` : ""}${w ? `<span class="k">${icon("doc", 12, "k-ico")}${w}</span>` : ""}${m === "!" ? `<span class="dot blk">needs you</span>` : `<span class="dot${m === "●" ? " on" : m === "◦" ? " run" : ""}"></span>`}<span class="vh">${say}</span></span>`,
         `${capability ? `<button type="button" class="row-x" data-dropdesk="${d.id}" data-tip="Close desk" aria-label="Close desk ${esc(d.name)}">${glyph("x")}</button>` : ""}</a></li>`];
     });
     // A pane's dot changes far more often than the list does, and the row
@@ -165,12 +178,12 @@
       const d = list.find(x => String(x.id) === b.dataset.deskof);
       if (!d) continue;
       const next = "b-new has" + deskState(d);
-      if (b.className !== next) b.className = next;
+      if (b.className !== next) { b.className = next; b.dataset.tipSub = deskSay(d); }
     }
-    const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top + more && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
+    const lis = deskNav.querySelectorAll(".t-desk"), same = deskNav.$top === top && lis.length === rows.length && rows.every((r, i) => lis[i].$r === r[0] + r[2]);
     if (!same) {
-      deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + more + `</ul>`;
-      deskNav.$top = top + more; deskNav.$head = head;
+      deskNav.innerHTML = head + top + rows.map(r => r.join("")).join("") + `</ul>`;
+      deskNav.$top = top; deskNav.$head = head;
       deskNav.querySelectorAll(".t-desk").forEach((li, i) => { li.$r = rows[i][0] + rows[i][2]; li.$e = rows[i][1]; });
       return;
     }
@@ -194,11 +207,14 @@
       tocEl.innerHTML = metaEl.innerHTML = ""; rail.classList.add("empty");
       return;
     }
-    try { desk = await (deskLoading ||= import(`/assets/desk.js${boot.v ? `?v=${boot.v}` : ""}`)); }
+    // The corner with it: the desk's corner draws its pill, tray and card
+    // in corner.js's look, with Lately in its tray.
+    try { [desk] = await Promise.all([deskLoading ||= import(`/assets/desk.js${boot.v ? `?v=${boot.v}` : ""}`), cornerUse()]); }
     catch (e) { deskLoading = null; toast("Could not open the desk", { sub: e }); return; }
     if (state.view !== "desk") return;
     if (!state.desks) await loadDesks();
-    desk.open({ id, slot, was, icons: ICONS, desks: state.desks, held: heldPanes, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root });
+    desk.open({ id, slot, was, icons: ICONS, who: whoIco, desks: state.desks, connect: connectClaude, api: deskApi, blob: deskBlob, socket: deskSocket, toast: toast4, sayErr, esc, secHead, secFolded, fold: toggleFold, seatFrame, patchSeat, allowWidget, seatAct, seatOpen, layout: () => layout, glyph, keyHint, plural, rel, relShort, fmt, read: id => showDoc(id, true, false, true), reveal: openFolder, tilde, paths: pathsUse, sized: () => { paintControls(); toast("Text size", { sub: desk.textSize().name }); }, go: showDesk, swap: swapDesk, make: (el, byKey) => el ? askWhere(el, byKey) : act("make", null), refresh: loadDesks, menu: (el, x, y, byKey) => menuFor(el, x, y, byKey), nav: navStep, done: markDone, main, docEl, tocEl, metaEl, rail, root, corner: () => cornerMod });
+    cornerMod?.draw();
   }
   /** Out of the desk view, to wherever the page is going next. */
   function offDesk() {
@@ -206,6 +222,8 @@
     else if (state.deskBehind != null && desk) desk.close();
     state.deskBehind = null;
     overBar();
+    // The corner is this page's own again, once the view has moved on.
+    if (cornerMod) setTimeout(() => cornerMod.draw(), 0);
   }
   /** A document opened from a desk's own list keeps the desk's rail -- its
    *  panes, its documents with this one marked -- and only the page changes.
@@ -288,6 +306,11 @@
     const d = lastDesk != null ? lastDesk : state.desks && state.desks.desks[0] ? state.desks.desks[0].id : null;
     showDesk(d, true);
   }
+  /** The page's foot while the panel that sent it waits on the reader
+   *  (desk.js `turnLine`). The desk's part, with the desk's styles: a page
+   *  from a panel is read after its desk was opened, and first paint stays
+   *  in its budget. */
+  function turnLine() { if (desk) desk.turnLine(state, docEl); }
   /** A desk's rail lists what its panes sent, so a document arriving, being
    *  opened, deleted or pinned is its business too. The desk asks again
    *  rather than being told: the events reach tabs, and only a window holds
@@ -375,8 +398,7 @@
       // Fewer than the page ever holds means these are all there are.
       state.waiting = q.length < QUEUE_HELD ? q.length : Math.max(state.waiting, q.length);
     }
-    const n = await getJson("/api/notes");
-    if (n && Array.isArray(n.notes)) { state.notes = withOwn(n.notes); renderNote(); }
+    cornerMod?.refresh();
     await refreshTree();
     if (state.view === "inbox") showInbox(false);
   }
@@ -386,21 +408,121 @@
    *  quietly lost its daemon -- one that stopped, or was replaced by an
    *  upgrade -- shows it, and the reason a reader is not left wondering why
    *  nothing arrives. */
-  /* Why it is hollow used to be a `title` on the mark, which meant hovering
-     snyvi drew a tooltip over the sidebar and an answer in its own line at
-     once, two texts for one gesture. The answer is the line it says. */
+  /* Why it is hollow is said in the mark's tip, under "Home": the one place
+     it is put in words, now that the mark says no lines of its own. An
+     update's line gives way to it while the page is cut off, and the update
+     says itself again on the next read (about.js). */
+  const OFF = "not connected · nothing new arrives until snyvi is back";
   function linked(on) {
-    if (on) delete root.dataset.link;
-    else root.dataset.link = "off";
+    const b = $(".side-head .brand");
+    if (on) { delete root.dataset.link; if (b && b.dataset.tipSub === OFF) delete b.dataset.tipSub; }
+    else { root.dataset.link = "off"; if (b) b.dataset.tipSub = OFF; }
   }
 
   /** An event's body, or null for one that is not JSON. */
   const parse = ev => { try { return JSON.parse(ev.data); } catch { return null; } };
   /** A line from a friend arrived, or an agent offered a document to one:
-   *  peer.js says so where the reader is (`event`). */
-  const onPeer = ev => { const j = parse(ev); j && peerUse().then(m => m.event(peerCtx, j), () => {}); };
+   *  an offer waits on the reader, so it is the corner's, an On you row;
+   *  the rest peer.js says (`event`), as a card that rises there too. */
+  const onPeer = ev => {
+    const j = parse(ev); if (!j) return;
+    if (ev.type === "peeroffers") return void corner(m => j.offer != null ? m.offer(j) : m.moved("peeroffers"));
+    peerUse().then(m => m.event(peerCtx, j), () => {});
+  };
   /** Home shows a little of all of these; each one reads it again, soon. */
-  const HOME_EVENTS = ["panes", "ctx", "desks", "desknotes", "doc", "read", "update", "notes", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing"];
+  const HOME_EVENTS = ["panes", "ctx", "quota", "desks", "desknotes", "doc", "read", "update", "agents", "deleted", "restored", "peers", "peernotes", "peeroffers", "pairing"];
+  /** A document in, as the stream tells it (`doc_event`): a save in place,
+   *  a draft the hook saved, or an arrival. Out of `connect`, which was long
+   *  enough before drafts had a branch of their own. */
+  async function docEvent(j) {
+    const d = j.doc;
+    // A project that was put away and has just been written to is not put
+    // away any more: the sidebar never holds back something waiting to be
+    // read. Taking it out of the set is enough -- the refresh below draws it.
+    if (d && away.delete(String(d.project_id))) saveAway();
+    // A save in place carries its project's row and rows: they go in and
+    // the sidebar is drawn once (`patchTree`), where a save used to
+    // refetch the tree and the project. An arrival still fetches.
+    // An overwrite of a document already here is not an arrival: refresh it where
+    // it is if it is on screen, never navigate to it, and never toast — a file
+    // being watched changes on every save.
+    if (j.existing) {
+      if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
+      else state.cache.delete(d.id);
+      if (patchTree(j)) { renderTree(); markActive(); } else await refreshTree(d.project_id);
+      if (!(desk && desk.docSaved && desk.docSaved(d))) deskDocs(); // the rail patches its own row on a save
+      return;
+    }
+    // A draft the hook saved as Claude wrote it (1.33): a row in its
+    // project and on its desk's rail, and nothing announced -- no wash, no
+    // place on the queue, no word from snyvi, no desktop notification. The
+    // agent's send of it is the arrival (`promoted`). One thing moves: a
+    // draft of a file that was waiting holds the mark now, so it takes
+    // that file's row.
+    if (j.quiet) {
+      const older = d.source_path ? state.queue.filter(q => q.id !== d.id && q.project_id === d.project_id && q.source_path === d.source_path).map(q => q.id) : [];
+      if (older.length) { state.queue = [d].concat(state.queue.filter(q => !older.includes(q.id))); unmarkRows(new Set(older)); }
+      if (j.waiting != null) state.waiting = j.waiting;
+      if (j.supersedes && state.doc && state.doc.id === j.supersedes) renderHistory();
+      state.cache.delete(d.id);
+      if (patchTree(j)) { renderTree(); markActive(); } else await refreshTree(d.project_id);
+      deskDocs();
+      return;
+    }
+    // An arrival joins the queue and the page stays where it is. The one
+    // place it opens by itself is the inbox with nothing waiting: the empty
+    // state exists to be filled, and a reader there has nothing to lose.
+    // An inbox with a queue on it is the queue, and the arrival is a row.
+    const opens = state.view === "inbox" && !state.waiting;
+    // The document on screen has just been sent again. The page stays where
+    // it is -- a reader mid-paragraph did not ask to be moved -- and the
+    // arrival is offered instead of taken.
+    const superseded = !!(j.supersedes && state.doc && state.doc.id === j.supersedes);
+    // A newer version of a file already waiting takes that row's place:
+    // the daemon marked the older ones read when this one landed, and
+    // counts one. By file and not by `supersedes`, which names only the
+    // version just before -- a page that missed an event kept the rest.
+    const older = d.source_path ? state.queue.filter(q => q.id !== d.id && q.project_id === d.project_id && q.source_path === d.source_path).map(q => q.id) : [];
+    if (older.length) dropFromQueue(older, state.waiting - older.length);
+    // Newest first: the arrival is the top row, whatever this page holds
+    // below it, and the held list keeps its length.
+    if (!queueIds.has(d.id)) { state.queue.unshift(d); state.queue.length = Math.min(state.queue.length, QUEUE_HELD); }
+    state.waiting = j.waiting != null ? j.waiting : state.waiting + 1;
+    arrivals++;
+    if (!opens) wash([d.id]);
+    holdQueue();   // a burst's events carry counts ahead of the rows this page holds
+    state.cache.delete(d.id);
+    renderTree(); markActive();
+    // On a desk, one from elsewhere rises in its corner (#122).
+    if (state.view === "desk" && desk) desk.elsewhere(d);
+    await refreshTree(d.project_id);
+    deskDocs();
+    // First in the library, wherever the reader is -- on a desk, most
+    // often -- and not just first into an empty inbox: a reader with a
+    // year of documents is not told this one is their first.
+    if (state.tree.reduce((n, p) => n + p.docs, 0) <= 1) snyviSays("first-doc");
+    else if (state.waiting > 1) snyviSays("two-waiting");
+    else if (j.supersedes) snyviSays("version");
+    if (opens) {
+      await showDoc(d.id, true);
+      // Nobody pressed anything: this one came in on its own, so it rises
+      // in the corner, and settles there, in Lately.
+      corner(m => m.rise({ kind: "doc", key: `d${d.id}`, from: esc(`${d.sender || d.project} · just now`), title: d.title }));
+    }
+    else if (superseded) {
+      // The rail picks it up either way: a reader who misses the card finds
+      // the new version at the top of Versions, `]` steps to it, and it is
+      // in the corner's Lately. Read over a desk, it is read there too, the
+      // desk's rail kept -- over that desk only, if the reader is still on it
+      // (#171).
+      renderHistory();
+      const over = overDesk() ? state.deskBehind : null;
+      corner(m => m.rise({ kind: "version", key: `d${d.id}`, from: "A newer version arrived", title: d.title, label: "Read it", go: () => showDoc(d.id, true, false, over != null && overDesk() && (state.deskBehind ?? state.deskId) === over) }));
+    }
+    else if (state.view === "inbox") showInbox(false);
+  
+  }
+
   function connect() {
     const es = new EventSource("/api/events" + (inWindow ? `?window=${encodeURIComponent(windowMark)}` : ""));
     stream = es;
@@ -429,79 +551,10 @@
     es.addEventListener("agents", ev => { const j = parse(ev); if (j) setOnline(j.online); });
     // The updater's word: first on every stream, then whenever it changes.
     es.addEventListener("update", ev => { const j = parse(ev); if (j) setUpd(j); });
-    // An agent left a note, or a reader looked at one somewhere.
-    es.addEventListener("notes", ev => {
-      const j = parse(ev); if (!j) return;
-      if (Array.isArray(j.notes)) { state.notes = withOwn(j.notes); renderNote(); }
-    });
-    es.addEventListener("doc", async ev => {
-      const j = parse(ev); if (!j) return;
-      const d = j.doc;
-      // A project that was put away and has just been written to is not put
-      // away any more: the sidebar never holds back something waiting to be
-      // read. Taking it out of the set is enough -- the refresh below draws it.
-      if (d && away.delete(String(d.project_id))) saveAway();
-      // A save in place carries its project's row and rows: they go in and
-      // the sidebar is drawn once (`patchTree`), where a save used to
-      // refetch the tree and the project. An arrival still fetches.
-      // An overwrite of a document already here is not an arrival: refresh it where
-      // it is if it is on screen, never navigate to it, and never toast — a file
-      // being watched changes on every save.
-      if (j.existing) {
-        if (state.doc && state.doc.id === d.id) await refreshDoc(d.id);
-        else state.cache.delete(d.id);
-        if (patchTree(j)) { renderTree(); markActive(); } else await refreshTree(d.project_id);
-        if (!(desk && desk.docSaved && desk.docSaved(d))) deskDocs(); // the rail patches its own row on a save
-        return;
-      }
-      // An arrival joins the queue and the page stays where it is. The one
-      // place it opens by itself is the inbox with nothing waiting: the empty
-      // state exists to be filled, and a reader there has nothing to lose.
-      // An inbox with a queue on it is the queue, and the arrival is a row.
-      const opens = state.view === "inbox" && !state.waiting;
-      // The document on screen has just been sent again. The page stays where
-      // it is -- a reader mid-paragraph did not ask to be moved -- and the
-      // arrival is offered instead of taken.
-      const superseded = !!(j.supersedes && state.doc && state.doc.id === j.supersedes);
-      // A newer version of a file already waiting takes that row's place:
-      // the daemon marked the older ones read when this one landed, and
-      // counts one. By file and not by `supersedes`, which names only the
-      // version just before -- a page that missed an event kept the rest.
-      const older = d.source_path ? state.queue.filter(q => q.id !== d.id && q.project_id === d.project_id && q.source_path === d.source_path).map(q => q.id) : [];
-      if (older.length) dropFromQueue(older, state.waiting - older.length);
-      // Held in order only while everything waiting is held: past that the
-      // arrival is the newest, and belongs after rows this page never had.
-      if (!queueIds.has(d.id) && state.queue.length === state.waiting) state.queue.push(d);
-      state.waiting = j.waiting != null ? j.waiting : state.waiting + 1;
-      arrivals++;
-      if (!opens) wash([d.id]);
-      holdQueue();   // a burst's events carry counts ahead of the rows this page holds
-      state.cache.delete(d.id);
-      renderTree(); markActive();
-      await refreshTree(d.project_id);
-      deskDocs();
-      // First in the library, wherever the reader is -- on a desk, most
-      // often -- and not just first into an empty inbox: a reader with a
-      // year of documents is not told this one is their first.
-      if (state.tree.reduce((n, p) => n + p.docs, 0) <= 1) snyviSays("first-doc");
-      else if (state.waiting > 1) snyviSays("two-waiting");
-      else if (j.supersedes) snyviSays("version");
-      if (opens) {
-        await showDoc(d.id, true);
-        // Nobody pressed anything: this one came in on its own, so it keeps
-        // the corner rather than pointing at whatever was last touched.
-        toast(d.title, { sub: `${d.project} · just now`, kind: "news", go: () => showDoc(d.id, true) });
-      }
-      else if (superseded) {
-        // The rail picks it up either way, so the offer is free to fade: a
-        // reader who misses the button finds the new version at the top of
-        // Versions, and `]` steps to it.
-        renderHistory();
-        toast("A newer version arrived", { sub: d.title, kind: "news", go: () => showDoc(d.id, true),
-          action: { label: "Read it", run: () => showDoc(d.id, true) } });
-      }
-      else if (state.view === "inbox") showInbox(false);
-    });
+    // Something came, from an agent or a friend, and is kept in Lately; or
+    // a reader looked at the corner somewhere (src/lately.rs).
+    es.addEventListener("lately", ev => { const j = parse(ev); if (j) corner(m => m.event(j)); });
+    es.addEventListener("doc", ev => { const j = parse(ev); if (j) docEvent(j); });
     // A document was opened somewhere -- this tab, another, the window -- and
     // is off the queue everywhere.
     es.addEventListener("read", ev => {
@@ -525,7 +578,6 @@
       const j = parse(ev); if (!j) return;
       const turn = opening;
       state.cache.delete(j.id);
-      depart([j.id]);
       state.queue = state.queue.filter(d => d.id !== j.id);
       if (j.waiting != null) state.waiting = j.waiting;
       await refreshTree();
@@ -562,7 +614,7 @@
     // The reader arranged the sidebars, here or in another window.
     es.addEventListener("layout", ev => { const j = parse(ev); if (!j) return; setLayout(j); desk?.arranged?.(); });
     // An agent ticked a line on a desk's list.
-    es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); });
+    es.addEventListener("desknotes", ev => { const j = parse(ev); if (j && desk && desk.notesChanged) desk.notesChanged(j.desk); cornerMod?.moved("desknotes"); });
     // A pane started, stopped, or rang for its reader: the dots, at once.
     es.addEventListener("panes", ev => {
       const j = parse(ev); if (!j) return;

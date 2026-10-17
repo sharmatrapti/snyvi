@@ -119,6 +119,12 @@ const MARKS_AT_MOST: Duration = Duration::from_secs(24 * 3600);
 /// working: a Claude stopped with Esc says nothing more, while one that is
 /// working repaints its spinner every second.
 const WORKING_SILENT: Duration = Duration::from_secs(10 * 60);
+/// The same, for a switch of account (`is_answering`): a reader waiting to
+/// switch should not wait ten minutes on a turn whose end nobody heard -- a
+/// hook from before `StopFailure`, a crash. Claude repaints its spinner every
+/// second while it answers, a long tool call included, so half a minute of
+/// silence is a turn that is over.
+const ANSWER_SILENT: Duration = Duration::from_secs(30);
 /// A pane busy only because its program keeps printing -- a log tail, a
 /// watcher, a dev server -- counts for at most this long, or an update
 /// would wait on it forever.
@@ -186,6 +192,12 @@ pub struct Status {
     /// Empty for everything else, which keeps `blocked` as its only signal.
     pub agent: &'static str,
     pub agent_since: Option<i64>,
+    /// Why the agent's last turn ended without its answer: Claude Code's
+    /// `StopFailure` error (`STOP_REASONS`), `rate_limit` when the account
+    /// ran out. Set with `done` and cleared by whatever the agent says next.
+    /// A panel stopped at a limit is offered another account in its head.
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub stopped: &'static str,
     /// An agent's session is open in this pane: its SessionStart hook came
     /// and its SessionEnd has not. True from before the first prompt, which
     /// `agent` waits for. The page reads it to leave the picture on a plain
@@ -227,12 +239,23 @@ pub struct Status {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ctx_at: Option<i64>,
     /// The account's rate-limit windows, as the same status line said them:
-    /// one account in every panel, so the desk shows the freshest. Absent
+    /// the panel's own account's (`account`). Absent
     /// for an account Claude Code gives none to, and before the first reply.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub five_hour: Option<crate::statusline::Limit>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seven_day: Option<crate::statusline::Limit>,
+    /// The agent's cards above the rail's foot while this panel has focus
+    /// (`crate::card`, #162): a link or a word, each for its own time. They
+    /// go with the session that put them there, like the model above.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cards: Vec<crate::card::Card>,
+    /// The cards the reader closed with their ✕, by id, for this session:
+    /// the page leaves them out, an agent's card of that id put again stays
+    /// out, and Undo takes the id off (1.43). `pr-<thread>-<n>` is the PR
+    /// card the page draws from the thread.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub closed: Vec<String>,
     /// The Claude account this process started as (`crate::accounts`): 0
     /// for the `/login` one, which is every panel until a reader adds
     /// another. Kept after the process ends, for "Continue as…": the panel
@@ -245,6 +268,11 @@ pub struct Status {
     /// the page's; 0 is "never", and a pane at 0 is told nothing but stamped.
     #[serde(skip)]
     pub told_at: i64,
+    /// When the reader last pressed Enter in this pane, in seconds since the
+    /// epoch, or 0: a pipeline's stage pauses after a turn they spoke in
+    /// (`crate::pipeline`). Their own, so never sent.
+    #[serde(skip)]
+    pub entered_at: i64,
 }
 
 fn is_login(account: &i64) -> bool {
@@ -260,6 +288,8 @@ fn clear_context(s: &mut Status) {
     s.ctx_at = None;
     s.five_hour = None;
     s.seven_day = None;
+    s.cards.clear();
+    s.closed.clear();
 }
 
 /// A rate-limit window as the page writes it: the whole percent left and
@@ -287,6 +317,23 @@ fn ctx_figure(used: Option<u64>) -> Option<u64> {
 /// The states an agent reports through its hooks. `needs_you` is Claude's
 /// precise version of `blocked`: a permission prompt, not a bell.
 pub const AGENT_STATES: [&str; 3] = ["working", "needs_you", "done"];
+
+/// Why a turn can end without its answer, as Claude Code's `StopFailure`
+/// hook names it. Anything else it may add later is `unknown`.
+pub const STOP_REASONS: [&str; 12] = [
+    "rate_limit",
+    "overloaded",
+    "authentication_failed",
+    "oauth_org_not_allowed",
+    "account_on_hold",
+    "billing_error",
+    "invalid_request",
+    "model_not_found",
+    "server_error",
+    "max_output_tokens",
+    "cloud_credential_error",
+    "unknown",
+];
 
 struct Proc {
     master: Box<dyn MasterPty + Send>,
@@ -506,6 +553,11 @@ pub struct Start<'a> {
     /// The desk's folder: see `Inner.root`.
     pub root: &'a str,
     pub cmd: &'a str,
+    /// Arguments after `cmd`, each one argv entry as it is -- never read by
+    /// a shell: a pipeline's step (`crate::pipeline`) is text a model may
+    /// have written, and `$(…)` in it must stay those characters. Empty for
+    /// everything the reader types, which runs as typed.
+    pub args: &'a [String],
     pub desk: &'a str,
     pub slot: i64,
     pub cols: u16,
@@ -741,6 +793,16 @@ impl Panes {
             })
     }
 
+    /// Whether Claude is writing an answer in this pane now, which a switch
+    /// of account would lose: see `is_answering`.
+    pub fn answering(&self, id: &str) -> bool {
+        let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
+            return false;
+        };
+        let i = l.inner.lock().unwrap();
+        is_answering(&i.status, Instant::now().saturating_duration_since(i.wrote))
+    }
+
     /// The panes a restart should wait for, and an update: see `is_busy`.
     pub fn busy(&self) -> Vec<String> {
         let now = Instant::now();
@@ -926,15 +988,33 @@ impl Panes {
     /// and nothing is woken or created for it. `state` is one of
     /// `AGENT_STATES`, or empty for an agent that has gone.
     pub fn set_agent(&self, id: &str, state: &str) -> bool {
+        self.set_agent_stopped(id, state, "")
+    }
+
+    /// `set_agent`, and why the turn ended without its answer (`Status::
+    /// stopped`): a `StopFailure` is `done` with its error. Only `done`
+    /// carries one; a reason not in `STOP_REASONS` is `unknown`.
+    pub fn set_agent_stopped(&self, id: &str, state: &str, why: &str) -> bool {
         let Some(l) = self.live.lock().unwrap().get(id).cloned() else {
             return false;
         };
         let state = AGENT_STATES.into_iter().find(|s| *s == state).unwrap_or("");
+        let why = if state != "done" || why.is_empty() {
+            ""
+        } else {
+            STOP_REASONS
+                .into_iter()
+                .find(|s| *s == why)
+                .unwrap_or("unknown")
+        };
         let mut i = l.inner.lock().unwrap();
         if !i.status.running {
             return false;
         }
-        if i.status.agent == state && i.status.agent_in == !state.is_empty() {
+        if i.status.agent == state
+            && i.status.agent_in == !state.is_empty()
+            && i.status.stopped == why
+        {
             return true;
         }
         // `needs_you` is also `blocked`, so everything that already shows a
@@ -949,6 +1029,7 @@ impl Panes {
         }
         i.status.agent = state;
         i.status.agent_since = (!state.is_empty()).then(crate::store::now);
+        i.status.stopped = why;
         i.status.agent_in = !state.is_empty();
         if state.is_empty() {
             clear_context(&mut i.status);
@@ -1045,6 +1126,52 @@ impl Panes {
         Some(true)
     }
 
+    /// A card put on, or taken off, the running pane `id` by the agent in it
+    /// (`crate::card`). The page hears it on the pane's own socket, the way
+    /// it hears the model. None for a pane that is not running; whether
+    /// anything changed otherwise.
+    pub fn put_card(&self, id: &str, op: crate::card::Op) -> Option<(bool, bool)> {
+        let l = self.live.lock().unwrap().get(id).cloned()?;
+        let mut i = l.inner.lock().unwrap();
+        if !i.status.running {
+            return None;
+        }
+        let shut = matches!(&op, crate::card::Op::Put(c) if i.status.closed.contains(&c.id));
+        if !crate::card::apply(&mut i.status.cards, op, crate::store::now()) {
+            return Some((false, shut));
+        }
+        let s = i.status.clone();
+        drop(i);
+        let _ = l.tx.send(status_frame(&l.id, &s).into());
+        Some((true, shut))
+    }
+
+    /// The reader's ✕ on card `card` of pane `id`, or their Undo of it
+    /// (`shut` false). Nothing is deleted: the id goes on, or off, the
+    /// pane's `closed` list, the card itself stays where the agent put it.
+    /// None for a pane that is not here; whether anything changed.
+    pub fn close_card(&self, id: &str, card: &str, shut: bool) -> Option<bool> {
+        /// Enough for every card a panel keeps and a few PR cards besides.
+        const CLOSED_MAX: usize = 24;
+        let l = self.live.lock().unwrap().get(id).cloned()?;
+        let mut i = l.inner.lock().unwrap();
+        let had = i.status.closed.iter().any(|c| c == card);
+        if had == shut {
+            return Some(false);
+        }
+        if shut {
+            i.status.closed.push(card.to_string());
+            let over = i.status.closed.len().saturating_sub(CLOSED_MAX);
+            i.status.closed.drain(..over);
+        } else {
+            i.status.closed.retain(|c| c != card);
+        }
+        let s = i.status.clone();
+        drop(i);
+        let _ = l.tx.send(status_frame(&l.id, &s).into());
+        Some(true)
+    }
+
     /// Whether this pane has a process right now. Nothing is woken to answer.
     pub fn is_running(&self, id: &str) -> bool {
         self.live
@@ -1061,6 +1188,20 @@ impl Panes {
             .unwrap()
             .values()
             .filter(|l| l.inner.lock().unwrap().status.running)
+            .count()
+    }
+
+    /// How many running panes run as each Claude account: a removed account
+    /// is still the one in their environment until they restart.
+    pub fn running_as(&self, account: i64) -> usize {
+        self.live
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|l| {
+                let i = l.inner.lock().unwrap();
+                i.status.running && i.status.account == account
+            })
             .count()
     }
 
@@ -1264,6 +1405,12 @@ pub fn is_busy(s: &Status, since_output: Duration, printing_for: Duration) -> bo
     }
 }
 
+/// Whether a pane's agent is mid-answer: it said `working` and has printed
+/// within `ANSWER_SILENT`. The rule on its own, like `is_busy`.
+pub fn is_answering(s: &Status, since_output: Duration) -> bool {
+    s.running && s.agent == "working" && since_output < ANSWER_SILENT
+}
+
 /// The panes the last daemon marked, and their clocks. A resume mark holds
 /// from the start until `resume_until`, which is unset until someone looks;
 /// past it, an unspent mark is an offer. Everything goes at `cap`.
@@ -1453,6 +1600,9 @@ impl Live {
         let Some(p) = i.proc.as_ref() else { return };
         let _ = p.input.send(bytes.to_vec());
         i.typed = Some(Instant::now());
+        if bytes.contains(&b'\r') {
+            i.status.entered_at = crate::store::now();
+        }
         if i.status.blocked {
             i.status.blocked = false;
             i.status.blocked_since = None;
@@ -1461,6 +1611,13 @@ impl Live {
             drop(i);
             panes.changed(&self.id, &s);
         }
+    }
+
+    /// The size the screen is now, as the page last asked for it: what a
+    /// process the daemon starts on its own (a pipeline's stage) is given.
+    pub fn size(&self) -> (u16, u16) {
+        let (c, r) = self.inner.lock().unwrap().screen.size();
+        (c as u16, r as u16)
     }
 
     /// The page's pane changed size. Resize-and-clear on both sides, which
@@ -1510,7 +1667,7 @@ impl Live {
             pixel_height: 0,
         };
         let pair = pty.openpty(size).context("opening a terminal")?;
-        let (mut cmd, born) = command(s.cmd, s.accent);
+        let (mut cmd, born) = command(s.cmd, s.args, s.accent);
         // cmd.exe takes a stored `\\?\D:\…` for UNC and starts in C:\Windows:
         // the process gets the plain spelling; what is stored stays as it is.
         cmd.cwd(dunce::simplified(std::path::Path::new(s.cwd)));
@@ -1633,6 +1790,7 @@ impl Live {
             i.status.blocked_since = None;
             i.status.agent = "";
             i.status.agent_since = None;
+            i.status.stopped = "";
             i.status.agent_in = false;
             i.unsaved = false;
             i.unsaved_lines = false;
@@ -1979,10 +2137,15 @@ const AGENT_ENV: &[&str] = &[
 const AGENT_TOOL_ENV: &[&str] = &["NO_COLOR", "FORCE_COLOR", "GIT_TERMINAL_PROMPT"];
 
 /// A panel starts as a fresh terminal would, not as a command an agent ran.
+/// Nor as an account it was not given: a daemon started from a panel that
+/// runs as a token account carries that token, and a `/login` panel of that
+/// daemon would quietly run as it. `start_pane` sets it back for a panel
+/// whose account is a token.
 fn fresh_env(cmd: &mut CommandBuilder, inside: bool) {
     for k in AGENT_ENV {
         cmd.env_remove(k);
     }
+    cmd.env_remove(crate::accounts::TOKEN_VAR);
     if inside {
         for k in AGENT_TOOL_ENV {
             cmd.env_remove(k);
@@ -1993,7 +2156,7 @@ fn fresh_env(cmd: &mut CommandBuilder, inside: bool) {
     cmd.env("TERM_PROGRAM", "snyvi");
 }
 
-fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {
+fn command(typed: &str, args: &[String], accent: &str) -> (CommandBuilder, String) {
     let typed = typed.trim();
     #[cfg(unix)]
     {
@@ -2001,6 +2164,9 @@ fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "/bin/sh".to_string());
+        if !args.is_empty() {
+            return (with_args(&shell, typed, args), String::new());
+        }
         let mut c = CommandBuilder::new(&shell);
         let dress = if typed.is_empty() {
             crate::prompt::dress(std::path::Path::new(&shell), accent)
@@ -2024,6 +2190,16 @@ fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {
     }
     #[cfg(windows)]
     {
+        // `cmd /C` reads the whole line again, `%VAR%` and all: arguments
+        // that must stay as they are go to the program itself, found on
+        // `PATH` as an `.exe`.
+        if !args.is_empty() {
+            let mut c = CommandBuilder::new(typed);
+            for a in args {
+                c.arg(a);
+            }
+            return (c, String::new());
+        }
         if !typed.is_empty() {
             let mut c = CommandBuilder::new("cmd.exe");
             c.arg("/C");
@@ -2047,6 +2223,38 @@ fn command(typed: &str, accent: &str) -> (CommandBuilder, String) {
             None => (c, String::new()),
         }
     }
+}
+
+/// A program and its arguments through the reader's login shell, for its
+/// `PATH`, without the shell reading the arguments: they are the shell's
+/// positional parameters, and the line it runs names them as `"$@"` (fish:
+/// `$argv`), which expands each to exactly what it was. A shell that is
+/// neither kind runs it through `/bin/sh` the same way.
+#[cfg(unix)]
+fn with_args(shell: &str, program: &str, args: &[String]) -> CommandBuilder {
+    let name = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    let fish = name == "fish";
+    let posix = matches!(
+        name,
+        "sh" | "bash" | "zsh" | "dash" | "ksh" | "mksh" | "ash" | "yash"
+    );
+    let mut c = CommandBuilder::new(if fish || posix { shell } else { "/bin/sh" });
+    c.arg("-l");
+    c.arg("-c");
+    if fish {
+        c.arg(format!("{program} $argv"));
+    } else {
+        c.arg(format!("{program} \"$@\""));
+        // `$0`, which `"$@"` leaves out.
+        c.arg("snyvi");
+    }
+    for a in args {
+        c.arg(a);
+    }
+    c
 }
 
 fn display_cmd(typed: &str) -> &str {

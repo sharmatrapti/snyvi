@@ -33,11 +33,11 @@
  * is this viewer's, in localStorage, since it is a preference about a page
  * and not a thing in the library, and so is the desk kept in Pick up. Arrived
  * cannot be hidden: what arrives is never put out of sight by a preference.
- * Friends shows once there is a friend, Keys is folded like the week, and
- * the version, Check for updates and Pair with a friend… are the foot's.
+ * Friends shows once there is a friend, and the version, Check for updates
+ * and Pair with a friend… are the foot's, with an update's card under it.
  * Nothing here moves when something arrives: the status line is one line
- * whatever it says, and a widget with nothing to say says so rather than
- * going away.
+ * whatever it says, On you opens over the page from it, and a widget
+ * with nothing to say says so rather than going away (audit 67d008cb6f).
  */
 
 const CSS = `
@@ -49,47 +49,56 @@ const CSS = `
 .hm-status a { color: var(--fg-2); text-decoration: none; }
 .hm-status a:hover { color: var(--fg); text-decoration: underline; }
 .hm-status.ring .hm-ring { color: var(--warn); font-weight: 600; }
+/* On you: a button in the status line, and a sheet over the page under
+   it -- the desk's "On you" corner's, so its coming moves nothing. */
+.hm-st { position: relative; }
+.hm .hm-ask { max-width: none; padding: 0; margin: 0; }
+.hm-ask .w-q { font-size: var(--fs-h3); font-weight: 600; margin: 0 0 12px; }
+.hm-ask .w-btns { display: flex; flex-wrap: wrap; gap: 10px; }
+.hm-onyou { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; color: var(--warn); cursor: pointer; }
+.hm-onyou:hover, .hm-onyou[aria-expanded="true"] { text-decoration: underline; }
+.hm-onyou.old { font-weight: 400; color: var(--fg-2); }
+/* A desk's moving threads, a line each under its notes. */
+.hm-th { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; }
+.hm-th li { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--fs-small); color: var(--fg-3); }
+.hm-th svg { flex: none; }
+.hm-th-n { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-2); font-weight: 500; }
+.hm-th .hm-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-upd { margin-top: 12px; max-width: 360px; }
 .hm .fact { font-family: var(--mono); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
 /* Pick up, the desks and the week on the left, the side column beside them. */
 .hm-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); grid-template-areas: "main side"; gap: 32px 48px; align-items: start; }
 @container (max-width: 760px) {
-  .hm-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "side"; }
+  /* One column, and what arrived under the bar rather than under the week:
+     the columns step aside so their sections share one order. */
+  .hm-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; }
+  .hm-main, .hm-side { display: contents; }
+  .hm-nb { order: -2; }
+  .hm-arrived { order: -1; }
 }
 .hm-main { grid-area: main; display: grid; gap: 32px; min-width: 0; }
 .hm-side { grid-area: side; display: grid; gap: 32px; min-width: 0; }
 /* A section: a label on a hairline, and space doing the rest. */
 .hm-w { min-width: 0; }
 .hm-wh { display: flex; align-items: center; gap: 8px; height: 28px; margin: 0 0 8px; border-bottom: 1px solid var(--rule); }
-.hm-wh h2 { margin: 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); }
+/* A head reads as the head of what is under it: the rows' size, a step
+   brighter than their facts (audit 67d008cb6f; it was 11 px under 13). */
+.hm-wh h2 { margin: 0; font-size: var(--fs-ui); font-weight: 600; color: var(--fg-2); }
 .hm-wh h2 .n { margin-left: 6px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .hm-wh .hm-act { margin-left: auto; }
-.hm-hide { flex: none; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; opacity: 0; font-size: var(--fs-micro); }
+/* Hide, said: the ✕ that was here meant "remove" everywhere else on the page,
+   and showed only under the pointer. */
+.hm-hide { flex: none; height: 20px; padding: 0 6px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; font: inherit; font-size: var(--fs-micro); }
 .hm-wh .hm-act + .hm-hide { margin-left: 0; }
 .hm-wh h2 + .hm-hide { margin-left: auto; }
-.hm-w:is(:hover, :focus-within) .hm-hide { opacity: 1; }
 .hm-hide:hover { background: var(--rule-2); color: var(--fg); }
 .hm-quiet { margin: 0; color: var(--fg-3); font-size: var(--fs-small); line-height: 1.6; }
 .hm-s { flex: none; color: var(--fg-3); font-size: var(--fs-small); }
 .hm-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-list { list-style: none; margin: 0; padding: 0; }
-/* A question to answer: read whole, up to three lines (all of it in its tip),
-   with where it came from under it and the answers at that line's end, or on
-   a line of their own when they need the room. Never beside the question:
-   beside it they took its width and sat over its words (#104). */
-.hm-turn { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px 0; border-bottom: 1px solid var(--rule); }
-.hm-turn .hm-pw { display: contents; }
-.hm-turn .hm-tq { flex: 1 0 100%; color: var(--fg); white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; line-height: 1.45; }
-.hm-turn .hm-cmd { flex: 1 0 100%; }
-.hm-turn .hm-t:not(.hm-tq, .hm-cmd) { flex: 1 1 auto; font-size: var(--fs-small); color: var(--fg-3); }
-/* A handed-over command, whole: one line on Home, all of it in its tip. */
-.hm-turn .hm-cmd { font-family: var(--mono); font-size: 11px; color: var(--fg-2); }
-.hm-turn.said .hm-t b { font-weight: inherit; color: var(--fg); }
-.hm-tacts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 6px; flex: 0 1 auto; min-width: 0; margin-left: auto; }
 .hm-opt { padding: 1px 8px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: none; font: inherit; font-size: var(--fs-micro); color: var(--fg-2); cursor: pointer; }
 .hm-opt:hover { color: var(--fg); border-color: var(--accent); }
 .hm-opt.rec { border-color: var(--accent); color: var(--fg); }
-.hm-kn { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--fg); }
-.hm-key .hm-t a { color: inherit; }
 .hm-link { padding: 0; border: 0; background: none; font: inherit; font-size: var(--fs-small); color: var(--fg-2); cursor: pointer; }
 .hm-link:hover { color: var(--fg); text-decoration: underline; }
 .hm-link.hm-undo { color: var(--accent); }
@@ -100,7 +109,7 @@ const CSS = `
 .hm-dot.need { background: var(--warn); }
 /* Pick up: the one card on the page. */
 .hm-pick { padding: 18px 20px 16px; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--bg-raise, var(--bg)); box-shadow: var(--shadow-1); min-width: 0; }
-.hm-pick > h2 { margin: 0 0 4px; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); }
+.hm-pick > h2 { margin: 0 0 4px; font-size: var(--fs-ui); font-weight: 600; color: var(--fg-2); }
 .hm-pk-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 0 0 12px; }
 .hm-pk-name { font-size: var(--fs-h3); font-weight: 650; letter-spacing: -.01em; color: var(--fg); text-decoration: none; }
 .hm-pk-name:hover { text-decoration: underline; }
@@ -175,6 +184,8 @@ const CSS = `
 .hm-stage.planned:hover { color: var(--accent); }
 .hm-stage svg { width: 10px; height: 10px; }
 .hm-stage.working::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.hm-stage.landed::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.hm-stage.reopened::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 .hm-stage.working.busy::before { animation: hm-breathe calc(var(--dur-moment) * 2) ease-in-out infinite; }
 @keyframes hm-breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .hm-stage.working::before { animation: none; } }
@@ -264,6 +275,7 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-arr > li + li { border-top: 1px solid var(--rule); }
 .hm-ag { flex: none; width: 1em; line-height: 20px; text-align: center; color: var(--fg-3); }
 .hm-ag.ask { color: var(--accent); font-weight: 600; }
+.hm-ag > .r-who { display: inline-grid; width: 14px; height: 14px; vertical-align: -2px; }
 .hm-ab { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .hm-ab > .hm-t { line-height: 20px; color: var(--fg); text-decoration: none; }
 .hm-ab > a.hm-t:hover { text-decoration: underline; }
@@ -278,12 +290,6 @@ a.hm-panels:hover { color: var(--fg); }
 .hm-friend > .hm-fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--fg); }
 .hm-friend > .hm-ren { flex: 1; min-width: 0; font: inherit; font-weight: 500; line-height: inherit; padding: 0 4px; margin: 0 0 0 -5px; border: 1px solid var(--rule-2); border-radius: var(--r-sm); background: var(--bg); color: var(--fg); }
 /* Keys, folded like the week. */
-.hm-keys > summary { list-style: none; cursor: pointer; }
-.hm-keys > summary::-webkit-details-marker { display: none; }
-.hm-keys > summary > .s-chev { margin-left: 2px; }
-.hm-keys { position: relative; }
-.hm-keys > .hm-hide { position: absolute; top: 0; right: 0; }
-.hm-keys:not([open]) > summary { margin-bottom: 0; }
 .hm-meta { margin: 10px 0 0; font-size: var(--fs-small); color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hm-meta a { color: inherit; text-decoration: none; }
 .hm-meta a:hover { color: var(--fg); text-decoration: underline; }
@@ -295,16 +301,35 @@ a.hm-panels:hover { color: var(--fg); }
 .inbox-removed > .t-away { width: auto; padding-left: 14px; }
 .inbox .rm { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title act" "sub act"; gap: 2px 16px; padding: 12px 14px; }
 .inbox .rm > .t-undo { grid-area: act; align-self: center; }
+/* The Inbox's list and its empty state: app.css's until 1.32. */
+.inbox { list-style: none; margin: 0; padding: 0; }
+.inbox li a { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title time" "sub sub"; gap: 2px 16px; padding: 12px 14px; margin: 0 -14px; border-radius: var(--r-md); color: inherit; border-bottom: 1px solid var(--rule); transition: background var(--t); }
+.inbox li a:hover { background: var(--bg-side); text-decoration: none; }
+.inbox .title { grid-area: title; font-weight: 600; font-size: var(--fs-body-s); letter-spacing: -.005em; }
+.inbox .time { grid-area: time; font-size: var(--fs-small); color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.inbox .sub { grid-area: sub; font-size: var(--fs-small); color: var(--fg-3); }
+.inbox .sub b { font-weight: 500; color: var(--fg-2); }
+.inbox a.new .title::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin: 0 9px 2px 0; vertical-align: middle; }
+.inbox-sec { display: flex; align-items: center; gap: 10px; font-size: var(--fs-micro); color: var(--fg-3); font-weight: 600; margin: 32px 0 4px; }
+.inbox-sec .n { background: var(--accent); color: var(--on-accent); border-radius: var(--r-pill); padding: 0 7px; line-height: 17px; font-variant-numeric: tabular-nums; font-size: var(--fs-micro); }
+.inbox-sec button { margin-left: auto; font-weight: 500; font-size: var(--fs-small); color: var(--fg-2); padding: 3px 8px; border-radius: var(--r-sm); }
+.inbox-sec button + button { margin-left: 0; }
+.inbox-sec button:hover { background: var(--rule); color: var(--fg); }
+.inbox.waiting { margin-bottom: 8px; }
+.empty-state { margin: 20vh auto 0; max-width: 46ch; text-align: center; color: var(--fg-2); }
+.empty-state h1 { font-size: var(--fs-h3); font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; color: var(--fg); }
+.empty-state p { margin: 0 0 18px; font-size: var(--fs-body-s); }
+.empty-state .hero .mk { display: block; width: 44px; height: 44px; margin: 0 auto 16px; }
+.empty-state pre { text-align: left; font-family: var(--mono); font-size: var(--fs-ui); background: var(--code-bg); padding: 12px 16px; border-radius: var(--r-sm); display: inline-block; margin: 0; }
 `;
 
-/** The widgets that can be hidden, in the order they stand. Pick up cannot:
- *  it is what the page is for. */
+/** The sections that can be hidden, in the order they stand. Pick up
+ *  cannot: it is what the page is for. Threads and Keys were sections until
+ *  1.32; a reader who hid them has nothing left to show. */
 const WIDGETS = [
-  ["threads", "Threads"],
-  ["desks", "Projects"],
+  ["desks", "Other desks"],
   ["claude", "Claude"],
   ["friends", "Friends"],
-  ["keys", "Keys"],
 ];
 
 const DAY = 86400;
@@ -313,6 +338,19 @@ const DAY = 86400;
 const QUIET_DAYS = 10;
 
 let c = null, last = null, soon = 0, reading = 0, sheet = null;
+/** Where Claude Code stands here, asked once a visit to Home (/api/agents
+ *  reads the agents' own files, too much for every refresh): "missing",
+ *  "unconnected" or "connected"; null until it answers. The status line says
+ *  "Claude idle" only of a Claude that could be at work. */
+let claudeIs = null;
+function claudeAsk() {
+  fetch("/api/agents").then(r => r.json()).then(a => {
+    const row = a.rows.find(r => r.id === "claude");
+    const was = claudeIs;
+    claudeIs = row && row.state === "connected" ? "connected" : a.claude_on_path ? "unconnected" : "missing";
+    if (was !== claudeIs && last && c.view() === "home") drawUnlessTyping();
+  }, () => {});
+}
 /** Parking in progress: the desk whose row holds the form, what is typed in
  *  it (kept across the redraws an event brings), and the one just parked,
  *  which keeps its row, with an Undo, for a moment. */
@@ -391,9 +429,28 @@ export async function show(ctx) {
   order = null;
   peersDirty = true;
   tick();
+  claudeAsk();
+  // Lately is the corner's, drawn large here (ui/corner.js).
+  if (!cornerMod) c.corner?.().then(m => { cornerMod = m; redraw(); }, () => {});
   if (last) draw(last);
   await refresh();
 }
+
+/** The corner's Lately moved: its section drawn again from what Home
+ *  already holds, and nothing else -- a burst of asides is not a burst of
+ *  Home redrawn under the pointer. */
+export function redraw() {
+  const sec = c && c.view() === "home" && last && c.docEl.querySelector(".hm-arrived");
+  if (!sec) return;
+  const t = document.createElement("template");
+  t.innerHTML = arrived(last);
+  const fresh = t.content.firstElementChild;
+  if (!fresh || sec.innerHTML === fresh.innerHTML) return;
+  const was = sec.contains(document.activeElement) ? document.activeElement.dataset : null;
+  sec.replaceWith(fresh);
+  if (was?.a) fresh.querySelector(`[data-a="${window.CSS.escape(was.a)}"]${was.r ? `[data-r="${window.CSS.escape(was.r)}"]` : ""}`)?.focus({ preventScroll: true });
+}
+let cornerMod = null;
 
 /** A new day draws the page again, for the date in the head and the
  *  "today" words. Between days, the minute's pass moves only the relative
@@ -527,24 +584,26 @@ function draw(j) {
   const { esc, plural } = c, hid = hidden();
   const w = (key, title, body, extra = "", act = "") => hid.includes(key) ? "" :
     `<section class="hm-w" data-w="${key}" data-part="home.${key}" aria-label="${esc(title)}"><div class="hm-wh"><h2>${esc(title)}${extra}</h2>${act}` +
-    `<button type="button" class="hm-hide" data-hm="hide" data-k="${key}" data-tip="Hide ${esc(title)}" data-tip-sub="Show brings it back" aria-label="Hide ${esc(title)}">✕</button></div>${body}</section>`;
+    `<button type="button" class="hm-hide" data-hm="hide" data-k="${key}" data-tip="Hide ${esc(title)}" data-tip-sub="the foot's Show brings it back" aria-label="Hide ${esc(title)}">Hide</button></div>${body}</section>`;
   drawnDay = startOfDay(Date.now() / 1000);
   // Friends only once there is one, or one removed to bring back.
   const anyFriend = !!(peers?.friends || []).length, fr = friendsOf();
-  // The update card heads the side column, and only while there is one.
-  const side = `<div class="hm-upd" hidden></div>` + arrived(j) + w("claude", "Claude", claude(j)) +
-    (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "") +
-    (hid.includes("keys") ? "" : keysW(j));
-  const desks = j.desks ? w("desks", "Projects", desksList(j), pickOf(j).rest.length ? ` <span class="n">${pickOf(j).rest.length}</span>` : "") : "";
-  const moving = (j.threads || []).filter(isMoving).length;
-  const threads = j.threads?.length ? w("threads", "Threads", threadsList(j), moving ? ` <span class="n">${moving} moving</span>` : "") : "";
+  // Seven blocks, none that comes and goes above another (audit 67d008cb6f):
+  // On you is the corner's tray, from the status line, a thread is a line on
+  // its desk, the update card is under the foot, and keys are the desks' own.
+  const side = arrived(j) + w("claude", "Claude", claude(j)) +
+    (anyFriend ? w("friends", "Friends", friends(j), fr.length ? ` <span class="n">${fr.length}</span>` : "") : "");
+  const desks = j.desks ? w("desks", "Other desks", desksList(j)) : "";
   const n = hid.filter(k => k !== "friends" || anyFriend).length;
   const html = `<div class="hm"><header class="hm-head" data-part="home.head"><h1>Home</h1><span class="hm-v">${esc(new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }))}</span></header>` +
-    status(j) +
-    `<div class="hm-grid"><div class="hm-main">${bar(j)}${onYou(j)}${pick(j)}${threads}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
+    `<div class="hm-st">${status(j)}</div>` +
+    `<div class="hm-grid"><div class="hm-main">${bar(j)}${pick(j)}${desks}${week(j)}</div><div class="hm-side">${side}</div></div>` +
     `<p class="hm-foot" data-part="home.foot">snyvi ${esc(j.version || "")} · <button type="button" data-hm="check">Check for updates</button> · ` +
     `<button type="button" data-hm="pair" data-tip="Pair with a friend" data-tip-sub="three words said over a call">Pair with a friend…</button>` +
-    (n ? ` · ${plural(n, "widget")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p></div>`;
+    (n ? ` · ${plural(n, "section")} hidden · <button type="button" data-hm="unhide">Show</button>` : "") + `</p>` +
+    // The update's card under the foot, where its coming moves nothing: the
+    // sidebar's card and the version's dot are where it is seen first.
+    `<div class="hm-upd" hidden></div></div>`;
   const a = document.activeElement;
   const key = b => b.dataset.hm + (b.dataset.k || "") + (b.dataset.n ? `:${b.dataset.n}` : "");
   const had = c.docEl.contains(a) && a.dataset.hm ? key(a) : null;
@@ -580,97 +639,56 @@ function status(j) {
   if (j.desks) {
     const asking = [];
     for (const d of j.desks) for (const p of d.panes) if (p.blocked || p.agent === "needs_you") asking.push([d, p]);
-    const on = (j.turns || []).length;
+    // Only what is fresh counts, and in amber: an older turn -- its panel
+    // closed, asked over half an hour ago, or its panel prompted since --
+    // is said apart, in the line's own ink (src/thread.rs `mark_stale`). Six
+    // turns days old read "6 things are on you" in amber, while every desk's
+    // pill called them older (audit e0a854b732, X2).
+    const ts = (j.turns || []).filter(w => w.via !== "dialog"), on = ts.filter(w => !w.stale).length, old = ts.length - on;
     if (asking.length) {
       ring = true;
       const [d, p] = asking[0];
-      bits.push(`<a class="hm-ring" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${esc(d.name)} · ${esc(p.name || `panel ${p.slot}`)} ${p.agent === "needs_you" ? "is asking" : "rang"}${asking.length > 1 ? `, and ${asking.length - 1} more` : ""}</a>`);
-    } else if (on) bits.push(`${on === 1 ? "One thing is" : `${on} things are`} on you`);
-    else bits.push("Nothing needs you");
-    const moving = (j.threads || []).filter(isMoving).length;
-    if (moving) bits.push(`${plural(moving, "thread")} moving`);
+      bits.push(`<a class="hm-ring" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${esc(d.name)} · ${esc(p.name || `panel ${p.slot}`)} needs you${asking.length > 1 ? `, and ${asking.length - 1} more` : ""}</a>`);
+    }
+    // On you opens the corner's tray, the one every page has, so its coming
+    // moves nothing (audit 67d008cb6f, plan b0bca0a11f).
+    if (on) bits.push(`<button type="button" class="hm-onyou" data-hm="turns" aria-haspopup="dialog" data-key="ctrl+alt+y">${on === 1 ? "One thing is" : `${on} things are`} on you ›</button>`);
+    if (!asking.length && !on) bits.push("Nothing needs you");
+    if (!on && old) bits.push(`<button type="button" class="hm-onyou old" data-hm="turns" aria-haspopup="dialog" data-tip="Older" data-tip-sub="Panels since closed, or asked over half an hour ago. They go by themselves after three days, and can come back">${old} older ›</button>`);
   }
-  bits.push(j.waiting ? `<a href="/inbox" data-nav="inbox">${plural(j.waiting, "document")} to read</a>` : bits.length ? "nothing to read" : "Nothing to read");
+  bits.push(j.waiting ? `<a href="/inbox" data-nav="inbox">${j.waiting} waiting</a>` : bits.length ? "nothing waiting" : "Nothing waiting");
   if (j.desks) {
     const n = j.desks.flatMap(d => d.panes).filter(p => p.agent === "working").length;
-    bits.push(n ? `${plural(n, "Claude")} working` : "Claude idle");
+    bits.push(n ? `${plural(n, "Claude")} working` : claudeIs === "missing" ? "Claude Code not installed"
+      : claudeIs === "unconnected" ? `<a href="/connect" data-nav="connect">Claude not connected</a>` : "Claude idle");
   }
-  const w = windowLeft(j.quota?.five_hour);
-  if (w) bits.push(`<span data-tip="Claude's five-hour window" data-tip-sub="${esc(w.text)}">5 h window ${w.fresh ? "full" : `${w.left}% left`}</span>`);
+  // With more than one account, the one with the least left, by its name.
+  const qs = quotasOf(j), lq = leastOf(qs, "five_hour"), w = windowLeft(lq?.five_hour);
+  if (w) bits.push(`<span data-tip="Claude's five-hour window${qs.length > 1 ? `, as ${esc(lq.label)}` : ""}" data-tip-sub="${esc(w.text)}">${qs.length > 1 ? `${esc(lq.label)}: ` : ""}5 h window ${w.fresh ? "full" : `${w.left}% left`}</span>`);
   return `<p class="hm-status${ring ? " ring" : ""}" data-part="home.status">${bits.join(" · ")}</p>`;
 }
 
-/* ---------- Your turn and Threads (#90) ----------
+/* ---------- On you and Threads (#90) ----------
  *
  * What agents filed on the desks (src/thread.rs): what only the reader can
  * do, across every desk, answered here; and the threads by stage. The answer
  * reaches the panel that asked with the reader's next message there, or at
  * once when the snyvi mod in that panel is holding the question. */
 
-/** Answers given here, kept in their row for SAID_MS: id -> { desk, text, answer, err }. */
-const answeredHere = new Map();
-const TURN_ANSWERS = { try: ["Looks good"], merge: ["Merged"], key: ["Added"] };
-
-function onYou(j) {
-  const { esc } = c, turns = (j.turns || []).filter(w => !answeredHere.has(w.id));
-  if (!turns.length && !answeredHere.size) return "";
-  const name = id => j.desks?.find(d => d.id === id)?.name || "a desk";
-  const slot = (desk, pane) => j.desks?.find(d => d.id === desk)?.panes.find(p => p.id === pane)?.slot;
-  // Questions asked together (#110) say which of how many each is: one card
-  // on the desk, a row each here, side by side as they were asked.
-  const all = j.turns || [];
-  const ofGroup = w => {
-    if (!w.ask_group) return "";
-    const g = all.filter(x => x.ask_group === w.ask_group);
-    return ` · ${g.indexOf(w) + 1} of ${g.length}`;
-  };
-  const row = w => {
-    // A command is run on its desk, where Run types it into the panel that
-    // asked: Home has no panel to type into.
-    const opts = w.kind === "decide" ? w.options : w.kind === "run" ? [] : TURN_ANSWERS[w.kind] || ["Done"];
-    const more = w.kind === "decide" ? "Other…" : w.kind === "try" ? "Needs changes…" : w.kind === "run" ? "Run on the desk" : "";
-    const n = slot(w.desk_id, w.pane);
-    return `<li class="hm-turn"><span class="hm-pw"><span class="hm-t hm-tq" data-tip="${esc(w.text)}" data-tip-overflow>${esc(w.text)}</span>` +
-      (w.kind === "run" ? `<code class="hm-t hm-cmd">${esc(w.cmd)}</code>` : "") +
-      `<span class="hm-t"><a class="hm-pn" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""}>${esc(name(w.desk_id))}</a>${n ? ` · panel ${n}` : ""} · ${esc(w.kind)}${ofGroup(w)}</span></span>` +
-      `<span class="hm-tacts">${opts.map((o, i) => `<button type="button" class="hm-opt${i === w.recommended ? " rec" : ""}" data-hm="answer" data-k="${w.id}" data-d="${w.desk_id}" data-v="${esc(o)}"${i === w.recommended ? ` data-tip="Recommended"` : ""}>${esc(o)}</button>`).join("")}` +
-      (more ? `<a class="hm-link" href="/desk/${w.desk_id}" data-desk="${w.desk_id}"${n ? ` data-slot="${n}"` : ""} data-tip="${esc(more)}" data-tip-sub="${w.kind === "run" ? `Run types it into ${n ? `panel ${n}` : "the panel that asked"}, on its desk` : "answer in your own words on the desk"}">${esc(more)}</a>` : "") + `</span></li>`;
-  };
-  const said = [...answeredHere].map(([, a]) => `<li class="hm-turn said"><span class="hm-pw"><span class="hm-t hm-tq">${esc(a.text)}</span>` +
-    `<span class="hm-t">${a.err ? esc(a.err) : `You said <b>${esc(a.answer)}</b> · it goes with your next message on ${esc(name(a.desk))}`}</span></span></li>`).join("");
-  return `<section class="hm-w hm-you" data-part="home.turns" aria-label="Your turn"><div class="hm-wh"><h2>Your turn · across desks${turns.length ? ` <span class="n">${turns.length}</span>` : ""}</h2></div>` +
-    `<ul class="hm-list">${turns.map(row).join("")}${said}</ul></section>`;
-}
-
 /** A thread a panel is moving: not shipped. One no panel is moving --
  *  parked, its panel closed, or its panel took up another -- the daemon
  *  lists nowhere (#109). */
 const isMoving = t => t.stage !== "shipped" && !t.rest;
 
-/** The threads, by where they are: what is moving, and what shipped this
- *  week. */
-function threadsList(j) {
-  const { esc } = c, ts = j.threads || [];
-  const name = id => j.desks?.find(d => d.id === id)?.name || "";
-  const row = t => `<li class="hm-pj"><span class="hm-pw"><a class="hm-pn" href="/desk/${t.desk_id}" data-desk="${t.desk_id}">${esc(t.name)}</a>` +
-    `<span class="hm-t">${[name(t.desk_id), t.notes.length ? t.notes.map(n => `#${n}`).join(" ") : "", t.stage === "parked" && t.next ? `next: ${t.next}` : t.branch, t.pr ? `PR ${t.pr}${t.ci ? ` ${t.ci}` : ""}` : ""].filter(Boolean).map(esc).join(" · ")}</span></span>` +
-    `<span class="hm-age fact">${esc(t.stage === "shipped" ? `shipped ${age(t.shipped_at || t.moved_at)}` : t.rest && t.stage !== "parked" ? `${t.stage} · ${t.rest}` : t.stage)}</span></li>`;
-  const group = (title, xs) => xs.length ? `<h3 class="hm-sub">${title}</h3><ul class="hm-list">${xs.map(row).join("")}</ul>` : "";
-  return group("Moving", ts.filter(isMoving)) +
-    group("Shipped this week", ts.filter(t => t.stage === "shipped"));
-}
-
-async function answerTurn(id, desk, answer) {
-  const w = (last?.turns || []).find(x => x.id === id);
-  if (!w || !answer) return;
-  const rec = { desk, text: w.text, answer, err: "" };
-  answeredHere.set(id, rec);
-  draw(last);
-  try { await c.deskApi(`/api/desks/${desk}/turns/${id}/answer`, { answer }); }
-  catch { rec.err = "Could not answer it; try again on the desk"; }
-  setTimeout(() => { if (answeredHere.get(id) === rec) { answeredHere.delete(id); if (last && c.view() === "home") draw(last); } }, SAID_MS);
-  if (last && c.view() === "home") draw(last);
-  soonRefresh();
+/** A desk's threads that are moving, one line each under its notes: where
+ *  each is, its PR and how its checks went. The Threads block said these
+ *  apart from their desks, and counted them twice (audit 67d008cb6f). */
+function threadLines(j, d) {
+  const { esc } = c, ts = (j.threads || []).filter(t => t.desk_id === d.id && isMoving(t));
+  if (!ts.length) return "";
+  return `<ul class="hm-th" aria-label="Threads on ${esc(d.name)}">` + ts.slice(0, 2).map(t =>
+    `<li>${BRANCH}<span class="hm-th-n">${esc(t.name)}</span><span class="hm-t">${[t.pr ? `PR ${t.pr}${t.ci ? ` ${t.ci}` : ""}` : t.branch, t.stage].filter(Boolean).map(esc).join(" · ")}</span></li>`).join("") +
+    (ts.length > 2 ? `<li class="hm-s"><a href="/desk/${d.id}" data-desk="${d.id}">and ${ts.length - 2} more</a></li>` : "") + `</ul>`;
 }
 
 /** A branch, drawn as git's own mark: two commits and the line between. */
@@ -700,9 +718,11 @@ function pick(j) {
   const { esc, plural } = c;
   const box = body => `<section class="hm-pick" aria-label="Pick up" data-part="home.pick">${body}</section>`;
   if (!j.desks) return box(`<p class="hm-quiet">Desks are in the snyvi window; a browser tab cannot see them. Everything your agents sent is in <a href="/inbox" data-nav="inbox">the Inbox</a>.</p>`);
-  if (!j.desks.length) return box(`<h2>Pick up</h2><p class="hm-quiet">No desks yet. A desk is one project: its folder, and up to four panels in it.</p><div class="hm-pk-go"><button type="button" class="btn btn-primary" data-hm="newdesk">+ New desk</button></div>`);
+  // No desk at all: Welcome's question again, as Zed's Welcome comes back
+  // when the centre is empty (R12), with Welcome's two ways in (about.js).
+  if (!j.desks.length) return box(`<div class="welcome hm-ask"><h2 class="w-q">What are you working on?</h2><div class="w-ask"><div class="w-btns"><button type="button" class="w-btn w-pick" data-w="pick">Choose its folder…</button><button type="button" class="btn" data-w="w-new">Start something new</button></div></div></div>`);
   const { hero: d, rest, isKept } = pickOf(j);
-  if (!d) return box(`<h2>Pick up</h2><p class="hm-quiet">Every desk is parked. Take one down in Projects when you are ready for it.</p>`);
+  if (!d) return box(`<h2>Pick up</h2><p class="hm-quiet">Every desk is parked. Unpark one under Other desks when you are ready for it.</p>`);
   const l = d.left_off, x = d.last;
   const left = l
     ? `<p class="hm-pk-left"><b>Left off</b>${esc(l.text)}<span class="fact">${l.by ? `${esc(l.by)} · ` : ""}${live(l.at)}</span></p>`
@@ -710,7 +730,8 @@ function pick(j) {
       ? `<p class="hm-pk-left hm-derived" data-tip="No one said where this was left" data-tip-sub="so this is the last thing that happened on it"><b>Last</b>${x.kind === "tick"
           ? `✓ ${esc(x.text)}${x.commit ? ` <code>${esc(x.commit.slice(0, 7))}</code>` : ""}`
           : `sent <a href="/d/${esc(x.id)}" data-id="${esc(x.id)}">${esc(x.text)}</a>`}<span class="fact">${live(x.at)}</span></p>`
-      : `<p class="hm-pk-left hm-quiet"><b>Left off</b>not said yet. A Claude on this desk says it at the end of a stretch, or write it in the desk's head.</p>`;
+      // A new desk, nothing on it yet: the next step, not an empty field.
+      : `<p class="hm-pk-left hm-quiet"><b>Next</b>ask Claude where you left off: the desk's panel has the button.</p>`;
   // A list with nothing left open is a milestone said in numbers
   // (docs/DESIGN.md §3.2); a desk with no list yet is not.
   const next = notesOf(d, 5);
@@ -720,14 +741,14 @@ function pick(j) {
   const panels = d.panes.map(p =>
     `<a class="hm-panels" href="/desk/${d.id}" data-desk="${d.id}" data-slot="${p.slot}">${dot(p)}${esc(p.name || `panel ${p.slot}`)} <span class="hm-s">${paneWord(p)}</span></a>`).join("");
   const facts = git || panels ? `<p class="hm-facts">${git}${panels}</p>` : "";
-  // The other desks, as chips, only while Projects below is hidden: it lists them.
+  // The other desks, as chips, only while Other desks below is hidden: it lists them.
   const chips = rest.length && hidden().includes("desks") ? `<p class="hm-chips"><span class="hm-s">or</span>${rest.map(o =>
     `<a class="hm-chip" href="/desk/${o.id}" data-desk="${o.id}" data-tip="${esc(o.name)} · ${o.touched ? touched(o.touched) : "not opened yet"}" data-tip-sub="${esc(o.panes.map(p => `${p.name || `panel ${p.slot}`} ${paneWord(p)}`).join(" · ") || "no panels")}">` +
     `${esc(o.name)}${liveDots(o)}<span class="fact">${o.touched ? age(o.touched) : "new"}</span></a>`).join("")}</p>` : "";
   return box(`<h2>Pick up</h2><div class="hm-pk-top"><a class="hm-pk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="fact">${touched(d.touched)}</span>${spark(d.pulse)}</div>` +
-    left + next + facts +
+    left + next + threadLines(j, d) + facts +
     `<div class="hm-pk-go"><a class="btn btn-primary" href="/desk/${d.id}" data-desk="${d.id}" data-hm-open>Open desk<kbd>↵</kbd></a>` +
-    (rest.length || isKept ? `<button type="button" class="hm-link" data-hm="keep" data-k="${d.id}" data-tip="${isKept ? "Let Pick up follow the desk touched last" : "Keep this desk in Pick up"}" data-tip-sub="${isKept ? "instead of this one" : "instead of whichever was touched last"}">${isKept ? "Kept here · Follow the last touched" : "Keep here"}</button>` : "") +
+    (rest.length || isKept ? `<button type="button" class="hm-link" data-hm="keep" data-k="${d.id}" data-tip="${isKept ? "Let Pick up follow the desk touched last" : "Pin this desk in Pick up"}" data-tip-sub="${isKept ? "instead of this one" : "instead of whichever was touched last"}">${isKept ? "Unpin" : "Pin here"}</button>` : "") +
     `</div>` + chips);
 }
 
@@ -763,7 +784,7 @@ function notesOf(d, max) {
   if (!rows.length) return d.done ? `<p class="hm-s hm-done">Notes done · ${d.done} of ${d.done}</p>` : "";
   return `<ul class="hm-next" aria-label="Open notes on ${esc(d.name)}">` + rows.map(r =>
     `<li class="hm-nt${r.done ? " done" : ""}"><button type="button" class="hm-tick" role="checkbox" aria-checked="${r.done}" data-hm="tick" data-k="${d.id}" data-n="${r.id}" aria-label="${r.done ? "Done" : "Not done"}: ${esc(r.text)}">${r.done ? TICK : ""}</button>${stageMark(r)}` +
-    `<span class="hm-nt-t" data-tip="${esc(r.text)}" data-tip-overflow>${esc(r.text)}</span>${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
+    `<span class="hm-nt-t" data-tip="${esc(r.text)}"${r.reply ? ` data-tip-sub="${esc(`${r.reply_by || "you"}: ${r.reply}`)}"` : " data-tip-overflow"}>${esc(r.text)}</span>${r.err ? `<span class="hm-s hm-err" role="alert">${esc(r.err)}</span>` : ""}</li>`).join("") +
     (more > 0 ? `<li class="hm-s hm-nt-more"><a href="/desk/${d.id}" data-desk="${d.id}">and ${more} more</a></li>` : "") + `</ul>`;
 }
 /** A line's stage, in the slot every line keeps: the server has already
@@ -771,6 +792,11 @@ function notesOf(d, max) {
 function stageMark(r) {
   const { esc } = c, by = esc(r.stage_by || "an agent");
   const st = r.done ? "" : r.stage || "";
+  // Out on main by a commit that names it, waiting for the reader's check
+  // on its desk; or reopened, the reader having said it is still broken.
+  if (!r.done && r.landed_commit)
+    return `<span class="hm-stage landed" role="img" data-tip="Shipped in ${esc(r.landed_commit.slice(0, 7))}" data-tip-sub="check it on its desk: works, or not yet" aria-label="Shipped, waiting for your check"></span>`;
+  if (st === "reopened") return `<span class="hm-stage reopened" role="img" data-tip="Reopened" data-tip-sub="you said it is still broken" aria-label="Reopened"></span>`;
   if (st === "planned" && r.stage_doc)
     return `<a class="hm-stage planned" href="/d/${esc(r.stage_doc)}" data-id="${esc(r.stage_doc)}" data-tip="Planned by ${by}" data-tip-sub="click to open the plan" aria-label="Open the plan for ${esc(r.text)}">${DOC}</a>`;
   if (st === "working") {
@@ -949,13 +975,14 @@ function desksList(j) {
   const shelf = j.desks.filter(d => d.parked && d.id !== justParked).sort((a, b) => b.parked.at - a.parked.at);
   const shelved = shelf.length ? `<div class="hm-shelf-w"><h3 class="hm-sub">Parked</h3><ul class="hm-list hm-shelf">${shelf.map(d =>
     `<li class="hm-pj"><span class="hm-pw"><a class="hm-pn" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a><span class="hm-t">${d.parked.next ? `next: ${esc(d.parked.next)}` : ""}</span></span>` +
-    `<button type="button" class="hm-link" data-hm="unpark" data-k="${d.id}">Take down</button><span class="hm-age fact">${age(d.parked.at)}</span></li>`).join("")}</ul></div>` : "";
-  if (!rest.length) return `<p class="hm-quiet">Your other projects show here, each with its open notes. One project, one desk.</p>` + shelved;
+    `<button type="button" class="hm-link" data-hm="unpark" data-k="${d.id}">Unpark</button><span class="hm-age fact">${age(d.parked.at)}</span></li>`).join("")}</ul></div>` : "";
+  if (!rest.length) return `<p class="hm-quiet">Your other desks show here, each with its open notes. One project, one desk.</p>` + shelved;
   const all = desksAll(), shown = all ? rest : rest.slice(0, DESKS_SHOWN - 1), more = rest.length - (DESKS_SHOWN - 1);
   const card = d => {
-    const done = (j.days || []).filter(r => r.desk === d.id && r.kind === "tick" && r.at >= now - 7 * DAY).length;
+    // A card says where the desk is, not how it went: its notes ticked are
+    // the week's, and its eight weeks are Pick up's (audit 67d008cb6f).
     let left = d.left_off ? `<p class="hm-dk-left" data-tip="Left off" data-tip-sub="${esc(d.left_off.text)}"><b>Left off</b>${esc(d.left_off.text)}</p>` : "";
-    let foot = done ? `<span class="hm-s" data-tip="${done} ${done === 1 ? "note" : "notes"} ticked in the last seven days">${done} done</span>` : "";
+    let foot = "";
     if (d.id === justParked) foot = `<span class="hm-s">Parked</span><button type="button" class="hm-link hm-undo" data-hm="unpark" data-k="${d.id}">Undo</button>`;
     else if (parking === d.id) left = `<div class="hm-park"><input data-hm="next" data-k="${d.id}" maxlength="200" placeholder="The next step, for when you come back" aria-label="The next step on ${esc(d.name)}" value="${esc(parkDraft)}">` +
       `<button type="button" class="hm-link" data-hm="parkgo" data-k="${d.id}">Park</button><button type="button" class="hm-link" data-hm="parkno">Cancel</button>${parkFailed ? `<span class="hm-s">Could not park</span>` : ""}</div>`;
@@ -965,8 +992,8 @@ function desksList(j) {
     return `<div class="hm-dk">` +
       `<div class="hm-dk-top"><a class="hm-dk-name" href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>${liveDots(d)}<span class="fact">${d.touched ? age(d.touched) : "new"}</span>${d.open ? `<span class="hm-s hm-dk-n">${d.open} open</span>` : ""}` +
       `<button type="button" class="hm-dk-add${d.open ? "" : " hm-dk-n"}" data-hm="addopen" data-k="${d.id}" data-tip="New note on ${esc(d.name)}" data-tip-sub="in the bar at the top" aria-label="A new note on ${esc(d.name)}">+</button></div>` +
-      left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) +
-      `<div class="hm-dk-foot">${foot}${spark(d.pulse)}</div></div>`;
+      left + (notes || (left ? "" : `<p class="hm-quiet">Nothing open. The + adds a note.</p>`)) + threadLines(j, d) +
+      (foot ? `<div class="hm-dk-foot">${foot}</div>` : "") + `</div>`;
   };
   return `<div class="hm-dks">` + shown.map(card).join("") + `</div>` +
     (more > 0 ? `<button type="button" class="hm-link hm-dks-more" data-hm="desks" aria-expanded="${all}">${all ? "Show fewer desks" : `${more} more ${more === 1 ? "desk" : "desks"}`}</button>` : "") + shelved;
@@ -1144,44 +1171,31 @@ function outbox(f) {
   return `<span class="hm-s" data-tip="${esc(mine[0].what || "A frame")} is waiting to go" data-tip-sub="${esc(why.replace(/^they are offline; /, ""))}">${mine.length} waiting ${/^they are offline/.test(why) ? "(offline)" : "to go"}</span>`;
 }
 
-/* ---------- Arrived ---------- */
+/* ---------- Lately ---------- */
 
-/** How many rows Arrived shows: the daemon sends as many documents. */
-const ARRIVED = 5;
-
-/** What came, in one place: an agent's offer first (it asks something), then
- *  a friend's lines, then the newest documents not yet read. Every action is
- *  in its row, and what it did stays there, with its Undo, for a moment. It
- *  cannot be hidden: nothing that arrives is put out of sight. */
+/** What came, in one place: a friend's line still waiting for a desk, with
+ *  its Add to a desk…, then the corner's Lately drawn large -- documents,
+ *  asides, friends' words, kept, with the rows and buttons the corner's
+ *  tray has (ui/corner.js, plan b0bca0a11f). An agent's offer is On you's,
+ *  in the corner. Nothing that arrives is put out of sight. */
 function arrived(j) {
-  const { esc, plural } = c;
+  const { plural } = c;
   // A row that was answered keeps its place while its words stand.
-  const withSaid = (xs, p) => {
-    const ids = new Set(xs.map(x => x.id));
-    return [...xs, ...[...arrSaid].filter(([k]) => k[0] === p && !ids.has(+k.slice(1))).map(([, v]) => v.item)].sort((a, b) => a.id - b.id);
-  };
-  const offers = withSaid(peers?.offers || [], "o"), lines = withSaid(peers?.notes || [], "n"), docs = j.arrived || [];
-  const rows = [...offers.map(offerRow), ...lines.map(n => lineRow(n, j)), ...docs.map(docRow)].slice(0, ARRIVED);
-  const shownDocs = Math.max(0, Math.min(docs.length, ARRIVED - offers.length - lines.length));
-  const n = (peers?.offers || []).length + (peers?.notes || []).length + (j.waiting || 0);
-  const body = rows.length ? `<ul class="hm-arr">${rows.join("")}</ul>` +
-      ((j.waiting || 0) > shownDocs ? `<p class="hm-arr-all"><a href="/inbox" data-nav="inbox">${shownDocs ? "Everything in the Inbox" : `${plural(j.waiting, "document")} in the Inbox`} →</a></p>` : "")
-    : `<p class="hm-quiet">Nothing waiting. What agents and friends send lands here.</p>`;
-  return `<section class="hm-w hm-arrived" data-w="arrived" data-part="home.arrived" aria-label="Arrived"><div class="hm-wh"><h2>Arrived${n ? ` <span class="n">${n}</span>` : ""}</h2></div>${body}</section>`;
+  const ids = new Set((peers?.notes || []).map(x => x.id));
+  const lines = [...(peers?.notes || []), ...[...arrSaid].filter(([k]) => k[0] === "n" && !ids.has(+k.slice(1))).map(([, v]) => v.item)].sort((a, b) => a.id - b.id);
+  // A waiting line is drawn above with its buttons, not again in the log.
+  const waiting = new Set(lines.map(n => `${n.from}\n${n.text}`));
+  const rows = lines.length ? `<ul class="hm-arr">${lines.map(n => lineRow(n, j)).join("")}</ul>` : "";
+  const lately = cornerMod ? cornerMod.trayHtml(true, r => r.kind === "line" && waiting.has(`${r.who}\n${r.text}`)) : `<p class="hm-quiet">…</p>`;
+  const all = j.waiting ? `<p class="hm-arr-all"><a href="/inbox" data-nav="inbox">${plural(j.waiting, "document")} waiting in the Inbox →</a></p>` : "";
+  const dot = cornerMod?.dot() ? ` <span class="cn-dot" aria-label="something new"></span>` : "";
+  return `<section class="hm-w hm-arrived" data-w="arrived" data-part="home.arrived" aria-label="Lately"><div class="hm-wh"><h2>Lately${dot}</h2></div>${rows}${lately}${all}</section>`;
 }
 
 /** What a row's button did, in the row, with its Undo. */
 function saidRow(s) {
   return `<span class="hm-s" role="status">${c.esc(s.say)}</span>` +
     (s.undo ? `<button type="button" class="hm-link hm-undo" data-hm="${s.undo}" data-k="${s.item.id}">Undo</button>` : "");
-}
-
-function offerRow(o) {
-  const { esc } = c, s = arrSaid.get("o" + o.id);
-  return `<li data-part="home.arrived.offer"><span class="hm-ag ask" aria-hidden="true">?</span><span class="hm-ab">` +
-    `<span class="hm-t">${esc(o.by || "An agent")} offers <b>${esc(o.title || "a document")}</b> to ${esc(o.to)}</span><span class="hm-acts">` +
-    (s ? saidRow(s) : `<span class="hm-s">${live(o.offered_at, age)}</span><button type="button" class="hm-link" data-hm="aoffer" data-k="${o.id}">Send</button>` +
-      `<button type="button" class="hm-link" data-hm="anot" data-k="${o.id}">Not now</button>`) + `</span></span></li>`;
 }
 
 /** A friend's line: Keep on… puts it on a desk in one click, with their
@@ -1191,18 +1205,11 @@ function lineRow(n, j) {
   const desks = [...ds.filter(d => !d.parked), ...ds.filter(d => d.parked)];
   const list = keepOpen === n.id && !s ? `<div class="hm-keepl" role="menu" aria-label="Keep it on">${desks.map(d =>
     `<button type="button" role="menuitem" class="hm-nb-o" data-hm="akeepto" data-k="${n.id}" data-n="${d.id}"><span class="hm-t">${esc(d.name)}</span>${d.parked ? `<span class="fact">parked</span>` : ""}</button>`).join("")}</div>` : "";
-  return `<li data-part="home.arrived.line"><span class="hm-ag" aria-hidden="true">“</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
+  return `<li data-part="home.arrived.line"><span class="hm-ag">${c.who(n.from)}</span><span class="hm-ab"><span class="hm-t">${esc(n.text)}</span><span class="hm-acts">` +
     (s ? saidRow(s) : `<span class="hm-s">from ${esc(n.from)} · ${live(n.arrived_at, age)}</span>` +
-      (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Keep it on a desk" data-tip-sub="a note there, from ${esc(n.from)}">Keep on… ▾</button>` : "") +
+      (desks.length ? `<button type="button" class="hm-link" data-hm="akeep" data-k="${n.id}" aria-haspopup="menu" aria-expanded="${keepOpen === n.id}" data-tip="Add it to a desk" data-tip-sub="a note there, from ${esc(n.from)}">Add to a desk… ▾</button>` : "") +
       `<button type="button" class="hm-link" data-hm="fdrop" data-k="${n.id}" aria-label="Remove the line from ${esc(n.from)}" data-tip="Remove" data-tip-sub="Undo brings it back">✕</button>`) +
     `</span></span>${list}</li>`;
-}
-
-function docRow(d) {
-  const { esc } = c;
-  const from = d.origin === "peer" && d.sender ? `from ${esc(d.sender)}` : `${esc(d.project)}${d.sender ? ` · ${esc(d.sender)}` : ""}`;
-  return `<li data-part="home.arrived.doc"><span class="hm-ag" aria-hidden="true">▣</span><span class="hm-ab"><a class="hm-t" href="/d/${esc(d.id)}" data-id="${esc(d.id)}">${esc(d.title)}</a>` +
-    `<span class="hm-acts"><span class="hm-s">${from} · ${live(d.received_at, age)}</span></span></span></li>`;
 }
 
 /** Say what a row's button did, in the row, for SAID_MS. */
@@ -1223,19 +1230,7 @@ async function postJson(url, body) {
 
 /** Arrived's buttons. True when the click was one of them. */
 async function arrivedClick(k, id, b) {
-  if (k === "aoffer" || k === "anot") {
-    const o = (peers?.offers || []).find(x => x.id === id);
-    if (!o) return true;
-    b.disabled = true;
-    try {
-      const r = await postJson(`/api/peers/offers/${id}`, { send: k === "aoffer" });
-      sayRow("o" + id, o, k === "anot" ? "Not sent" : r.sent ? `Sent to ${o.to}` : `Queued for ${o.to}; it goes when the relay can be reached`, k === "anot" ? "aundo" : "");
-    } catch (e) { b.disabled = false; c.peerCtx.toast("Could not answer it", { sub: c.peerCtx.sayErr(e).why }); }
-    soonRefresh();
-  } else if (k === "aundo") {
-    try { await postJson(`/api/peers/offers/${id}`, { undo: true }); } catch (e) { c.peerCtx.toast("Could not take it back", { sub: c.peerCtx.sayErr(e).why }); return true; }
-    clearTimeout(arrSaid.get("o" + id)?.t); arrSaid.delete("o" + id); soonRefresh();
-  } else if (k === "akeep") {
+  if (k === "akeep") {
     keepOpen = keepOpen === id ? 0 : id; draw(last);
     c.docEl.querySelector(keepOpen ? ".hm-keepl button" : `[data-hm=akeep][data-k="${id}"]`)?.focus({ preventScroll: true });
   } else if (k === "akeepto") keepLine(id, +b.dataset.n);
@@ -1282,38 +1277,6 @@ async function friendAct(k, id) {
   return true;
 }
 
-function keysOf(j) {
-  const by = new Map();
-  for (const d of j.desks || []) for (const k of d.keys || []) {
-    const r = by.get(k.name) || { name: k.name, provider: "", every: false, desks: [], used: 0 };
-    if (k.desk_id) r.desks.push(d); else r.every = true;
-    r.provider ||= k.provider || "";
-    r.used = Math.max(r.used, k.used_at || 0);
-    by.set(k.name, r);
-  }
-  return [...by.values()].sort((a, b) => a.name.localeCompare(b.name));
-}
-const keysOpen = () => { try { return localStorage.getItem("snyvi.home.keys") === "1"; } catch { return false; } };
-const setKeysOpen = on => { try { localStorage.setItem("snyvi.home.keys", on ? "1" : "0"); } catch {} };
-/** Keys, folded like the week and kept as the reader left it: a setting
- *  looked at now and then, not something the evening starts from. */
-function keysW(j) {
-  const { esc } = c, n = keysOf(j).length;
-  return `<details class="hm-w hm-keys" data-w="keys" data-part="home.keys"${keysOpen() ? " open" : ""}><summary class="hm-wh"><h2>Keys${n ? ` <span class="n">${n}</span>` : ""}</h2><span class="s-chev" aria-hidden="true"></span></summary>` +
-    // Its ✕ beside the head and not in it: a button inside a <summary> is
-    // a control inside a control.
-    `<button type="button" class="hm-hide" data-hm="hide" data-k="keys" data-tip="Hide ${esc("Keys")}" data-tip-sub="Show brings it back" aria-label="Hide Keys">✕</button>${keys(j)}</details>`;
-}
-function keys(j) {
-  const { esc } = c;
-  if (!j.desks) return `<p class="hm-quiet">Open the window to see your keys.</p>`;
-  const rows = keysOf(j);
-  if (!rows.length) return `<p class="hm-quiet">None yet. A desk's head has a Keys slot: paste one there, and every panel on that desk can use it at once.</p>`;
-  return `<ul class="hm-list">${rows.map(r =>
-    `<li class="hm-pj hm-key"><span class="hm-pw"><span class="hm-kn">${esc(r.name)}</span><span class="hm-t">${r.provider ? esc(r.provider) + " · " : ""}${r.every ? "every desk" : r.desks.map(d => `<a href="/desk/${d.id}" data-desk="${d.id}">${esc(d.name)}</a>`).join(", ")}</span></span>` +
-    `<span class="hm-age fact" data-tip="${r.used ? "a panel last started with it" : "no panel has started with it yet"}">${r.used ? age(r.used) : "unused"}</span></li>`).join("")}</ul>`;
-}
-
 /** What is left of one rate-limit window, as a share from 0 to 100 and a
  *  line of words. Claude Code drops a window once its reset time passes, and
  *  the daemon keeps the last reading it was given, so a window past its reset
@@ -1325,19 +1288,26 @@ function windowLeft(l) {
   return { left, hot: left <= 20, text: `${left}% left · resets ${resets(l.resets_at)}` };
 }
 
-/** What is left of the account's quota and when that was read, what the
+/** Every Claude account's windows, as the daemon heard them, by account
+ *  (`api_accounts::Usage`); the one `quota` an older daemon sent. */
+const quotasOf = j => (j.quotas && j.quotas.length ? j.quotas : j.quota ? [j.quota] : []).filter(q => q.five_hour || q.seven_day);
+/** The account with the least left in window `k`. */
+const leastOf = (qs, k) => qs.reduce((b, q) => (!b || (windowLeft(q[k])?.left ?? 101) < (windowLeft(b[k])?.left ?? 101) ? q : b), null);
+
+/** What is left of each account's quota and when that was read, what the
  *  Claudes in panels are doing, and the fullest context window. The bar is
- *  what is left, and turns amber at a fifth. */
+ *  what is left, and turns amber at a fifth. With one account its bars are
+ *  unnamed, as they always were. */
 function claude(j) {
   const { esc, plural } = c;
-  const q = j.quota, out = [];
+  const qs = quotasOf(j), out = [];
   const bar = (label, l) => { const w = windowLeft(l); return w ? `<div><span class="hm-k">${label}</span><div class="hm-bar${w.hot ? " hot" : ""}"><i style="width:${w.left}%"></i></div><span class="fact">${w.text}</span></div>` : ""; };
-  if (q && (q.five_hour || q.seven_day)) out.push(`<div class="hm-q">${bar("5 hours", q.five_hour)}${bar("7 days", q.seven_day)}</div>${q.at ? `<p class="hm-meta fact">As of ${age(q.at)} ago, from the last Claude that answered.</p>` : ""}`);
+  for (const q of qs) out.push(`${qs.length > 1 ? `<p class="hm-meta">${esc(q.label || "your login")}</p>` : ""}<div class="hm-q">${bar("5 hours", q.five_hour)}${bar("7 days", q.seven_day)}</div>${q.at ? `<p class="hm-meta fact">As of ${age(q.at)} ago, from the last Claude that answered${qs.length > 1 ? " as it" : ""}.</p>` : ""}`);
   if (j.desks) {
     const ps = j.desks.flatMap(d => d.panes.map(p => ({ ...p, desk: d.name, deskId: d.id })));
     const working = ps.filter(p => p.agent === "working").length, done = ps.filter(p => p.agent === "done").length;
     const hot = ps.filter(p => p.ctx_pct != null).sort((a, b) => b.ctx_pct - a.ctx_pct)[0];
-    if (working || done) out.push(`<p class="hm-meta">${working ? `${plural(working, "Claude")} working` : ""}${working && done ? " · " : ""}${done ? `${done} done` : ""}</p>`);
+    if (working || done) out.push(`<p class="hm-meta">${working ? `${plural(working, "Claude")} working` : ""}${working && done ? " · " : ""}${done ? `${done} idle` : ""}</p>`);
     if (hot) out.push(`<p class="hm-meta"><a href="/desk/${hot.deskId}" data-desk="${hot.deskId}" data-slot="${hot.slot}">Fullest context: ${esc(hot.desk)} · ${esc(hot.name || `panel ${hot.slot}`)} at ${hot.ctx_pct}%${hot.model ? ` (${esc(hot.model)})` : ""}</a></p>`);
   }
   if (!out.length) return `<p class="hm-quiet">No Claude at work. The quota shows here once one in a panel has answered.</p>`;
@@ -1355,7 +1325,10 @@ function wire() {
   if (!el || el.dataset.wired) return;
   el.dataset.wired = "1";
   el.addEventListener("click", async e => {
-    // A click anywhere else closes a Keep on… list.
+    // Lately's rows are the corner's, and so are their buttons.
+    const cn = e.target.closest("button[data-a^='cn-']");
+    if (cn && cornerMod?.act(cn.dataset.a, cn)) return;
+    // A click anywhere else closes an Add to a desk… list.
     if ((keepOpen || deskOpen) && !e.target.closest(".hm-keepl, [data-hm=akeep], [data-hm=fdesk]")) { keepOpen = deskOpen = 0; draw(last); }
     const b = e.target.closest("button[data-hm]");
     if (!b) return;
@@ -1363,12 +1336,12 @@ function wire() {
     // The ✕ in a folded widget's head hides it; it does not fold it.
     if (k === "hide") { e.preventDefault(); setHidden([...new Set([...hidden(), b.dataset.k])]); draw(last); c.docEl.querySelector("[data-hm=unhide]")?.focus({ preventScroll: true }); }
     else if (k === "unhide") { setHidden([]); draw(last); }
+    else if (k === "turns") c.corner().then(m => m.open(), () => {});
     else if (k === "check") c.checkUpdates(b);
     else if (k === "newdesk") c.newDesk(b);
     else if (k === "keep") { keep(kept() === id ? 0 : id); draw(last); c.docEl.querySelector("[data-hm=keep]")?.focus({ preventScroll: true }); }
     else if (k === "week") sendWeek(b);
     else if (k === "tick") tickNote(id, +b.dataset.n);
-    else if (k === "answer") answerTurn(id, +b.dataset.d, b.dataset.v);
     // A card's +: its desk on the chip, and the hand in the bar, which is in
     // view wherever the page is; the bar lights for a moment to say where.
     else if (k === "addopen") { barTo = id; menu = null; draw(last); focusBar(); lit(); }
@@ -1427,7 +1400,7 @@ function wire() {
   el.addEventListener("compositionstart", () => { composing = true; });
   el.addEventListener("compositionend", () => { composing = false; setTimeout(drawHeld, 0); });
   // The week stays as the reader left it, folded or open.
-  el.addEventListener("toggle", e => { if (e.target.matches?.(".hm-week")) setWeekOpen(e.target.open); else if (e.target.matches?.(".hm-keys")) setKeysOpen(e.target.open); }, true);
+  el.addEventListener("toggle", e => { if (e.target.matches?.(".hm-week")) setWeekOpen(e.target.open); }, true);
   // The hand leaving the bar closes its list; what is typed in it waits, as typed.
   el.addEventListener("focusout", e => {
     if (drawing || !e.target.closest?.(".hm-nb")) return;
@@ -1672,7 +1645,7 @@ export async function removedLine(fresh, { view, capability, deskApi, docEl, esc
     b.disabled = true;
     // Back: the row says so; a document's "restored" redraws the Inbox with it in.
     if (r.kind === "desk") { try { await deskApi(r.restore, {}); await loadDesks(); return void (b.textContent = "Back"); } catch {} }
-    else if ((await post(r.restore, r.kind === "aside" ? { ids: [Number(r.id)] } : null))?.ok) return void (b.textContent = "Back");
+    else if ((await post(r.restore, r.kind === "aside" || r.kind === "lately" ? { ids: [Number(r.id)] } : null))?.ok) return void (b.textContent = "Back");
     b.disabled = false; b.textContent = "Retry";
     toast("Could not bring it back", { sub: r.title, at: b });
   });
@@ -1681,20 +1654,29 @@ export async function removedLine(fresh, { view, capability, deskApi, docEl, esc
 }
 
 /** The Inbox's own page, drawn here beside Home: what is waiting first,
- *  oldest first, then everything, newest first. */
+ *  then everything, both newest first. */
 export function inboxHtml(items, { state, esc, rel, plural, mascotHead, kindTag, waitingRow, noteKnown, recent }) {
+  style();
   const row = d => (noteKnown(d), `<li><a href="/d/${d.id}" class="${waitingRow(d) ? "new" : ""}" data-id="${d.id}"><span class="title">${esc(d.title)}</span><span class="time">${rel(d.received_at)}</span><span class="sub"><b>${esc(d.project)}</b> · ${esc(d.workflow_title)} · ${kindTag(d.kind)}</span></a></li>`);
   // The one empty state (docs/DESIGN.md §3.4): snyvi at rest, one
   // sentence, one button.
   if (!items.length) return `<div class="empty-state"><span class="hero">${mascotHead("rest")}</span><h1>Nothing in the Inbox yet</h1>` +
     `<p>What your agents write lands here, filed by project.</p><button type="button" class="btn btn-primary" data-nav="start">How snyvi works</button></div>`;
-  // What is waiting comes first, oldest first, so the landing page answers
+  // What is waiting comes first, newest first, so the landing page answers
   // "what is new" before "what is there".
-  // Recent is the same list without the waiting half: the newest, read or not.
-  if (recent) return `<div class="inbox-head"><h1>Recent</h1><p>Newest first, across every project.</p></div><ul class="inbox">${items.map(row).join("")}</ul>`;
   const n = state.waiting;
+  // Recent is the sidebar's one row for what came: what is unread first, so
+  // Monday's plan is not under ten documents read since, then the rest,
+  // newest first. Each document once: the unread are not listed again.
+  if (recent) {
+    if (!n) return `<div class="inbox-head"><h1>Recent</h1><p>Newest first, across every project.</p></div><ul class="inbox">${items.map(row).join("")}</ul>`;
+    const held = new Set(state.queue.map(d => d.id));
+    return `<div class="inbox-head"><h1>Recent</h1><p>${plural(n, "document")} unread, then the rest, newest first.</p></div>` +
+      `<h2 class="inbox-sec">Unread<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul>` +
+      `<h2 class="inbox-sec">Earlier</h2><ul class="inbox">${items.filter(d => !held.has(d.id)).map(row).join("")}</ul>`;
+  }
   return `<div class="inbox-head"><h1>Inbox</h1><p>${n ? `${plural(n, "document")} waiting to be read, then everything else, newest first.` : "Newest first, across every project."}</p></div>` +
-    (n ? `<h2 class="inbox-sec">Waiting<span class="n">${n}</span><button type="button" data-q="next">Open the first<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul><h2 class="inbox-sec">Recent</h2>` : "") +
+    (n ? `<h2 class="inbox-sec">Waiting<span class="n">${n}</span><button type="button" data-q="next">Open the newest<kbd>n</kbd></button><button type="button" data-q="clear">Mark all read</button></h2><ul class="inbox waiting">${state.queue.map(row).join("")}</ul><h2 class="inbox-sec">Recent</h2>` : "") +
     `<ul class="inbox">${items.map(row).join("")}</ul>`;
 }
 

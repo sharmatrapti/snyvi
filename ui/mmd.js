@@ -572,7 +572,7 @@ function mmdViewport(fig) {
   // the frame is the window then, but measured before the browser has laid
   // that out it still says what it was. A figure that is not laid out at
   // all cannot be fitted; left as it is, it is fitted on the next pass.
-  const width = full ? Math.round(innerWidth) : frame.clientWidth;
+  let width = full ? Math.round(innerWidth) : frame.clientWidth;
   if (!width) return;
   mmdViews.delete(fig);
   // The graph's own bounds, kept on the element: the live viewBox is wherever
@@ -585,6 +585,7 @@ function mmdViewport(fig) {
   if (vb.length !== 4 || vb.some(n => !Number.isFinite(n)) || vb[2] <= 0 || vb[3] <= 0) return;
   const base = { x: vb[0], y: vb[1], w: vb[2], h: vb[3] };
   svg.dataset.mmdBase = `${base.x} ${base.y} ${base.w} ${base.h}`;
+  if (mmdBleed(fig, full ? 0 : base.w)) width = frame.clientWidth;
   // Mermaid sizes the SVG itself, in the units it drew in. The frame decides
   // how big it is on the page from here on.
   svg.removeAttribute("width");
@@ -608,6 +609,30 @@ function mmdViewport(fig) {
   mmdFit(fig);
   if (smudge && !full) mmdStart(fig);
   mmdTools(fig);
+}
+
+/** A diagram wider than the reading column comes out of it, as far as it
+ *  needs and the page allows, centred on the text; the text keeps its
+ *  measure. A six-step flow drawn across 1,475 units was fitted into the
+ *  670 px column at 45%, its 16 px labels at 7 px, and nobody read it. Only
+ *  one at the top level of the page, whose column is centred in #main; one
+ *  in a list or a quote stays where it is. True when the width changed.
+ *  `want` 0 (fullscreen, or not wider) puts it back in the column. */
+const MMD_GUTTER = 32;
+function mmdBleed(fig, want) {
+  const col = fig.parentElement, main = docEl.closest("#main");
+  const was = fig.style.marginInline;
+  let to = "";
+  if (want && main && col && col.matches("article")) {
+    // Without this, a drawn one already takes the doc's pad either side (.mmd[data-state]).
+    const pad = parseFloat(getComputedStyle(docEl).getPropertyValue("--doc-pad")) || 0;
+    const room = main.clientWidth - 2 * MMD_GUTTER, now = col.clientWidth + 2 * pad;
+    const w = Math.min(Math.ceil(want), room);
+    if (w > now) to = `${-Math.round((w - col.clientWidth) / 2)}px`;
+  }
+  if (was === to) return false;
+  fig.style.marginInline = to;
+  return true;
 }
 
 /** The whole graph, in a box shaped like the frame it is shown in.
@@ -896,12 +921,22 @@ docEl.addEventListener("dblclick", e => {
  * changed the fit. Re-measured rather than rescaled, which also puts a
  * diagram back where the reader can see all of it. */
 let mmdResize = null;
-addEventListener("resize", () => {
+const mmdRemeasure = () => {
   clearTimeout(mmdResize);
   mmdResize = setTimeout(() => {
     for (const fig of docEl.querySelectorAll('.mmd[data-state="done"]')) mmdViewport(fig);
   }, 150);
-});
+};
+addEventListener("resize", mmdRemeasure);
+/* The page's width changes without the window's too: Width (w), and the
+ * sidebar or the rail folded. A diagram that came out of the column is
+ * measured again then, or it stays as wide as the room it was given. Its
+ * width only: the page's height changes with every line drawn. */
+let mmdPageW = 0;
+new ResizeObserver(() => {
+  const w = docEl.clientWidth;
+  if (w !== mmdPageW) { if (mmdPageW) mmdRemeasure(); mmdPageW = w; }
+}).observe(docEl);
 
 /** Mermaid answers a source it cannot parse with its own error graphic, which
  *  replaces the source -- at exactly the moment the reader wants to see what

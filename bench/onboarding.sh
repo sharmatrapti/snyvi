@@ -52,6 +52,9 @@ $B init-claude | tee $HOME/init1.log
 grep -q "Registered snyvi with Claude Code" $HOME/init1.log
 grep -q "Try it" $HOME/init1.log
 grep -q "full path" $HOME/init1.log
+grep -q "Skill in $HOME/.claude/skills/snyvi" $HOME/init1.log
+grep -q "snyvi init-claude wrote this" $HOME/.claude/skills/snyvi/SKILL.md
+test -f $HOME/.claude/skills/snyvi/widgets.md
 check "assert s['hooks']['SessionStart'][0]['hooks'][0]['command']=='$B hook', s"
 echo "--- 2. again: nothing re-added, claude asked once"
 $B init-claude | tee $HOME/init2.log
@@ -65,16 +68,18 @@ grep -q "now run this binary" $HOME/init3.log
 check "h=s['hooks']; assert h['SessionStart'][0]['hooks'][0]['command']=='snyvi hook', h; assert [(x.get('matcher'), x['hooks'][0]['command']) for x in h['PostToolUse']]==[('Bash','other --x'),('Bash|Write|Edit|MultiEdit|NotebookEdit|WebFetch|WebSearch|ExitPlanMode|mcp__snyvi__.*','snyvi hook'),('Write|Edit|MultiEdit','snyvi hook')], h; assert s['theme']=='dark'; assert d['mcpServers']['snyvi']['command']=='snyvi', d"
 echo "--- 4. status says so"
 snyvi status | tee $HOME/status.log
-grep -q "Claude Code: MCP server registered (snyvi mcp); hooks: SessionStart, UserPromptSubmit, Notification, Stop, SessionEnd, PostToolUse" $HOME/status.log
+grep -q "Claude Code: MCP server registered (snyvi mcp); hooks: SessionStart, UserPromptSubmit, Notification, Stop, StopFailure, SessionEnd, PostToolUse" $HOME/status.log
 echo "--- 5. --claude-md, twice"
 snyvi init-claude --claude-md | grep -q "Added a line"
 snyvi init-claude --claude-md | grep -q "already asks"
 test "$(grep -c send_document $HOME/.claude/CLAUDE.md)" = 1
 echo "--- 6. uninstall-claude leaves the file as it was found"
 snyvi uninstall-claude | tee $HOME/un.log
-grep -q "Removed 9 snyvi hook" $HOME/un.log   # 8 hooks (PreToolUse for plans among them) and the status line
+grep -q "Removed 10 snyvi hook" $HOME/un.log   # 9 hooks (PreToolUse for plans and StopFailure among them) and the status line
 check "b=json.load(open(os.path.expanduser('~/settings-before.json'))); assert s==b, (s,b); assert 'snyvi' not in d['mcpServers']"
 ! grep -q send_document $HOME/.claude/CLAUDE.md
+grep -q "Removed the snyvi skill" $HOME/un.log
+test ! -e $HOME/.claude/skills/snyvi
 snyvi status | grep -q "MCP server not registered"
 echo "--- 7. no claude at all: says so, exits 0, gives the line"
 rm $HOME/bin/claude

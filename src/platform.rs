@@ -685,7 +685,10 @@ pub fn spawn_daemon(exe: &std::path::Path) -> std::io::Result<()> {
         if let Some(log) = open_daemon_log(&crate::config::paths().data_dir) {
             let err = log.try_clone()?;
             let mut cmd = Command::new(exe);
+            // A daemon started from a panel that runs as a token account
+            // would hand that token to every `/login` panel it starts.
             cmd.arg("serve")
+                .env_remove(crate::accounts::TOKEN_VAR)
                 .stdin(Stdio::null())
                 .stdout(Stdio::from(log))
                 .stderr(Stdio::from(err));

@@ -24,6 +24,7 @@ these rows are what says it still does.
     xvfb-run -a python3 bench/webkit.py --desk     only what a working desk costs
     xvfb-run -a python3 bench/webkit.py --desk-hidden --desk-scroll --idle --daemon
     xvfb-run -a python3 bench/webkit.py --git       a desk at its prompt runs no git
+    xvfb-run -a python3 bench/webkit.py --media     80 songs open at once, one plays at once
     DISPLAY=:0 python3 bench/webkit.py --desk --display   the real display, recorded
 
 The desk row is a measurement rather than a check: four panels on a desk,
@@ -51,6 +52,14 @@ inside a synchronized update goes on to the page as one frame.
 for two minutes, and how many times the daemon ran `git status` for them:
 at most two dozen in the first minute, while each panel's folder is found,
 and none in the second. A prompt that prints nothing has nothing to ask.
+
+`--media` is a document of 80 songs (#117, #120). In this engine a player
+is a GStreamer pipeline and scripted controls from the moment it is in the
+page: 83 of them held the page 5 s and stuttered on for 8 more, and a song
+that loaded ahead took 8.6 s from Play to sound. They are buttons now, the
+player made on the press, and these rows say so: none is a player before it
+is pressed, the page answers while they arrive, and the 60th sounds within
+two seconds of its press.
 
 `--display` runs the desk row on the display in DISPLAY rather than under
 Xvfb -- the window's own engine and GPU -- and records what it reads without
@@ -97,6 +106,7 @@ DESK_SCROLL = "--desk-scroll" in args
 IDLE = "--idle" in args
 DAEMON = "--daemon" in args
 GIT = "--git" in args
+MEDIA = "--media" in args
 DISPLAY = "--display" in args
 UI = os.path.abspath(args[args.index("--ui") + 1]) if "--ui" in args else None
 SECONDS = int(args[args.index("--seconds") + 1]) if "--seconds" in args else 10
@@ -590,6 +600,53 @@ def git_rows(env, base):
     return rows
 
 
+def media_rows(env, base, tmp):
+    """80 songs in one document, all the same short silence."""
+    import struct
+    rate, secs = 8000, 4
+    with open(f"{tmp}/take.wav", "wb") as f:
+        n = rate * secs * 2
+        f.write(b"RIFF" + struct.pack("<I", 36 + n) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+                + b"data" + struct.pack("<I", n) + bytes(n))
+    with open(f"{tmp}/takes.md", "w") as f:
+        f.write("# Takes\n\n" + "".join(f"Take {i}\n\n![take {i}](take.wav)\n\n" for i in range(80)))
+    out = subprocess.run([BIN, "send", f"{tmp}/takes.md"], env=env, cwd=tmp, capture_output=True, text=True).stdout
+    url = next(w for w in out.split() if w.startswith("http"))
+    v = View(url)
+    rows, lag, t0 = [], 0, time.time()
+    try:
+        while time.time() - t0 < 30:
+            t = time.time()
+            n = v.js("document.querySelectorAll('#doc .doc-play').length", 60)
+            lag = max(lag, time.time() - t)
+            if n == "80":
+                break
+            v.wait(50)
+        live = v.js("document.querySelectorAll('#doc audio, #doc video').length")
+        rows.append(("80 songs, none a player yet", n == "80" and live == "0", f"{n} buttons, {live} players before a press"))
+        for _ in range(20):
+            t = time.time()
+            v.js("1")
+            lag = max(lag, time.time() - t)
+            v.wait(100)
+        rows.append(("and the page answers", lag < 1.5, f"slowest answer {lag * 1000:.0f} ms, budget 1500"))
+        v.js("""(() => { const b = document.querySelectorAll('#doc .doc-play')[60]; window.__p = { t0: performance.now() };
+          b.click(); const a = document.querySelector('#doc audio'); if (!a) return 0; a.volume = 0;
+          const tick = () => a.currentTime > 0.05 ? (window.__p.ms = Math.round(performance.now() - window.__p.t0)) : requestAnimationFrame(tick); tick();
+          return 1; })()""")
+        p = {}
+        for _ in range(100):
+            p = json.loads(v.js("JSON.stringify(window.__p)") or "{}")
+            if "ms" in p:
+                break
+            v.wait(50)
+        ms = p.get("ms")
+        rows.append(("a pressed song sounds", ms is not None and ms < 2000, f"{ms} ms from the press to its time moving, budget 2000" if ms is not None else "it never moved in 5 s"))
+    finally:
+        v.win.destroy()
+    return rows
+
+
 def desk_row(env, base):
     """Four panels at work on one desk, and the web process's CPU while it
     draws them. With `--display`, the same on the real display, as a record:
@@ -786,9 +843,10 @@ def idle_rows(env, base):
 
         post(base, "/api/notes", {"text": "The bench left this, and nobody has read it.", "sender": "bench"},
              {"authorization": f"Bearer {token}"})
-        ok = until(v, "!!document.documentElement.dataset.note && !!document.querySelector('#note')")
+        ok = until(v, "!!document.documentElement.dataset.note && !!document.querySelector('#cn .cn-card, #cn .oy-pill')")
         # The face perks up when a note comes -- two blinks, four pulses, under
-        # ten seconds (app.css) -- and the row is what it costs after that.
+        # ten seconds (app.css) -- and its card rises in the corner and settles
+        # into the pill (ui/corner.js); the row is what it costs after that.
         v.wait(10000)
         note = v.js("document.documentElement.dataset.note || 'none'")
         rows.append(quiet("an unread note, idle", measure(v, pid, dpid), f"note {note}") if ok
@@ -1018,7 +1076,9 @@ def main():
         url = next(w for w in out.split() if w.startswith("http"))
         base = url.split("/d/")[0] if "/d/" in url else "/".join(url.split("/")[:3])
         doc = url.rsplit("/d/", 1)[-1].split("#")[0].split("?")[0]
-        if DESK_ONLY or DESK_HIDDEN or DESK_SCROLL or IDLE or DAEMON or GIT:
+        if DESK_ONLY or DESK_HIDDEN or DESK_SCROLL or IDLE or DAEMON or GIT or MEDIA:
+            if MEDIA:
+                rows += media_rows(env, base, tmp)
             if DAEMON:
                 rows += daemon_rows(env, base)
             if GIT:
