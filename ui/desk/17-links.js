@@ -60,16 +60,17 @@ function linksHtml(d) {
 /** What the fit depends on: the desk, its links' words, and the Undos. */
 const linksKey = d => `${d.id}|${linksOf(d).map(l => `${l.id}:${l.label}:${lkUndo.has(`${d.id}:${l.id}`) ? 1 : 0}`).join(",")}`;
 
-/** The foot drawn with `head` and as many chips as fit whole: all of them,
- *  then one fewer with a +N, until the row does not overflow. Measured only
- *  when the links or the rail's width change, not on a panel's every tick. */
-function linksDraw(el, d, head) {
+/** The foot drawn with `head`, as many chips as fit whole -- all of them,
+ *  then one fewer with a +N, until the row does not overflow -- and `tail`,
+ *  On you's button (1.44), whose width never changes. Measured only when
+ *  the links or the rail's width change, not on a panel's every tick. */
+function linksDraw(el, d, head, tail = "") {
   const key = linksKey(d);
   if (key !== lkKey) { lkKey = key; lkFit = Infinity; }
-  if (lkFit !== Infinity || !el.clientWidth) { drawIn(el, head + linksHtml(d)); return; }
+  if (lkFit !== Infinity || !el.clientWidth) { drawIn(el, head + linksHtml(d) + tail); return; }
   for (let n = linksOf(d).length; n >= 0; n--) {
     lkFit = n;
-    drawIn(el, head + linksHtml(d));
+    drawIn(el, head + linksHtml(d) + tail);
     const box = el.querySelector(".dk-lks");
     if (!box || box.scrollWidth <= box.clientWidth + 1) break;
   }

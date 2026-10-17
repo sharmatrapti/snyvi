@@ -319,6 +319,7 @@ const HELP = `
     <div class="hk"><span>Maximise width</span><span class="keys"><kbd>w</kbd></span></div>
     <div class="hk"><span>Wrap long lines</span><span class="keys"><kbd>z</kbd></span></div>
     <div class="hk"><span>Open source</span><span class="keys"><kbd>o</kbd></span></div>
+    <div class="hk"><span>Copy all</span><span class="keys"><kbd>y</kbd></span></div>
   </section>
 </div>
 <div class="help-col" id="help-col-2">
@@ -1186,7 +1187,7 @@ const SHOW = {
     none: `Nothing has arrived yet. <a href="/connect" data-nav="connect">Agents</a>` },
   waiting: { at: () => q("#inbox-row .t-inbox.new") && (folded() ? q('#rail-nav [data-pop="inbox"]') : q("#inbox-row .t-inbox")), none: "Nothing is waiting right now." },
   desks: { at: () => startCap && (folded() ? q('#rail-nav [data-pop="desks"]') : q("#desk-nav .sec-head")), none: "Desks live in the window: <code>snyvi app</code>." },
-  notes: { at: () => q("#cn:not([hidden]) .oy-pill, #onyou .oy-pill"), none: "Nothing in the corner right now. Ctrl Alt Y opens it." },
+  notes: { at: () => q("#cn:not([hidden]) .oy-pill, #meta .oy-foot:not(.none), #onyou .oy-pill"), none: "Nothing in the corner right now. Ctrl Alt Y opens it." },
   keys: { at: () => q("#btn-help"), none: "" },
 };
 let startCap = false, startDocs = false;

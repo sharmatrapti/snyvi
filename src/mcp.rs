@@ -190,6 +190,7 @@ const TOOLS: &[(&str, Tool)] = &[
     ("ask", Session::ask),
     ("hand_over", Session::hand_over),
     ("settle_asks", Session::settle_asks),
+    ("remove_card", Session::remove_card),
     ("suggest_panel", Session::suggest_panel),
     ("suggest_desk", Session::suggest_desk),
     ("read_widgets", Session::read_widgets),

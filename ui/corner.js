@@ -33,6 +33,8 @@ const BURST_MS = 1500;
 /** Home shows the newest few, as Arrived did; the tray holds the rest, so a
  *  busy day does not make Home as long as the log. */
 const HOME_ROWS = 5;
+/** Lately's Today, in the sidebar, before the rest of it is a word away. */
+const TODAY_ROWS = 10;
 /** How long what a row's button did is said in the row. */
 const SAID_MS = 6000;
 /** What a hand-over is answered with, by kind, as Home and the desk say. */
@@ -63,14 +65,21 @@ const CSS = `
 .oy-card { position: relative; width: 300px; box-shadow: var(--shadow); border-radius: var(--r-sm); }
 .oy-card.rise { animation: oy-in var(--dur-move) var(--ease-out); }
 @keyframes oy-in { from { opacity: 0; transform: translateY(12px) scale(.96); } to { opacity: 1; transform: none; } }
-.oy-tray { position: relative; width: 340px; box-sizing: border-box; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--bg); box-shadow: var(--shadow); animation: oy-in var(--dur-move) var(--ease-out); }
+/* The tray is the app's popover (audit 98b9d67a7d): raised, --r-sm, the
+   rule and the shadow, as the sidebar's section popover and Lately are. */
+.oy-tray { position: relative; width: 360px; box-sizing: border-box; border: 1px solid var(--rule); border-radius: var(--r-sm); background: var(--bg-raise); box-shadow: var(--shadow); animation: oy-in var(--dur-move) var(--ease-out); }
 .oy-head { display: flex; align-items: center; gap: 2px; padding: 6px 6px 2px 10px; }
 .oy-gap { flex: 1; }
 .oy-head .oy-h { margin: 0; }
 .oy-scroll { max-height: 60vh; overflow-y: auto; padding: 0 10px 4px; }
 .oy-x { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border: 0; border-radius: var(--r-xs); background: none; color: var(--fg-3); cursor: pointer; }
 .oy-x:hover { background: var(--rule-2); color: var(--fg); }
-.oy-h { margin: 2px 2px 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); text-transform: uppercase; letter-spacing: .04em; }
+/* A head here is a section head (.sec-fold): sentence case, the micro size,
+   600, its count after it (.sec-n). Uppercase read as another app's. */
+.oy-h { margin: 2px 2px 0; font-size: var(--fs-micro); font-weight: 600; color: var(--fg-3); letter-spacing: .01em; }
+.oy-head .sec-n { padding: 0 2px; }
+.oy-hi { display: grid; place-items: center; width: 14px; margin-right: 4px; color: var(--fg-3); }
+.oy-hi svg { width: 13px; height: 13px; }
 .oy-scroll .oy-h { margin-top: 10px; }
 .oy-scroll > .oy-h:first-child { margin-top: 2px; }
 .oy-none { margin: 4px; font-size: var(--fs-small); color: var(--fg-3); }
@@ -114,6 +123,20 @@ const CSS = `
 .cn-row.open .cn-tx { display: block; }
 .cn-n { flex: none; font-size: var(--fs-micro); color: var(--fg-3); white-space: nowrap; }
 :is(.cn-tx, .cn-text) code { font-family: var(--mono); font-size: .92em; padding: 0 3px; border-radius: var(--r-xs); background: var(--rule); }
+/* Lately's rows are On you's tray's rows: the title first, whole, in the
+   page's ink, and where and when under it, quiet. In a list of titles a
+   filled chip was a box in a box, so code there is only its face. */
+.cn-lately .cn-t { color: var(--fg); }
+.cn-lately .cn-tl + .cn-bl { margin-top: 1px; }
+.cn-lately .cn-tx code { padding: 0; background: none; }
+/* Earlier is On you's Older: a line each, dimmed until the pointer or the
+   focus is on it, the whole title in its tip. */
+.cn-old .cn-b { flex-direction: row; align-items: baseline; gap: 8px; }
+.cn-old .cn-tl { flex: 1; min-width: 0; }
+.cn-old .cn-tx { -webkit-line-clamp: 1; }
+.cn-old .cn-bl { flex: none; max-width: 45%; }
+.cn-old > li { opacity: .72; }
+.cn-old > li:is(:hover, :focus-within) { opacity: 1; }
 .cn-by b { font-weight: 600; color: var(--fg-2); }
 .cn-by b.cn-snyvi { color: var(--accent); }
 .cn-t { display: block; padding: 0; border: 0; background: none; font: inherit; font-size: var(--fs-small); line-height: 1.35; color: var(--fg-2); text-align: left; overflow-wrap: anywhere; }
@@ -128,8 +151,6 @@ button.cn-t:hover { color: var(--fg); text-decoration: underline; }
 .cn-said { font-size: var(--fs-micro); color: var(--fg-3); }
 .cn-undo { padding: 0 4px; border: 0; background: none; font: inherit; font-size: var(--fs-micro); color: var(--accent); cursor: pointer; }
 .cn-fold { display: block; margin: 8px 2px 0; padding: 0; border: 0; background: none; font-size: var(--fs-micro); color: var(--fg-3); text-decoration: underline dotted; cursor: pointer; }
-.cn-lhead { display: flex; align-items: baseline; gap: 8px; }
-.cn-lhead .oy-h { flex: 1; }
 .cn-all { padding: 0; border: 0; background: none; font-size: var(--fs-micro); color: var(--fg-3); cursor: pointer; }
 .cn-all:hover { color: var(--fg); }
 /* On you, off a desk: a turn or an offer with its buttons in the row. */
@@ -141,10 +162,25 @@ button.cn-t:hover { color: var(--fg); text-decoration: underline; }
 .cn-link:hover { color: var(--fg); }
 .cn-cmd { display: block; font-family: var(--mono); font-size: var(--fs-micro); color: var(--fg-2); overflow-wrap: anywhere; }
 /* Lately in the sidebar's popover: kept out of sight in #trees between
-   openings, as menu.js puts a section back where it lives. */
+   openings, as menu.js puts a section back where it lives. It is On you's
+   tray in all but what it holds: the same head (its mark, its name, its
+   count), held at the top while the rows scroll under it, and the same
+   row, an older ask's (09-thread.js olderLine): one line, the title, then
+   where and when at its right, the whole title in the tip. Seen rows are
+   quiet ink; a new one is the page's ink with its dot in the margin. */
 #trees > #lately-nav { display: none; }
-#lately-nav .cn-lhead { padding: 6px 0 2px; }
-#lately-nav .cn-list { padding-left: 8px; }
+#lately-nav .oy-head { position: sticky; top: 0; z-index: 1; background: var(--bg-raise); }
+#lately-nav .cn-all { margin-right: 4px; }
+#lately-nav .cn-list { padding: 0 18px 0 10px; }
+#lately-nav .cn-b { flex-direction: row; align-items: baseline; gap: 8px; }
+#lately-nav .cn-tl { flex: 1; min-width: 0; }
+#lately-nav .cn-tx { -webkit-line-clamp: 1; }
+#lately-nav .cn-bl { flex: none; max-width: 45%; }
+#lately-nav .cn-t { color: var(--fg-2); }
+#lately-nav .cn-row.new .cn-t { color: var(--fg); }
+#lately-nav .cn-row.mine .cn-t { color: var(--fg-3); }
+#lately-nav .cn-fold { margin-left: 10px; }
+#lately-nav .oy-none { margin: 4px 10px; }
 /* Home draws Lately large, in its own column: the same rows, more room. */
 .cn-large .cn-row { padding: 9px 20px 9px 0; }
 .cn-large .cn-t { font-size: var(--fs-ui); }
@@ -158,7 +194,7 @@ let c = null, el = null;
 const L = {
   rows: [], loaded: false, loading: null, more: false, unseen: false,
   turns: [], turnsSeen: null, offers: [],
-  open: false, earlier: false, older: false, back: null,
+  open: false, earlier: false, older: false, allToday: false, back: null,
   card: null, cardDrawn: null, timer: 0, rang: 0,
   /** A card settled since the tray was last opened: the pill stays, to say
    *  where it went, though nothing in it is unseen any more. */
@@ -509,6 +545,7 @@ const code = s => c.esc(s).replace(/`([^`\n]+)`/g, "<code>$1</code>");
  *  openings. Opening it is looking at it, as the tray's opening was. */
 let latelyEl = null;
 function lately() {
+  L.allToday = false;
   if (!latelyEl?.isConnected) {
     latelyEl = document.createElement("section");
     latelyEl.id = "lately-nav";
@@ -546,20 +583,27 @@ function rowText(r) {
     default: return [r.text, "doc"];
   }
 }
-/** The byline leads with where it came from, `snyvi · 2` (desk, panel),
- *  and ends with when, pinned right where no ellipsis reaches it. Lately is
+/** The byline says where it came from, the desk (its panel is in the tip:
+ *  `snyvi · 1` beside `snyvi · 2` read as a count), how many versions a
+ *  document has had, and when, pinned right where no ellipsis reaches it. Lately is
  *  every desk's, so the desk is what tells two rows apart; who sent it is
  *  named only when it is not Claude Code, which every agent row was --
  *  a friend, another agent. snyvi's own lines say snyvi, in the accent. */
 const CLAUDE = /^claude[ -]?code$/i;
-function byline(r) {
+function byline(r, n = 1) {
   const { esc } = c, d = r.data || {};
   const who = r.kind === "snyvi" ? `<b class="cn-snyvi">snyvi</b>` : r.who && !CLAUDE.test(r.who) ? `<b>${esc(r.who)}</b>` : "";
-  const where = r.from ? `${esc(r.from.name)}${r.from.slot ? ` · ${+r.from.slot}` : ""}` : esc(d.desk_name || d.project || "");
+  const where = r.from ? esc(r.from.name) : esc(d.desk_name || d.project || "");
   const w = [who, where].filter(Boolean).join(" · ") || (r.who ? esc(r.who) : "");
-  return `<span class="cn-w">${w}</span><span class="cn-at">${c.relShort(r.at)}</span>`;
+  const tip = r.from?.slot ? ` data-tip="${esc(r.from.name)}, panel ${+r.from.slot}"` : "";
+  const vs = n > 1 ? `<span class="cn-n" data-tip="${n} versions">×${n}</span>` : "";
+  return `<span class="cn-w"${tip}>${w}</span>${vs}<span class="cn-at">${c.relShort(r.at)}</span>`;
 }
+/** A row's mark, only where it says something: a friend's face, an
+ *  aside, the reader's own. A document is most of the list, and a page
+ *  glyph on every row said nothing in 26 px of it. */
 function rowIco(r) {
+  if (r.kind === "version" || (r.kind === "doc" && r.data?.origin !== "peer")) return "";
   if (["line", "reply", "tick"].includes(r.kind) || (r.kind === "doc" && r.data?.origin === "peer")) return c.who(r.who);
   return c.glyph(r.kind === "aside" || r.kind === "snyvi" ? "aside" : r.kind === "answered" || r.kind === "offered" ? "checks" : "doc", 12);
 }
@@ -571,7 +615,10 @@ function rowIco(r) {
  *  one title -- are one row wherever they fall, at the newest's place, and
  *  it counts its versions. */
 function rows() {
-  const all = L.rows.concat(ownRows()).sort((a, b) => b.at - a.at || (b.id > a.id ? 1 : -1));
+  // The reader's own answers are not something that came: the answer is on
+  // the ask's thread and goes with the agent's next turn. They stay in the
+  // daemon's log, only not here.
+  const all = L.rows.concat(ownRows()).filter(r => r.kind !== "answered").sort((a, b) => b.at - a.at || (b.id > a.id ? 1 : -1));
   const out = [], by = new Map();
   for (const r of all) {
     if (r.kind !== "doc" && r.kind !== "version") { out.push(r); continue; }
@@ -597,8 +644,9 @@ function rowHtml(r) {
     : mine ? `<button type="button" class="cn-t" data-a="cn-expand" data-r="${id}" aria-expanded="${open}">${tx}</button>`
     : `<span class="cn-t" ${tip}>${tx}</span>`;
   const ids = r.group ? r.group.map(x => x.id).join(",") : r.id;
-  return `<li class="cn-row${unseen && !mine ? " new" : ""}${mine ? " mine" : ""}${open ? " open" : ""}" data-part="corner.lately.${r.kind}"><span class="cn-ico">${rowIco(r)}</span><span class="cn-b">` +
-    `<span class="cn-bl">${byline(r)}</span><span class="cn-tl">${t}${n > 1 ? `<span class="cn-n">${n} versions</span>` : ""}</span></span>` +
+  const ico = rowIco(r);
+  return `<li class="cn-row${unseen && !mine ? " new" : ""}${mine ? " mine" : ""}${open ? " open" : ""}" data-part="corner.lately.${r.kind}">${ico ? `<span class="cn-ico">${ico}</span>` : ""}<span class="cn-b">` +
+    `<span class="cn-tl">${t}</span><span class="cn-bl">${byline(r, n)}</span></span>` +
     `<button type="button" class="cn-rx" data-a="cn-x" data-r="${esc(String(ids))}" aria-label="Remove" data-tip="Remove" data-tip-sub="Undo brings it back, and so does Removed on Home">${c.glyph("x", 10)}</button></li>`;
 }
 
@@ -609,18 +657,27 @@ function latelyHtml(large = false, skip = null) {
   const all = skip ? rows().filter(r => !skip(r)) : rows(), day = new Date().setHours(0, 0, 0, 0) / 1000;
   const today = all.filter(r => r.at >= day), earlier = all.filter(r => r.at < day);
   const open = L.earlier || !today.length;
-  const list = xs => xs.length ? `<ul class="cn-list">${xs.map(rowHtml).join("")}</ul>` : "";
+  const list = (xs, cls = "") => xs.length ? `<ul class="cn-list${cls}">${xs.map(rowHtml).join("")}</ul>` : "";
   const more = L.more && open ? `<button type="button" class="cn-fold" data-a="cn-more">Older…</button>` : "";
+  // Today, ten rows and then the rest on a word, as Earlier is: a day of
+  // agents' sends was twenty rows, a wall with no end in sight.
+  const cut = large || L.allToday ? today.length : TODAY_ROWS, shown = today.slice(0, cut);
+  const rest = today.length > cut ? `<button type="button" class="cn-fold" data-a="cn-today">${today.length - cut} more today</button>` : "";
   const body = !all.length ? `<p class="oy-none">${L.loaded ? "Nothing has come lately. What agents and friends send lands here." : "…"}</p>`
-    : list(today) + (earlier.length ? (today.length ? `<button type="button" class="cn-fold" data-a="cn-earlier" aria-expanded="${open}">Earlier</button>` : "") + (open ? list(earlier) + more : "") : "");
+    : list(shown) + rest + (earlier.length ? (today.length ? `<button type="button" class="cn-fold" data-a="cn-earlier" aria-expanded="${open}">Earlier</button>` : "") + (open ? list(earlier, today.length ? " cn-old" : "") + more : "") : "");
   if (large) {
     const rest = all.length - HOME_ROWS;
     return `<section class="cn-lately cn-large" data-part="corner.lately" aria-label="Lately">` + (all.length ? list(all.slice(0, HOME_ROWS)) : body) +
       (rest > 0 || L.more ? `<button type="button" class="cn-fold" data-a="cn-lately" data-tip="All of Lately" data-tip-sub="In the sidebar">${rest > 0 && !L.more ? `${rest} more` : "All of Lately"}</button>` : "") + `</section>`;
   }
+  // On you's head: its mark, its name and its count -- here what is new,
+  // in the accent its rows' dots are -- then what acts on all of it, and ✕.
+  const n = all.filter(r => r.kind !== "offered" && (r.group ? r.group.some(x => !x.seen) : !r.seen)).length;
+  const count = n ? `<span class="sec-n accent" data-tip="${n} new">${n}</span>` : "";
   const all_ = dot() ? `<button type="button" class="cn-all" data-a="cn-seen">Mark all seen</button>` : "";
+  const close = `<button type="button" class="oy-x" data-a="cn-close" aria-label="Close" data-tip="Close" data-tip-sub="Esc">${c.glyph("x", 12)}</button>`;
   return `<section class="cn-lately" data-part="corner.lately" aria-label="Lately">` +
-    `<div class="cn-lhead"><h3 class="oy-h" data-tip="Lately" data-tip-sub="What came: documents, asides, friends. Kept 14 days; asides until you remove them">Lately</h3>${all_}</div>` + body + `</section>`;
+    `<div class="oy-head"><span class="oy-hi" aria-hidden="true">${c.glyph("clock", 13)}</span><h3 class="oy-h" data-tip="Lately" data-tip-sub="What came: documents, asides, friends. Kept 14 days; asides until you remove them">Lately</h3>${count}<span class="oy-gap"></span>${all_}${close}</div>` + body + `</section>`;
 }
 
 /** The card that rises, by kind. `desk` is the desk's corner drawing it,
@@ -669,6 +726,8 @@ function act(a, b) {
     "cn-x": () => remove(r.split(",")),
     "cn-back": () => restore(r),
     "cn-earlier": () => { L.earlier = !L.earlier; redraw(); },
+    "cn-today": () => { L.allToday = true; redraw(); },
+    "cn-close": () => { c.unpop?.(); [...document.querySelectorAll(".lt-btn")].find(x => x.getClientRects().length)?.focus({ preventScroll: true }); },
     "cn-older": () => { L.older = !L.older; redraw(); },
     "cn-more": () => load(L.rows[L.rows.length - 1]?.id || 0),
     "cn-seen": () => { opened(); for (const x of L.rows) x.seen = true; redraw(); },

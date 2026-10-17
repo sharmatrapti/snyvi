@@ -33,7 +33,7 @@ and the sizes the ratchet in `bench/size.mjs` holds. Line counts are from
 | `src/thread.rs` | 1151 | threads, turns (Your turn) and suggested panels: the tables, the stages, who is told what (#90) |
 | `src/server/api_thread.rs` | 734 | threads over HTTP: the agent's and the mod's on `/api/panes/{id}/…`, the page's on `/api/desks/{id}/…`, the held question's long-poll |
 | `src/claude_mod.rs` | 144 | the snyvi mod (`mod/`) built in, written to the data folder, named in a panel's `CLAUDE_CODE_PLUGIN_DIRS` |
-| `src/mcp/threads.rs` | 247 | the seven #90 MCP tools: start_thread, move_thread, ask, hand_over, settle_asks, suggest_panel, suggest_desk |
+| `src/mcp/threads.rs` | 247 | the eight #90 MCP tools: start_thread, move_thread, ask, hand_over, settle_asks, remove_card, suggest_panel, suggest_desk |
 | `src/project.rs` | 168 | cwd → project (git root) |
 | `src/git.rs` | 251 | branch, dirt, unpushed, recent commits for Home |
 | `src/gh.rs` | 200 | a thread's PR as `gh pr view` says it: open, merged, closed, the merge and who made it, the checks; who gh is signed in as (1.43) |

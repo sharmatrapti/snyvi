@@ -136,6 +136,14 @@ pub const ON_YOU_1_36: [&str; 2] = [
 /// Version 23 of `store::MIGRATIONS`, never in `SCHEMA`.
 pub const PR_STATE_1_43: &str = "ALTER TABLE threads ADD COLUMN pr_state TEXT NOT NULL DEFAULT ''";
 
+/// 1.44 (#174): why an agent put a waiting turn away -- "panel 1: v1.43.0
+/// is released" -- said under Older for `AWAY_SHOWN_S`, beside Bring back
+/// (`put_away`). Empty for a ✕, a retire or a repeat. Version 25 of
+/// `store::MIGRATIONS`, never in `SCHEMA`.
+pub const AWAY_COLUMN_1_44: &str = "ALTER TABLE turns ADD COLUMN away TEXT NOT NULL DEFAULT ''";
+/// How long a turn an agent put away is still said in the tray.
+pub const AWAY_SHOWN_S: i64 = 86400;
+
 /// How long a waiting turn is fresh: after it, it is "older" -- no rising,
 /// no sound, out of the cap, the brief's list, the band and Home's count.
 /// The page's `OLDER_S`, said once here so every reader agrees (B3).
@@ -309,6 +317,9 @@ pub struct Turn {
     /// that name on the desk settles the turn (`settle_key`).
     #[serde(rename = "key", skip_serializing_if = "String::is_empty")]
     pub key_name: String,
+    /// Who put it away and why, when an agent did (`put_away`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub away: String,
     /// Waiting, and no longer fresh (`mark_stale`): never stored, worked out
     /// at each read.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -1181,7 +1192,7 @@ pub fn moved_since(conn: &Connection, desk_id: i64, pane: &str, since: i64) -> R
 const TURN_COLS: &str =
     "id, desk_id, thread_id, pane, by, kind, via, text, options, recommended, link,
      answer, answered_in, answered_at, told_at, created_at, removed_at, cmd, ask_group,
-     quiet_at, key_name";
+     quiet_at, key_name, away";
 
 fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
     let options: String = r.get(8)?;
@@ -1211,6 +1222,7 @@ fn row_to_turn(r: &rusqlite::Row) -> rusqlite::Result<Turn> {
         ask_group: r.get(18)?,
         quiet_at: r.get(19)?,
         key_name: r.get(20)?,
+        away: r.get(21)?,
         stale: false,
     })
 }
@@ -1511,6 +1523,9 @@ pub fn ask_group(conn: &mut Connection, desk_id: i64, asks: &[Ask], now: i64) ->
     // used to hold a place, so a desk whose six were days old refused the
     // one question that mattered now (audit e0a854b732, B2).
     retire(&tx, now)?;
+    if let [c] = checked.as_slice() {
+        supersede(&tx, desk_id, c, now)?;
+    }
     let waiting = waiting_on(&tx, desk_id, false, now)?
         .iter()
         .filter(|t| !t.stale)
@@ -1633,9 +1648,90 @@ pub fn remove_turn(conn: &Connection, desk_id: i64, id: i64, now: i64) -> Result
 
 pub fn restore_turn(conn: &Connection, desk_id: i64, id: i64) -> Result<bool> {
     Ok(conn.execute(
-        "UPDATE turns SET removed_at = 0 WHERE desk_id = ?1 AND id = ?2",
+        "UPDATE turns SET removed_at = 0, away = '' WHERE desk_id = ?1 AND id = ?2",
         params![desk_id, id],
     )? > 0)
+}
+
+/// What a `run` turn types: its command and its steps', each with its
+/// spaces evened out, so a repeat is known however it was spaced.
+fn commands_of(cmd: &str, options: &[String]) -> Vec<String> {
+    let even = |c: &str| c.split_whitespace().collect::<Vec<_>>().join(" ");
+    std::iter::once(cmd)
+        .chain(options.iter().filter_map(|o| o.trim().strip_prefix("$ ")))
+        .map(even)
+        .filter(|c| !c.is_empty())
+        .collect()
+}
+
+/// A command handed over again (#174): an open `run` on the desk that types
+/// a command the new one types too is the same thing asked twice -- the
+/// reader had "Add the Cloudflare account ID" on two cards. The older one is
+/// put away, as a ✕ puts one away, recoverable by id (`restore_turn`). How
+/// many.
+fn supersede(conn: &Connection, desk_id: i64, c: &Checked, now: i64) -> Result<usize> {
+    if c.cmd.is_empty() {
+        return Ok(0);
+    }
+    let new = commands_of(c.cmd, &c.options);
+    let open: Vec<(i64, String, String)> = conn
+        .prepare_cached(
+            "SELECT id, cmd, options FROM turns
+             WHERE desk_id = ?1 AND kind = 'run' AND answered_at = 0 AND removed_at = 0",
+        )?
+        .query_map(params![desk_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut n = 0;
+    for (id, cmd, options) in open {
+        let options: Vec<String> = options.split('\n').map(String::from).collect();
+        if commands_of(&cmd, &options).iter().any(|o| new.contains(o)) {
+            n += remove_turn(conn, desk_id, id, now)? as usize;
+        }
+    }
+    Ok(n)
+}
+
+/// An agent on the desk puts a waiting turn away, saying why (#174): the
+/// release it asks for has run, the key is in. Any turn on its desk, not only
+/// its own: a session that ended left its cards with no one but the reader to
+/// settle them, and the next Claude was told they were there and could do
+/// nothing about it. Only with a reason, which the tray says under Older for
+/// a day beside Bring back; removed as a ✕ removes, never deleted. `None`
+/// when there is no such turn waiting.
+pub fn put_away(
+    conn: &Connection,
+    desk_id: i64,
+    id: i64,
+    who: &str,
+    why: &str,
+    now: i64,
+) -> Result<Option<Turn>> {
+    let why = line(why, TEXT_CHARS);
+    if why.is_empty() {
+        return Ok(None);
+    }
+    let n = conn.execute(
+        "UPDATE turns SET removed_at = ?3, away = ?4
+         WHERE desk_id = ?1 AND id = ?2 AND answered_at = 0 AND removed_at = 0",
+        params![desk_id, id, now, format!("{who}: {why}")],
+    )?;
+    if n == 0 {
+        return Ok(None);
+    }
+    turn(conn, desk_id, id)
+}
+
+/// The turns agents put away on a desk in the last `AWAY_SHOWN_S`, newest
+/// first: the tray says each, and Bring back.
+pub fn put_away_lately(conn: &Connection, desk_id: i64, now: i64) -> Result<Vec<Turn>> {
+    let mut st = conn.prepare(&format!(
+        "SELECT {TURN_COLS} FROM turns WHERE desk_id = ?1 AND away != '' AND removed_at >= ?2
+         ORDER BY removed_at DESC, id DESC LIMIT 10"
+    ))?;
+    let v = st
+        .query_map(params![desk_id, now - AWAY_SHOWN_S], row_to_turn)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(v)
 }
 
 /// The panel that asked was prompted: its questions asked before the prompt

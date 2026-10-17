@@ -441,7 +441,7 @@ function meta() {
   const { esc } = ctx;
   const url = repoOf(d), rn = url && repoName(url), on = rn && rn.path ? `${esc(rn.path)} on ${esc(rn.host)}` : "";
   const repo = on ? `<a class="dk-repo" href="${esc(url)}" target="_blank" rel="noopener" data-tip="${on}" data-tip-sub="${esc(url)}" aria-label="${on}">${REPO}</a>` : `<span class="dk-repo"></span>`;
-  linksDraw(ctx.metaEl, d, repo);
+  linksDraw(ctx.metaEl, d, repo, oyFoot(d));
   ctx.rail.classList.remove("empty");
   cards();
 }

@@ -684,8 +684,13 @@ const CSS = `
   padding: 2px 8px 8px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-sm); box-shadow: var(--shadow);
   animation: sheet-l var(--dur-quick) var(--ease-out); }
 #pop > :first-child .sec-head { margin-top: 4px; }
-@media (max-width: 760px) { #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; } }
-#ctx { position: fixed; z-index: var(--z-pop); min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow); font-size: var(--fs-ui); transform-origin: 0 0; animation: ctx-in var(--dur-instant) ease-out; }
+/* Lately is read, not navigated: it opens wider than the sections, as On
+   you's tray does once it is opened, so a title is one line more often than
+   two; and shorter than the window, so the page shows above it and its end
+   is a row or a fold, never a row the window's edge cut through. */
+#pop:has(> #lately-nav) { width: 360px; max-height: min(70vh, 560px, calc(100vh - var(--foot-h) - 20px)); padding: 0 0 6px; }
+@media (max-width: 760px) { #pop { inset: 0 auto 0 44px; top: 0 !important; width: min(88vw, var(--side-w)); max-height: none; border-radius: 0; border-width: 0 1px 0 0; } #pop:has(> #lately-nav) { width: min(88vw, 360px); max-height: none; } }
+#ctx { position: fixed; z-index: var(--z-pop); min-width: 200px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px; background: var(--bg-raise); border: 1px solid var(--rule); border-radius: var(--r-sm); box-shadow: var(--shadow); font-size: var(--fs-ui); transform-origin: 0 0; animation: ctx-in var(--dur-instant) ease-out; }
 @keyframes ctx-in { from { opacity: 0; transform: scale(.97); } }
 @media (prefers-reduced-motion: reduce) { #ctx { animation: none; } }
 /* What the menu acts on, named at its top: a right-click in a busy grid
@@ -776,6 +781,10 @@ const POPS = { inbox: ["#inbox-row"], tree: ["#tree"], desks: ["#desk-nav"], bro
 /** #trees' order: the reader's (app.js `placeLeft` writes it), or index.html's. */
 const home = () => ($("#trees").dataset.order || "#inbox-row #tree #desk-nav #browse-nav #widgets-nav").split(" ");
 let popBtn = null, popWired = false;
+/** Whether the last thing the reader did was a key, for the ring. */
+let popKey = false;
+addEventListener("keydown", () => { popKey = true; }, true);
+addEventListener("pointerdown", () => { popKey = false; }, true);
 export function pop(ctx, sec, btn) {
   sheet();
   const popEl = $("#pop");
@@ -791,12 +800,26 @@ export function pop(ctx, sec, btn) {
   if (sec === "tree") ctx.drawTree();
   // Level with the icon, and moved only as far as it takes to stay on the
   // window, the way a toast answers a control in the rail.
-  // Lately opens from the sidebar's head too, with the sidebar open: beside
-  // the sidebar then, not over its own rows.
-  popEl.style.left = root.dataset.side === "0" ? "" : Math.round($("#side").getBoundingClientRect().right + 6) + "px";
+  // A section opens beside the sidebar, not over its own rows. Lately, from
+  // its button in the sidebar's foot, stands over that foot's corner as On
+  // you's tray does over the rail's: 8 px in from the column's edge, growing
+  // away from the window's edge over the panels.
+  const side = root.dataset.side === "0" ? null : $("#side").getBoundingClientRect();
+  const fromFoot = sec === "lately" && side && btn.closest?.(".side-foot");
+  popEl.style.left = side ? Math.round(fromFoot ? side.left + 8 : side.right + 6) + "px" : "";
+  // Lately's floor is the foot its button stands in: it ends 6 px above the
+  // foot's rule, as On you's tray does above the rail's (audit 98b9d67a7d),
+  // not down over the foot to the window's edge.
   const r = btn.getBoundingClientRect(), h = popEl.offsetHeight;
-  popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, innerHeight - h - 8))) + "px";
-  (popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
+  const foot = sec === "lately" && $(".side-foot")?.getBoundingClientRect();
+  const floor = foot && foot.height ? foot.top - 6 : innerHeight - 8;
+  popEl.style.top = Math.round(Math.max(8, Math.min(r.top - 8, floor - h))) + "px";
+  // Opened with the pointer, the focus goes in without a ring; the first
+  // key brings it back (app.css .ring-quiet).
+  popEl.classList.toggle("ring-quiet", !popKey);
+  // Lately's head has buttons now, as On you's does; its first row is still
+  // where the keys start, the newest thing that came.
+  ((sec === "lately" && popEl.querySelector(".cn-list button.cn-t")) || popEl.querySelector("a[aria-current], a[href], button, summary, [tabindex]") || popEl).focus({ preventScroll: true });
 }
 /** Put the section back where it lives. `back` gives the focus to its icon. */
 export function unpop(back = true) {
@@ -841,6 +864,7 @@ function wirePop(popEl) {
   // The menu's keys: the arrows walk its rows, Home and End go to its ends,
   // a letter to the next row that starts with it. Tabbing out of it closes it.
   popEl.addEventListener("keydown", e => {
+    popEl.classList.remove("ring-quiet");
     if (e.target.closest("input") || e.ctrlKey || e.metaKey || e.altKey) return;
     const bs = [...popEl.querySelectorAll("a[href], button, summary")].filter(x => x.offsetParent), at = bs.indexOf(document.activeElement), n = bs.length;
     const go = i => bs[(i + n) % n]?.focus();

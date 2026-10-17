@@ -782,6 +782,7 @@ modifier, like ⌘K, ⌃\` and alt ←/→, always work.
 | /     | find in document                            |
 | w     | maximise width                              |
 | z     | wrap long lines                             |
+| y     | copy all: the source, and formatted for mail |
 | p     | pin (kept by `prune`)                       |
 | n     | open the next document waiting              |
 | Del   | remove document (⌘/ctrl Z undoes it)        |
@@ -944,6 +945,13 @@ for both. The tab's icon is repainted to match, so two snyvi windows
 side by side are told apart at the tab strip.
 
 The **width** and **wrap** buttons are `w` and `z` above.
+
+**Copy all**, beside Width in the bar over a document or a file, is `y`:
+it puts the whole page on the clipboard twice over -- the source as it was
+sent, for an agent, a terminal or GitHub, and for Markdown the page as
+drawn, for a mail or a document -- and what you paste into takes the one it
+reads. A ✓ in its place says it is done. On a picture, a film or a song it
+is not there.
 
 A control that means nothing in the view you are in is faded rather
 than hidden, and its tooltip says why -- `Wrap · no code on this page`,
@@ -1124,6 +1132,20 @@ Suggested in the rail's corner, where nothing they do moves the page.
   panel: the pill lights in the window's corner. Claude's own question
   dialog is on screen in its panel already, so it neither rises nor waits
   in the corner; Home lists it.
+
+  **On you** has its own button at the right end of the rail's foot, always
+  there: the count in amber while something is fresh, in quiet ink when
+  only older asks wait, dim with nothing on you. The tray it opens is wider
+  than the rail, over the edge of the first panel, until you close it; a
+  pinned tray stays at the rail's width. An older ask is one line, what it
+  is and how old, and a click opens its card.
+
+  A card leaves when it stops being true, not only when you answer it.
+  Handed the same command twice, snyvi keeps the newer card. And any Claude
+  on the desk may remove a card it can see is done -- the release ran, the
+  key is in -- with `remove_card` and a reason: the tray says **Removed by
+  panel 1: v1.43.0 is released** for a day, with **Bring back**. Nothing is
+  deleted.
 - **Suggested** is a panel or a desk Claude thinks the work wants, with the
   exact command it would run. **Open panel** opens it on this desk and runs
   that command; **Open desk** makes a desk for the folder. Nothing opens

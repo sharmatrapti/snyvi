@@ -71,6 +71,8 @@ pub struct Work<'a> {
 const THREADS_SHOWN: usize = 3;
 /// How many of the reader's turns it names.
 const TURNS_SHOWN: usize = 3;
+/// An older turn's line in the brief: enough to know it again by.
+const OLDER_CHARS: usize = 50;
 
 #[cfg(test)]
 pub fn brief(
@@ -311,19 +313,28 @@ fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) ->
         lines.push(format!("Threads on this desk: {}.", moving.join("; ")));
     }
     // What is fresh, said; what went quiet -- its panel closed, or asked over
-    // half an hour ago -- only counted, so a new Claude knows it is there
+    // half an hour ago -- said shorter, so a new Claude knows it is there
     // without taking a four-day-old key as its next step (audit e0a854b732).
+    // Each by its id: one that is done, or that this Claude repeats, is its
+    // to remove, with why (#174) -- a count it could do nothing with left
+    // a released release on the reader for hours.
     let on_user: Vec<String> = waiting
         .iter()
         .filter(|w| !w.stale)
         .take(TURNS_SHOWN)
-        .map(|w| format!("{}: {}", w.kind, cut(&w.text, LINE_CHARS)))
+        .map(|w| format!("#{} {}: {}", w.id, w.kind, cut(&w.text, LINE_CHARS)))
         .collect();
-    let older = waiting.iter().filter(|w| w.stale).count();
-    let older = match older {
+    let older: Vec<String> = waiting
+        .iter()
+        .filter(|w| w.stale)
+        .take(TURNS_SHOWN)
+        .map(|w| format!("#{} {}: {}", w.id, w.kind, cut(&w.text, OLDER_CHARS)))
+        .collect();
+    let n_older = waiting.iter().filter(|w| w.stale).count();
+    let older = match n_older {
         0 => String::new(),
-        1 => "1 older".to_string(),
-        n => format!("{n} older"),
+        n if n > older.len() => format!("{n} older ({}; …)", older.join("; ")),
+        _ => format!("older: {}", older.join("; ")),
     };
     match (on_user.is_empty(), older.is_empty()) {
         (true, true) => {}
@@ -336,8 +347,11 @@ fn thread_lines(desk: &Desk, slot: i64, threads: &[Thread], waiting: &[Turn]) ->
             on_user.join("; ")
         )),
         (true, false) => lines.push(format!(
-            "On the user's On you list in snyvi: {older}, from panels since closed or asked over half an hour ago."
+            "On the user's On you list in snyvi, from panels since closed or asked over half an hour ago: {older}."
         )),
+    }
+    if n_older > 0 {
+        lines.push("One you can see is done (a tag, a merge), remove_card with why.".to_string());
     }
     lines
 }
@@ -1117,7 +1131,7 @@ mod tests {
         assert!(b.contains(
             "Threads on this desk: Home + friends (building, #87 #91, claude/asides; this panel's)."
         ));
-        assert!(b.contains("On the user (their On you list in snyvi): try: Try it on 7871."));
+        assert!(b.contains("On the user (their On you list in snyvi): #0 try: Try it on 7871."));
         assert!(!b.contains("Old"));
     }
 }

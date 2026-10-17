@@ -19,6 +19,7 @@ fn db() -> Connection {
         thread::TAKEN_COLUMN,
         thread::GROUP_COLUMN,
         thread::PR_STATE_1_43,
+        thread::AWAY_COLUMN_1_44,
     ]
     .into_iter()
     .chain(thread::SUGGEST_COLUMNS_1_30)
