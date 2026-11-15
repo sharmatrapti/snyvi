@@ -640,8 +640,12 @@ fn files_under(dir: &Path) -> Vec<String> {
 /// took the musl build from 22.1 to 22.6 and 22.7 MB, with no crate added.
 /// 23 until 1.63.0: routines that wake (times, the gate, the watch's
 /// supervisor, the shape, src/skill/routine.md compiled in) took the musl
-/// build from 23.0 to 23.2 MB, with no route and no crate added.
-const BINARY_MB: f64 = 23.5;
+/// build from 23.0 to 23.2 MB, with no route and no crate added. 23.5
+/// until 1.66.0: On you's three shelves and News (src/news.rs, its two
+/// routes), a routine's two hashes and health, the Stop's answers and a
+/// merge checked on GitHub took the musl build from 23.3 to just over
+/// 23.5 MB, with no crate added.
+const BINARY_MB: f64 = 24.0;
 
 /// Returns whether any row was over budget.
 ///
